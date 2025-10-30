@@ -87,24 +87,46 @@ Brooks-Corey formulation used in the VIC model.
 #end
 
 
-function calculate_interlayer_drainage(Ksat, current_moisture, max_moisture, residual_moisture, expt)
-    # VIC's exact calc_Q12 formula - keep same parameter names!
-    eff_init = current_moisture .- residual_moisture
-    eff_max = max_moisture .- residual_moisture
-    
-    # Avoid division by zero
-    if any(eff_max .<= 0) || any(expt .== 1.0)
-        return CUDA.zeros(eltype(current_moisture), size(current_moisture))
-    end
-    
-    term1 = eff_init .^ (1.0 .- expt)
-    term2 = Ksat ./ (eff_max .^ expt) .* (1.0 .- expt)
-    inner = max.(term1 .- term2, 1e-10)  # Prevent negative
-    
-    final_eff = inner .^ (1.0 ./ (1.0 .- expt))
-    Q12 = eff_init .- final_eff
-    
-    return max.(Q12, 0.0)
+#function calculate_interlayer_drainage(Ksat, current_moisture, max_moisture, residual_moisture, expt)
+#    # VIC's exact calc_Q12 formula - keep same parameter names!
+#    eff_init = current_moisture .- residual_moisture
+#    eff_max = max_moisture .- residual_moisture
+#    
+#    # Avoid division by zero
+#    if any(eff_max .<= 0) || any(expt .== 1.0)
+#        return CUDA.zeros(eltype(current_moisture), size(current_moisture))
+#    end
+#    
+#    term1 = eff_init .^ (1.0 .- expt)
+#    term2 = Ksat ./ (eff_max .^ expt) .* (1.0 .- expt)
+#    inner = max.(term1 .- term2, 1e-10)  # Prevent negative
+#    
+#    final_eff = inner .^ (1.0 ./ (1.0 .- expt))
+#    Q12 = eff_init .- final_eff
+#    
+#    return max.(Q12, 0.0)
+#end
+
+function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moist, expt)
+    T = eltype(current_moist)
+    Z = T(0)
+    EPS = T(1e-9)
+
+    # Maintain VIC constraint expt > 3
+    expt = max.(expt, T(3.001))
+
+    denom = max.(max_moist .- resid_moist, EPS)
+    init_moist = max.(current_moist, resid_moist .+ EPS)
+
+    term1 = (init_moist .- resid_moist) .^ (1 .- expt)
+    term2 = Ksat ./ (denom .^ expt) .* (1 .- expt)   # <-- keep this as-is
+    inner = max.(term1 .- term2, Z)
+    Q12 = init_moist .- (inner .^ (1 ./ (1 .- expt))) .- resid_moist
+
+    avail = max.(init_moist .- resid_moist, Z)
+    Q12 = clamp.(Q12, Z, avail)
+
+    return Q12
 end
 
 #function calculate_interlayer_drainage(
@@ -199,7 +221,6 @@ Returns:
     - baseflow: The calculated baseflow from the bottom layer (2D array).
     - Q12: The drainage flux between layers (3D array).
 """
-
 function solve_runoff_and_drainage(
     surface_inflow,      # (ny,nx)  [mm]
     soil_evaporation,    # (ny,nx,nlayer,nveg)  [mm]
@@ -209,10 +230,10 @@ function solve_runoff_and_drainage(
     ksat_gpu,            # (ny,nx,nlayer)
     residual_moisture,   # (ny,nx,nlayer)
     expt_gpu,            # (ny,nx,nlayer)
+    cv_gpu,
     Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu       # (ny,nx)
 )
 
-    # ---- unify dtype on GPU ----
     T  = eltype(soil_moisture_old)
     Z  = T(0); O = T(1); EPS = T(1e-9)
 
@@ -224,93 +245,84 @@ function solve_runoff_and_drainage(
     DsmaxT = T.(Dsmax_gpu); DsT = T.(Ds_gpu)
     WsT    = T.(Ws_gpu);    cexpT = T.(c_expt_gpu)
 
-    inflow = T.(surface_inflow)                     # (ny,nx)
+    inflow = T.(surface_inflow)
     L      = size(W_old, 3)
     saturation_runoff = CUDA.zeros(T, size(inflow))
 
-    # aggregate E and T per layer (sum over veg)
-    EvL = CUDA.zeros(T, size(W_old))                # only layer 1 is used
+    # Aggregate E and T per layer (sum over veg)
+    EvL = CUDA.zeros(T, size(W_old))
     TrL = CUDA.zeros(T, size(W_old))
     nTL = min(L, size(transpiration,3))
+    println("nTL shape !!!!!!!!!!!!!!!!!: ", nTL)
+
     TrL[:, :, 1:nTL] .= sum(T.(transpiration), dims=4)[:, :, 1:nTL, 1]
-    EvL[:, :, 1]     .= sum(T.(soil_evaporation), dims=4)[:, :, 1, 1]
+    #TrL[:, :, 1:nTL] .= sum(T.(cv_gpu[:, :, :, 1:end-1]) .* T.(transpiration[:, :, :, 1:end-1]), dims=4)[:, :, 1:nTL, 1]
 
-    # realized ET (what we actually remove from storage)
-    Ev1_eff = CUDA.zeros(T, size(inflow))           # 2D
-    TrL_eff = CUDA.zeros(T, size(W_old))            # 3D
+    EvL[:, :, 1]     .= sum(T.(soil_evaporation), dims=4)[:, :, 1, 1] 
 
-    # working state
-    W = copy(W_old)
+    Ev1_eff = CUDA.zeros(T, size(inflow))
+    TrL_eff = CUDA.zeros(T, size(W_old))
+
+    W = similar(W_old)
+    W .= W_old
     Q12 = CUDA.zeros(T, size(W,1), size(W,2), max(L-1,0))
 
     # -------- LAYER 1 --------
-    # add infiltration
-    W[:, :, 1] .+= inflow
+    W[:, :, 1] .= W[:, :, 1] .+ inflow
 
-    # soil evaporation + transpiration (capped by available above residual)
     avail1     = max.(W[:, :, 1] .- Wres[:, :, 1], Z)
     loss1_pot  = EvL[:, :, 1] .+ TrL[:, :, 1]
     scale1     = min.(O, avail1 ./ max.(loss1_pot, EPS))
     Ev1        = EvL[:, :, 1] .* scale1
     Tr1        = TrL[:, :, 1] .* scale1
-    W[:, :, 1] .-= (Ev1 .+ Tr1)
+    W[:, :, 1] .= W[:, :, 1] .-(Ev1 .+ Tr1)
 
-    # store realized
-    Ev1_eff           .= Ev1
-    TrL_eff[:, :, 1]  .= Tr1
+    Ev1_eff          .= Ev1
+    TrL_eff[:, :, 1] .= Tr1
 
-    # gravitational drainage from updated state
     if L >= 2
         q12_1 = calculate_interlayer_drainage(
                     Ksat[:, :, 1], W[:, :, 1], Wmax[:, :, 1], Wres[:, :, 1], exptT[:, :, 1]
                 )
-        # cap by available above residual
         avail1 = max.(W[:, :, 1] .- Wres[:, :, 1], Z)
         q12_1  = min.(q12_1, avail1)
-        W[:, :, 1] .-= q12_1
+        W[:, :, 1] .= W[:, :, 1] .- q12_1
 
-        # spill any excess above Wmax to the next layer this step
         spill1 = max.(W[:, :, 1] .- Wmax[:, :, 1], Z)
-        W[:, :, 1] .-= spill1
-        q12_1 .+= spill1
-        Q12[:, :, 1] .= q12_1
+        W[:, :, 1] .= W[:, :, 1] .- spill1
+        #saturation_runoff .= saturation_runoff .+ spill1
+
+        Q12[:, :, 1] .= q12_1 .+ spill1
     end
 
     # -------- INTERIOR LAYERS (2..L-1) --------
-    for l in 2:max(L-1,1)
-        # add inflow from the layer above
+    for l in 2:max(L-1, 1)
         in_l = (l == 2 ? Q12[:, :, 1] : Q12[:, :, l-1])
-        W[:, :, l] .+= in_l
+        W[:, :, l] .= W[:, :, l] .+ in_l
 
-        # transpiration (capped)
         avail   = max.(W[:, :, l] .- Wres[:, :, l], Z)
         loss_p  = TrL[:, :, l]
         scale   = min.(O, avail ./ max.(loss_p, EPS))
         Trl     = loss_p .* scale
-        W[:, :, l] .-= Trl
-
-        # store realized
+        W[:, :, l] .= W[:, :, l] .- Trl
         TrL_eff[:, :, l] .= Trl
 
-        # drainage to next layer using UPDATED W
         q12_l = calculate_interlayer_drainage(
                     Ksat[:, :, l], W[:, :, l], Wmax[:, :, l], Wres[:, :, l], exptT[:, :, l]
                 )
         avail  = max.(W[:, :, l] .- Wres[:, :, l], Z)
         q12_l  = min.(q12_l, avail)
-        W[:, :, l] .-= q12_l
+        W[:, :, l] .= W[:, :, l] .- q12_l
 
-        # spill over-capacity
         spill  = max.(W[:, :, l] .- Wmax[:, :, l], Z)
-        W[:, :, l] .-= spill
-        q12_l .+= spill
+        W[:, :, l] .= W[:, :, l] .- spill
+        q12_l  .= q12_l .+ spill
 
         Q12[:, :, l] .= q12_l
     end
 
     # -------- BOTTOM LAYER --------
     if L == 1
-        # nothing more to remove; ET already accounted above
         Wpre   = W[:, :, 1]
         bf_pot = calculate_baseflow(Wpre, Wres[:, :, 1], Wmax[:, :, 1], DsmaxT, DsT, WsT, cexpT)
         avail  = max.(Wpre .- Wres[:, :, 1], Z)
@@ -319,95 +331,25 @@ function solve_runoff_and_drainage(
         baseflow = bf
     else
         inN = Q12[:, :, L-1]
-        W[:, :, L] .+= inN
+        W[:, :, L] .= W[:, :, L] .+ inN
 
-        # transpiration in the bottom layer (previous version missed this)
         avail    = max.(W[:, :, L] .- Wres[:, :, L], Z)
         loss_p   = TrL[:, :, L]
         scale    = min.(O, avail ./ max.(loss_p, EPS))
         TrL_bot  = loss_p .* scale
-        W[:, :, L] .-= TrL_bot
+        W[:, :, L] .= W[:, :, L] .- TrL_bot
         TrL_eff[:, :, L] .= TrL_bot
 
-        # baseflow from updated storage
-        bf_pot = calculate_baseflow(W[:, :, L], Wres[:, :, L], Wmax[:, :, L],
-                                    DsmaxT, DsT, WsT, cexpT)
+        bf_pot = calculate_baseflow(W[:, :, L], Wres[:, :, L], Wmax[:, :, L], DsmaxT, DsT, WsT, cexpT)
         avail  = max.(W[:, :, L] .- Wres[:, :, L], Z)
         bf     = min.(bf_pot, avail)
-        W[:, :, L] .-= bf
+        W[:, :, L] .= W[:, :, L] .- bf
 
-        # deep percolation if still above capacity
         deep    = max.(W[:, :, L] .- Wmax[:, :, L], Z)
-        W[:, :, L] .-= deep
+        W[:, :, L] .= W[:, :, L] .- deep
         baseflow = bf .+ deep
     end
 
-    # --- STRICT 2D BUDGET (robust to 2D/3D/4D inputs), using *realized* ET ---
-    let
-        T  = eltype(W); Z0 = zero(T)
-
-        # Sum all dims beyond the first two -> 2D, regardless of 2D/3D/4D input
-        @inline to2D(A) = ndims(A) <= 2 ? A : begin
-            dims_to_sum = ntuple(k -> k + 2, ndims(A) - 2)   # (3), (3,4), ...
-            dropdims(sum(A, dims=dims_to_sum), dims=dims_to_sum)
-        end
-        san(A) = ifelse.(isfinite.(A), A, Z0)
-
-        # Collapse fields to 2D (use realized ET!)
-        Ev1_2D   = to2D(Ev1_eff)
-        TrL_2D   = to2D(TrL_eff)
-        in_2D    = to2D(inflow)
-        EvTr_2D  = Ev1_2D .+ TrL_2D
-        dS_2D    = to2D(W .- W_old)
-
-        # Clamp bookkeeping (diagnostic only; W is not altered here)
-        Wc           = clamp.(W, Wres, Wmax)
-        clamp_delta  = to2D(ifelse.(isfinite.(Wc .- W), Wc .- W, Z0))
-        clamp_gain   = max.(clamp_delta,  Z0)
-        clamp_loss   = max.(-clamp_delta, Z0)
-
-        # 2D water-balance
-        wb2 = (san(in_2D) .+ san(clamp_gain)) .-
-              (san(EvTr_2D) .+ san(baseflow) .+ san(clamp_loss)) .-
-              san(dS_2D)
-
-        println("2D budget: max |wb| = ", maximum(abs.(wb2)))
-
-        # Domain totals
-        dom_in  = sum(san(in_2D)) + sum(san(clamp_gain))
-        dom_out = sum(san(EvTr_2D)) + sum(san(baseflow)) + sum(san(clamp_loss))
-        dom_dS  = sum(san(dS_2D))
-        println("2D domain totals -> in=", dom_in, "  out=", dom_out, "  dS=", dom_dS,
-                "  residual=", dom_in - dom_out - dom_dS)
-
-        # --- max-offender breakdown (GPU-safe, no scalar GPU indexing) ---
-        abswb         = abs.(san(wb2))
-        maxval, lin   = CUDA.findmax(abswb)
-        I             = CartesianIndices(size(abswb))
-        i, j          = Tuple(I[lin])
-
-        _get2(A) = ndims(A) == 2 ? Array(@view A[i:i, j:j])[1] :
-                   ndims(A) == 3 ? Array(@view A[i:i, j:j, 1:1])[1] :
-                   ndims(A) == 4 ? Array(@view A[i:i, j:j, 1:1, 1:1])[1] :
-                   NaN
-
-        println("Max-offender (i,j)=(", i, ",", j, "), |wb|=", maxval)
-        println("  inflow        = ", _get2(in_2D))
-        println("  Ev+Tr (real)  = ", _get2(EvTr_2D))
-        println("  baseflow      = ", _get2(baseflow))
-        println("  clamp_gain    = ", _get2(clamp_gain))
-        println("  clamp_loss    = ", _get2(clamp_loss))
-        println("  dS            = ", _get2(dS_2D))
-        println("  residual (wb) = ", _get2(wb2))
-
-        # Optional: ET clipping stats (how much potential ET could not be satisfied)
-        epsT = T === Float32 ? 1f-6 : 1e-12
-        ev_clip = sum( (EvL[:, :, 1] .- Ev1_eff) .> epsT )
-        tr_clip = sum( (TrL .- TrL_eff) .> epsT )
-        println("ET clipping -> Ev cells: ", Int(ev_clip), " | Tr cells: ", Int(tr_clip))
-    end
 
     return W, baseflow, Q12
 end
-
-

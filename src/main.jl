@@ -220,7 +220,7 @@ function process_year(year)
                 # Transpiration
                 # ============================================================
                 @timeit to "calculate_transpiration" begin
-                    @time transpiration, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw = 
+                    @time transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw = 
                         calculate_transpiration(
                             potential_evaporation, aerodynamic_resistance, rarc_gpu, 
                             water_storage, max_water_storage, soil_moisture_old, 
@@ -243,6 +243,7 @@ function process_year(year)
                         b_infilt_gpu, cv_gpu, coverage_gpu
                     )
                 end
+
 
                 # ============================================================
                 # Water balance: throughfall and runoff
@@ -275,7 +276,7 @@ function process_year(year)
                 # ============================================================
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
                     infiltration, soil_evaporation, transpiration, soil_moisture_old,
-                    soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
+                    soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu, cv_gpu,
                     Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
                 )
 
@@ -286,7 +287,7 @@ function process_year(year)
                 # ============================================================
                 @timeit to "compute_total_fluxes" begin
                     @time total_et = calculate_total_evapotranspiration(
-                        canopy_evaporation, transpiration, soil_evaporation, cv_gpu
+                        canopy_evaporation, transpiration, transpiration_layers, soil_evaporation, cv_gpu
                     )
                     @time total_runoff = calculate_total_runoff(
                         surface_runoff, subsurface_runoff, cv_gpu

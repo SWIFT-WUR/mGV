@@ -269,24 +269,27 @@ function calculate_transpiration(
     E_1_t_full[:, :, :, 1:veg_dim]        .= E_1_t_veg
     E_2_t_full[:, :, :, 1:veg_dim]        .= E_2_t_veg
 
+    # -------- ADDED: Create transpiration_layers array (e1t, e2t, 0) --------
+    # This array will have dimensions (ny, nx, 3, nveg)
+    E_0_t_full = CUDA.zeros(T, ny, nx, 1, nveg) # Create zero layer
+    transpiration_layers = cat(E_1_t_full, E_2_t_full, E_0_t_full; dims=3)
+
+
     # diagnostic g_sw_total (2D)
     f1t = sum(@view(root_gpu[:, :, 1, :]), dims=3)[:, :, 1]
     f2t = sum(@view(root_gpu[:, :, 2, :]), dims=3)[:, :, 1]
     g_sw_total = clamp.((f1t .* g1 .+ f2t .* g2) ./ (f1t .+ f2t .+ EPS), F0, F1)
 
-    return transpiration_full, E_1_t_full, E_2_t_full, g1, g2, g_sw_total
+    return transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, g1, g2, g_sw_total
 end
 
 
-
-
-#TODO: investigate issue and cleanup function below
-# Issue: SOIL EVAP WARNING: Found 402 cells where topsoil_moisture_max is zero. This will cause division by zero.
-
-# You might need to import the Printf module to use @printf
-using Printf
 function calculate_soil_evaporation(soil_moisture, soil_moisture_max, potential_evaporation, b_i, cv_gpu, coverage_gpu)
-    # Calculate soil evaporation for ALL tiles, accounting for bare soil fraction in each
+    # Calculate soil evaporation for ALL tiles, adapted to follow standard VIC logic:
+    # - Saturated fraction (A_sat) from VIC/Xinanjiang curve evaporates at full potential.
+    # - Unsaturated fraction evaporates at reduced rate based on relative soil moisture (simple beta approximation).
+    # - This simplifies the original series expansion for unsaturated evaporation while retaining subgrid heterogeneity.
+    # - Scaled by bare soil fraction within each vegetation tile.
     
     T = eltype(potential_evaporation)
     EPS = T(1e-9)
@@ -296,33 +299,21 @@ function calculate_soil_evaporation(soil_moisture, soil_moisture_max, potential_
     topsoil_moisture_max = T.(@view soil_moisture_max[:, :, 1])
     b_i_typed = T.(b_i)
 
-    # Guard rails
+    # Relative moisture (beta for unsaturated; assumed soil_moisture_max ≈ field capacity or saturation)
     moisture_ratio = clamp.(topsoil_moisture ./ (topsoil_moisture_max .+ EPS), T(0), T(1))
 
-    # A_sat (Xinanjiang curve)
+    # Saturated fraction A_sat (VIC/Xinanjiang curve, Eq. ~13 in Liang 1994)
     A_sat = T(1) .- (T(1) .- moisture_ratio) .^ b_i_typed
     A_sat = clamp.(A_sat, T(0), T(1))
-    x = T(1) .- A_sat
 
-    # Series S(b) from Liang 1994 (Eq. 15) — 2D
-    S_series = CUDA.ones(T, size(x))
-    @inbounds for n = 1:20
-        S_series .+= (b_i_typed ./ (n .+ b_i_typed)) .* (x .^ (n ./ b_i_typed))
-    end
+    # Reshape 2D fields to (ny, nx, 1, 1) for broadcasting with potential_evaporation (assumed (ny, nx, 1, ntiles))
+    A_sat4 = reshape(A_sat, size(A_sat,1), size(A_sat,2), 1, 1)
+    moisture_ratio4 = reshape(moisture_ratio, size(moisture_ratio,1), size(moisture_ratio,2), 1, 1)
 
-    # Infiltration ratio (Eq. 13) — 2D
-    infiltration_ratio = T(1) .- (T(1) .- A_sat) .^ (T(1) ./ b_i_typed)
-
-    # Reshape 2D fields to (ny, nx, 1, 1) for broadcasting
-    A_sat4   = reshape(A_sat,              size(A_sat,1),              size(A_sat,2),              1, 1)
-    x4       = reshape(x,                  size(x,1),                  size(x,2),                  1, 1)
-    S4       = reshape(S_series,           size(S_series,1),           size(S_series,2),           1, 1)
-    infil4   = reshape(infiltration_ratio, size(infiltration_ratio,1), size(infiltration_ratio,2), 1, 1)
-
-    # Calculate soil evaporation for ALL tiles
-    Ev_unsat = potential_evaporation .* infil4 .* x4 .* S4
-    Ev_sat   = potential_evaporation .* A_sat4
-    
+    # Calculate soil evaporation: sat at full pot, unsat at moisture-limited rate
+    # (For standard VIC, this approximates beta; for VIC-WUR, incorporates saturated constraint)
+    Ev_sat = potential_evaporation .* A_sat4
+    Ev_unsat = potential_evaporation .* (T(1) .- A_sat4) .* moisture_ratio4
     total_soil_evaporation = Ev_sat .+ Ev_unsat
 
     # Scale by exposed soil fraction for each tile
@@ -330,11 +321,9 @@ function calculate_soil_evaporation(soil_moisture, soil_moisture_max, potential_
     scaled_soil_evaporation = total_soil_evaporation .* T.(cv_gpu) .* bare_soil_fraction
 
     # Sum across all vegetation types to get total soil evaporation
-    # This returns (ny, nx, 1, 1) like your original function
-    return sum(scaled_soil_evaporation, dims=4, init=T(0))
+    # This returns (ny, nx, 1, 1) like the original function
+    return sum(scaled_soil_evaporation, dims=4; init=T(0))
 end
-
-
 
 
 #function update_water_canopy_storage(water_storage, prec_gpu, cv_gpu, canopy_evaporation, max_water_storage, throughfall, coverage)
@@ -367,9 +356,13 @@ end
 
 
 # Eq. (23): Total evapotranspiration
-function calculate_total_evapotranspiration(canopy_evaporation, transpiration, soil_evaporation, cv_gpu)
+function calculate_total_evapotranspiration(canopy_evaporation, transpiration, transpiration_layers, soil_evaporation, cv_gpu)
+
+##    total_transp_veg = sum(transpiration_layers, dims=3)[:, :, 1, 1:end-1]  # Sum over layers to get total per veg type
+#    vegetated_et = cv_gpu[:, :, :, 1:end-1] .* (canopy_evaporation[:, :, :, 1:end-1] .+ total_transp_veg)
+
     # Sum canopy evaporation and transpiration for vegetated classes (n = 1:nveg-1)
-    vegetated_et = cv_gpu[:, :, :, 1:end-1] .* (canopy_evaporation[:, :, :, 1:end-1]) .+ transpiration[:, :, :, 1:end-1] .* cv_gpu[:, :, :, 1:end-1]  
+    vegetated_et = cv_gpu[:, :, :, 1:end-1] .* (canopy_evaporation[:, :, :, 1:end-1]) .+ transpiration[:, :, :, 1:end-1] #.* cv_gpu[:, :, :, 1:end-1]  
     
     # Add bare soil evaporation (n = nveg)
     bare_soil_et =  soil_evaporation .* cv_gpu[:, :, :, end:end] 
