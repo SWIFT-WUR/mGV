@@ -240,7 +240,7 @@ function process_year(year)
                 @timeit to "calculate_soil_evaporation" begin
                     @time soil_evaporation = calculate_soil_evaporation(
                         soil_moisture_old, soil_moisture_max, potential_evaporation, 
-                        b_infilt_gpu, cv_gpu, coverage_gpu
+                        b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
                     )
                 end
 

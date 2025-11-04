@@ -107,7 +107,7 @@ function calculate_potential_evaporation(
     pe_veg = max.(num_v ./ den_v, T(0))
 
     # --- Bare soil PET (PM with rc=0) ---
-    SOIL_RARC = T(0.0)
+    SOIL_RARC = T(100.0)
     num_s = slope .* (Rn_soil .* day_sec) .+ (air_dens .* c_p_air .* vpd .* day_sec ./ ra_soil)
     den_s = latent_heat .* (slope .+ gamma_ .* (1 .+ SOIL_RARC ./ ra_soil))
     pe_soil = max.(num_s ./ den_s, T(0))
@@ -283,46 +283,151 @@ function calculate_transpiration(
     return transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, g1, g2, g_sw_total
 end
 
-
-function calculate_soil_evaporation(soil_moisture, soil_moisture_max, potential_evaporation, b_i, cv_gpu, coverage_gpu)
-    # Calculate soil evaporation for ALL tiles, adapted to follow standard VIC logic:
-    # - Saturated fraction (A_sat) from VIC/Xinanjiang curve evaporates at full potential.
-    # - Unsaturated fraction evaporates at reduced rate based on relative soil moisture (simple beta approximation).
-    # - This simplifies the original series expansion for unsaturated evaporation while retaining subgrid heterogeneity.
-    # - Scaled by bare soil fraction within each vegetation tile.
+function calculate_soil_evaporation(soil_moisture, soil_moisture_max, 
+                                   potential_evaporation, b_i, cv_gpu, coverage_gpu,
+                                   residual_moisture)
     
-    T = eltype(potential_evaporation)
-    EPS = T(1e-9)
+    # Extract TOP LAYER ONLY at the start
+    soil_moisture_top = view(soil_moisture, :, :, 1:1)          # (ny, nx, 1)
+    soil_moisture_max_top = view(soil_moisture_max, :, :, 1:1)  # (ny, nx, 1)
+    residual_top = view(residual_moisture, :, :, 1:1)           # (ny, nx, 1)
+    
+    # Calculate maximum infiltration capacity
+    max_infil = (1.0f0 .+ b_i) .* soil_moisture_max_top
+    
+    # Calculate moisture ratio
+    ratio = 1.0f0 .- soil_moisture_top ./ soil_moisture_max_top
+    ratio = clamp.(ratio, 0.0f0, 1.0f0)
+    
+    # Handle b_i == -1.0f0 case
+    mask_special = b_i .== -1.0f0
+    ratio_adjusted = ifelse.(mask_special, ratio, ratio .^ (1.0f0 ./ (b_i .+ 1.0f0)))
+    tmp = max_infil .* (1.0f0 .- ratio_adjusted)
+    tmp = ifelse.(mask_special, max_infil, tmp)
+    
+    # Check if saturated
+    mask_saturated = tmp .>= max_infil
+    
+    # For unsaturated areas, calculate ARNO evaporation
+    ratio_unsat = tmp ./ max_infil
+    ratio_unsat = 1.0f0 .- ratio_unsat
+    ratio_unsat = clamp.(ratio_unsat, 0.0f0, 1.0f0)
+    
+    # Avoid division by zero
+    ratio_powered = ifelse.(ratio_unsat .> 0.0f0, ratio_unsat .^ b_i, 0.0f0)
+    as = 1.0f0 .- ratio_powered
+    
+    # FIXED: ratio_beta should be ratio_powered^(1/b) which equals ratio_unsat
+    ratio_beta = ifelse.(ratio_powered .> 0.0f0, ratio_powered .^ (1.0f0 ./ b_i), 0.0f0)
+    
+    # Initialize dummy as array of 1s (GPU-compatible)
+    dummy = ratio_beta .* 0.0f0 .+ 1.0f0
+    ratio_power = copy(ratio_beta)
+    
+    # Manually unroll 40 terms (keeping your existing code)
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 1.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 2.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 3.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 4.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 5.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 6.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 7.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 8.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 9.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 10.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 11.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 12.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 13.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 14.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 15.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 16.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 17.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 18.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 19.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 20.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 21.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 22.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 23.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 24.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 25.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 26.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 27.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 28.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 29.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 30.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 31.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 32.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 33.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 34.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 35.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 36.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 37.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 38.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 39.0f0)
+    ratio_power = ratio_power .* ratio_beta
+    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 40.0f0)
 
-    # 2D fields (ny, nx) - convert to consistent type
-    topsoil_moisture     = T.(@view soil_moisture[:, :, 1])
-    topsoil_moisture_max = T.(@view soil_moisture_max[:, :, 1])
-    b_i_typed = T.(b_i)
-
-    # Relative moisture (beta for unsaturated; assumed soil_moisture_max ≈ field capacity or saturation)
-    moisture_ratio = clamp.(topsoil_moisture ./ (topsoil_moisture_max .+ EPS), T(0), T(1))
-
-    # Saturated fraction A_sat (VIC/Xinanjiang curve, Eq. ~13 in Liang 1994)
-    A_sat = T(1) .- (T(1) .- moisture_ratio) .^ b_i_typed
-    A_sat = clamp.(A_sat, T(0), T(1))
-
-    # Reshape 2D fields to (ny, nx, 1, 1) for broadcasting with potential_evaporation (assumed (ny, nx, 1, ntiles))
-    A_sat4 = reshape(A_sat, size(A_sat,1), size(A_sat,2), 1, 1)
-    moisture_ratio4 = reshape(moisture_ratio, size(moisture_ratio,1), size(moisture_ratio,2), 1, 1)
-
-    # Calculate soil evaporation: sat at full pot, unsat at moisture-limited rate
-    # (For standard VIC, this approximates beta; for VIC-WUR, incorporates saturated constraint)
-    Ev_sat = potential_evaporation .* A_sat4
-    Ev_unsat = potential_evaporation .* (T(1) .- A_sat4) .* moisture_ratio4
-    total_soil_evaporation = Ev_sat .+ Ev_unsat
-
-    # Scale by exposed soil fraction for each tile
-    bare_soil_fraction = T(1) .- T.(coverage_gpu)
-    scaled_soil_evaporation = total_soil_evaporation .* T.(cv_gpu) .* bare_soil_fraction
-
-    # Sum across all vegetation types to get total soil evaporation
-    # This returns (ny, nx, 1, 1) like the original function
-    return sum(scaled_soil_evaporation, dims=4; init=T(0))
+    
+    beta_asp = as .+ (1.0f0 .- as) .* (1.0f0 .- ratio_beta) .* dummy
+    
+    # Reshape beta_asp to 4D for proper broadcasting
+    beta_asp_4d = reshape(beta_asp, size(beta_asp)..., 1)  # (ny, nx, 1, 1)
+    mask_saturated_4d = reshape(mask_saturated, size(mask_saturated)..., 1)
+    
+    # Choose between potential and ARNO evaporation
+    esoil = ifelse.(mask_saturated_4d, potential_evaporation, potential_evaporation .* beta_asp_4d)
+    
+    # Apply bare soil fraction and tile area weights
+    esoil = esoil .* (1.0f0 .- coverage_gpu) .* cv_gpu
+    
+    # FIXED: Cap at AVAILABLE moisture (total - residual)
+    available_moisture = soil_moisture_top .- residual_top
+    available_moisture = max.(available_moisture, 0.0f0)  # Can't be negative
+    available_moisture_4d = reshape(available_moisture, size(available_moisture)..., 1)  # (ny, nx, 1, 1)
+    
+    esoil = min.(esoil, available_moisture_4d)
+    esoil = max.(esoil, 0.0f0)
+    
+    # Sum over vegetation types (dim 4)
+    return sum(esoil, dims=4)  # (ny, nx, 1, 1)
 end
 
 
@@ -365,7 +470,7 @@ function calculate_total_evapotranspiration(canopy_evaporation, transpiration, t
     vegetated_et = cv_gpu[:, :, :, 1:end-1] .* (canopy_evaporation[:, :, :, 1:end-1]) .+ transpiration[:, :, :, 1:end-1] #.* cv_gpu[:, :, :, 1:end-1]  
     
     # Add bare soil evaporation (n = nveg)
-    bare_soil_et =  soil_evaporation .* cv_gpu[:, :, :, end:end] 
+    bare_soil_et =  soil_evaporation #.* cv_gpu[:, :, :, end:end] 
     
     # Total evapotranspiration (sum across cover classes)
     total_et = sum_with_nan_handling(vegetated_et, 4) .+ bare_soil_et
