@@ -73,19 +73,6 @@ function calculate_gsm_inv(soil_moisture, soil_moisture_critical, wilting_point)
 end
 
 
-"""
-    calculate_interlayer_drainage(Ksat, current_moisture, max_moisture, Wfc, expt)
-
-Calculates the gravitational drainage (flux) between two soil layers based on the
-Brooks-Corey formulation used in the VIC model.
-"""
-#function calculate_interlayer_drainage(Ksat, current_moisture, max_moisture, residual_moisture, expt)
-#    drainage_ratio = (current_moisture .- residual_moisture) ./ (max_moisture .- residual_moisture)
-#    drainage_ratio = clamp.(drainage_ratio, 0.0f0, 1.0f0)
-#    Q12 = Ksat .* drainage_ratio .^ expt
-#    return clamp.(Q12, 0.0f0, Inf32)
-#end
-
 
 #function calculate_interlayer_drainage(Ksat, current_moisture, max_moisture, residual_moisture, expt)
 #    # VIC's exact calc_Q12 formula - keep same parameter names!
@@ -129,45 +116,6 @@ function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moi
     return Q12
 end
 
-#function calculate_interlayer_drainage(
-#    Ksat,
-#    current_moisture,
-#    residual_moisture,
-#    max_moisture,
-#    expt
-#)
-#    # Epsilon for numerical stability
-#    EPSILON = float_type(1e-9)
-#
-#    # Effective moisture above residual
-#    eff_moist = max.(current_moisture .- residual_moisture, 0.0f0)
-#    max_eff_moist = max.(max_moisture .- residual_moisture, EPSILON)
-#
-#    # Term 1: (initial effective moisture)^{1 - expt}
-#    term1 = (eff_moist .+ EPSILON) .^ (1.0f0 .- expt)
-#
-#    # Drainage potential over the time step: Ksat / (max_eff_moist ^ expt) * (1 - expt)
-#drainage_potential = (Ksat ./ (max_eff_moist .^ expt)) .* (expt .- 1.0f0)
-#
-#    # Inner power base: term1 - drainage_potential
-#    inner_pow_base = term1 .- drainage_potential
-#
-#    # Clamp inner_pow_base to prevent negative base in power
-#    inner_pow_base = max.(inner_pow_base, 0.0f0)
-#
-#    # New effective moisture after drainage: (inner_pow_base)^{1 / (1 - expt)}
-#    # Handle expt ==1 special case (linear drainage)
-#    inv_denom = 1.0f0 ./ (1.0f0 .- expt .+ EPSILON)
-#    final_eff_moist = inner_pow_base .^ inv_denom
-#
-#    # Total drainage: initial eff_moist - final_eff_moist
-#    Q12 = eff_moist .- final_eff_moist
-#
-#    # Ensure drainage is non-negative and doesn't exceed available eff_moist
-#    Q12 = clamp.(Q12, 0.0f0, eff_moist)
-#
-#    return clamp.(Q12, 0.0f0, Inf32)
-#end
 
 
 # VIC Eq. 21a–21b (Liang 1994)
@@ -255,10 +203,10 @@ function solve_runoff_and_drainage(
     nTL = min(L, size(transpiration,3))
     println("nTL shape !!!!!!!!!!!!!!!!!: ", nTL)
 
-    TrL[:, :, 1:nTL] .= sum(T.(transpiration), dims=4)[:, :, 1:nTL, 1]
+    TrL[:, :, 1:nTL] .= sum(T.(transpiration), dims=4)[:, :, 1:nTL]
     #TrL[:, :, 1:nTL] .= sum(T.(cv_gpu[:, :, :, 1:end-1]) .* T.(transpiration[:, :, :, 1:end-1]), dims=4)[:, :, 1:nTL, 1]
 
-    EvL[:, :, 1]     .= sum(T.(soil_evaporation), dims=4)[:, :, 1, 1] 
+    EvL[:, :, 1]     .= sum(T.(soil_evaporation), dims=(3,4)) 
 
     Ev1_eff = CUDA.zeros(T, size(inflow))
     TrL_eff = CUDA.zeros(T, size(W_old))

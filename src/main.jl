@@ -275,7 +275,8 @@ function process_year(year)
                 # Soil moisture update
                 # ============================================================
                 # Weight for soil water removal
-                transpiration_grid = sum(transpiration .* coverage_gpu .* cv_gpu, dims=4)
+                transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+                #transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
 
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
                     infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
