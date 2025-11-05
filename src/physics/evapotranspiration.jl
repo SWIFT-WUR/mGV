@@ -461,19 +461,14 @@ end
 
 
 # Eq. (23): Total evapotranspiration
-function calculate_total_evapotranspiration(canopy_evaporation, transpiration, transpiration_layers, soil_evaporation, cv_gpu)
-
-##    total_transp_veg = sum(transpiration_layers, dims=3)[:, :, 1, 1:end-1]  # Sum over layers to get total per veg type
-#    vegetated_et = cv_gpu[:, :, :, 1:end-1] .* (canopy_evaporation[:, :, :, 1:end-1] .+ total_transp_veg)
-
-    # Sum canopy evaporation and transpiration for vegetated classes (n = 1:nveg-1)
-    vegetated_et = cv_gpu[:, :, :, 1:end-1] .* (canopy_evaporation[:, :, :, 1:end-1]) .+ transpiration[:, :, :, 1:end-1] #.* cv_gpu[:, :, :, 1:end-1]  
+function calculate_total_evapotranspiration(canopy_evap, transp, soil_evap, cv_gpu, coverage_gpu)
+    # Weight canopy evap and transpiration
+    canopy_weighted = sum_with_nan_handling(
+        canopy_evap .* coverage_gpu .* cv_gpu, 4
+    )
+    transp_weighted = sum_with_nan_handling(
+        transp .* coverage_gpu, 4
+    )
     
-    # Add bare soil evaporation (n = nveg)
-    bare_soil_et =  soil_evaporation #.* cv_gpu[:, :, :, end:end] 
-    
-    # Total evapotranspiration (sum across cover classes)
-    total_et = sum_with_nan_handling(vegetated_et, 4) .+ bare_soil_et
-  
-    return total_et
+    return canopy_weighted + transp_weighted + soil_evap  # soil_evap already weighted
 end
