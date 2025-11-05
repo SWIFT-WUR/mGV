@@ -274,8 +274,11 @@ function process_year(year)
                 # ============================================================
                 # Soil moisture update
                 # ============================================================
+                # Weight for soil water removal
+                transpiration_grid = sum(transpiration .* coverage_gpu .* cv_gpu, dims=4)
+
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
-                    infiltration, soil_evaporation, transpiration, soil_moisture_old,
+                    infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
                     soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu, cv_gpu,
                     Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
                 )
@@ -287,7 +290,7 @@ function process_year(year)
                 # ============================================================
                 @timeit to "compute_total_fluxes" begin
                     @time total_et = calculate_total_evapotranspiration(
-                        canopy_evaporation, transpiration, transpiration_layers, soil_evaporation, cv_gpu
+                        canopy_evaporation, transpiration, soil_evaporation, cv_gpu, coverage_gpu
                     )
                     @time total_runoff = calculate_total_runoff(
                         surface_runoff, subsurface_runoff, cv_gpu

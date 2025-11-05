@@ -70,7 +70,7 @@ function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, 
     Ts_new  = tsurf
 
     tolerance = 1e-3
-    max_iter  = 10
+    max_iter  = 20
 
     for iter in 1:max_iter
         residual   = f(Ts_new, Ts_old)   # Ts_old stays fixed = previous time step
