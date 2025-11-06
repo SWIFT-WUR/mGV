@@ -126,7 +126,7 @@ function process_year(year)
               potential_evaporation_output, potential_evaporation_summed_output, 
               net_radiation_output, net_radiation_summed_output, max_water_storage_output, 
               max_water_storage_summed_output, soil_evaporation_output, soil_temperature_output, 
-              soil_moisture_output, total_et_output, total_runoff_output, kappa_array_output, 
+              soil_moisture_output, total_et_output, surface_runoff_output, total_runoff_output, kappa_array_output, 
               cs_array_output, wilting_point_output, soil_moisture_max_output, 
               soil_moisture_critical_output, E_1_t_output, E_2_t_output, g_sw_1_output, 
               g_sw_2_output, g_sw_output, residual_moisture_output, throughfall_output, 
@@ -255,8 +255,9 @@ function process_year(year)
                     )
                 end
 
-                # Bare soil receives full precipitation
+                # Bare soil receives precipitation:
                 throughfall[:, :, :, end:end] = prec_gpu .* cv_gpu[:, :, :, end:end]
+    
 
                 # Calculate surface runoff
                 @time surface_runoff, asat = calculate_surface_runoff(
@@ -280,7 +281,7 @@ function process_year(year)
 
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
                     infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
-                    soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu, cv_gpu,
+                    soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
                     Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
                 )
 
@@ -421,7 +422,7 @@ function process_year(year)
                         surfstor, delsurfstor, delsoilmoist, asat, latent, sensible,
                         grnd_flux, vp_gpu, calculate_vpd(tair_gpu, vp_gpu), surf_cond,
                         Q12, soil_evaporation, soil_temperature, soil_moisture_new,
-                        total_et, total_runoff, kappa_array, cs_array,
+                        total_et, surface_runoff, total_runoff, kappa_array, cs_array,
                         potential_evaporation, water_storage, net_radiation,
                         canopy_evaporation, max_water_storage, wilting_point,
                         soil_moisture_critical, soil_moisture_max, E_1_t, E_2_t,
@@ -436,7 +437,7 @@ function process_year(year)
                         latent_output, sensible_output, grnd_flux_output, vp_output,
                         vpd_output, surf_cond_output, density_output, Q12_output,
                         soil_evaporation_output, soil_temperature_output,
-                        soil_moisture_output, total_et_output, total_runoff_output,
+                        soil_moisture_output, total_et_output, surface_runoff_output, total_runoff_output,
                         kappa_array_output, cs_array_output,
                         potential_evaporation_output,
                         potential_evaporation_summed_output, water_storage_output,

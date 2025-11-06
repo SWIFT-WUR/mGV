@@ -131,6 +131,10 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     total_et_output.attrib["units"] = "mm"
     total_et_output.attrib["description"] = "Total evapotranspiration, weighted sum of canopy evaporation, transpiration, and bare soil evaporation across all cover classes"
     
+    surface_runoff_output = defVar(out_ds, "surface_runoff_output", float_type, ("lon", "lat", "time"))
+    surface_runoff_output.attrib["units"] = "mm"
+    surface_runoff_output.attrib["description"] = "Surface runoff, weighted sum of surface runoff across all cover classes"
+
     total_runoff_output = defVar(out_ds, "total_runoff_output", float_type, ("lon", "lat", "time"))
     total_runoff_output.attrib["units"] = "mm"
     total_runoff_output.attrib["description"] = "Total runoff, weighted sum of surface and subsurface runoff across all cover classes"
@@ -210,7 +214,7 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
            canopy_evaporation_summed_output, transpiration_output, transpiration_summed_output, aerodynamic_resistance_output, aerodynamic_resistance_summed_output,
            potential_evaporation_output, potential_evaporation_summed_output, net_radiation_output,
            net_radiation_summed_output, max_water_storage_output, max_water_storage_summed_output,
-           soil_evaporation_output, soil_temperature_output, soil_moisture_output,  total_et_output, total_runoff_output,
+           soil_evaporation_output, soil_temperature_output, soil_moisture_output,  total_et_output, surface_runoff_output, total_runoff_output,
            kappa_array_output, cs_array_output, wilting_point_output, soil_moisture_max_output, soil_moisture_critical_output,
            E_1_t_output, E_2_t_output, g_sw_1_output, g_sw_2_output, g_sw_output, residual_moisture_output, 
            throughfall_output, throughfall_summed_output, topsoil_moisture_addition_output,
@@ -226,8 +230,8 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
                             delintercept, inflow, surfstor, delsurfstor, 
                             delsoilmoist, asat, latent, sensible, grnd_flux, 
                             vp_gpu, vpd, surf_cond, Q12, soil_evaporation, 
-                            soil_temperature, soil_moisture_new, total_et, 
-                            total_runoff, kappa_array, cs_array, 
+                            soil_temperature, soil_moisture_new, total_et,
+                            surface_runoff, total_runoff, kappa_array, cs_array, 
                             potential_evaporation, water_storage, net_radiation,
                             canopy_evaporation, max_water_storage, wilting_point,
                             soil_moisture_critical, soil_moisture_max, E_1_t, 
@@ -244,7 +248,7 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
                             vpd_output, surf_cond_output, density_output,
                             Q12_output, soil_evaporation_output,
                             soil_temperature_output, soil_moisture_output,
-                            total_et_output, total_runoff_output,
+                            total_et_output, surface_runoff_output, total_runoff_output,
                             kappa_array_output, cs_array_output,
                             potential_evaporation_output,
                             potential_evaporation_summed_output,
@@ -279,11 +283,6 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     tsurf_output[:, :, day] = Array(tsurf)
     aerodynamic_resistance_output[:, :, day, :] = Array(aerodynamic_resistance)
     aerodynamic_resistance_summed_output[:, :, day] = Array(ra_eff)
-    
-    transpiration_output[:, :, day, :] = Array(transpiration .* coverage_gpu)
-    transpiration_summed_output[:, :, day] = Array(
-        sum_with_nan_handling(transpiration .* coverage_gpu, 4)
-    )
     
     tair_output[:, :, day] = Array(tair_gpu)
     precipitation_output[:, :, day] = Array(prec_gpu)
@@ -320,6 +319,8 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     soil_moisture_output[:, :, day, :] = Array(soil_moisture_new)
     
     total_et_output[:, :, day] = Array(total_et)
+    surface_runoff_output[:, :, day] = Array(surface_runoff)
+
     total_runoff_output[:, :, day] = Array(total_runoff)
     kappa_array_output[:, :, day, :] = Array(kappa_array)
     cs_array_output[:, :, day, :] = Array(cs_array)
@@ -349,6 +350,14 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
         sum_with_nan_handling(
             convcv(net_radiation_processed) .* net_radiation_processed, 4
         )
+    )
+
+    # Transpiration
+    transpiration_processed = san_nan(transpiration)
+    transpiration_gc = transpiration_processed .* coverage_gpu # transpiration is already cv weighted
+    transpiration_output[:, :, day, :] = Array(transpiration_gc)
+    transpiration_summed_output[:, :, day] = Array(
+        sum_with_nan_handling(transpiration_gc, 4)
     )
     
     # Canopy evaporation (grid-cell field)
