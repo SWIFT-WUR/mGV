@@ -133,7 +133,7 @@ function process_year(year)
               throughfall_summed_output, topsoil_moisture_addition_output, delintercept_output, 
               inflow_output, surfstor_output, delsurfstor_output, delsoilmoist_output,
               asat_output, latent_output, sensible_output, grnd_flux_output, vp_output, 
-              vpd_output, surf_cond_output, density_output =
+              vpd_output, surf_cond_output, density_output, g_sw_output, dry_time_factor_output =
               create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
         end
 
@@ -220,7 +220,7 @@ function process_year(year)
                 # Transpiration
                 # ============================================================
                 @timeit to "calculate_transpiration" begin
-                    @time transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw = 
+                    @time transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw, dry_time_factor = 
                         calculate_transpiration(
                             potential_evaporation, aerodynamic_resistance, rarc_gpu, 
                             water_storage, max_water_storage, soil_moisture_old, 
@@ -276,7 +276,7 @@ function process_year(year)
                 # Soil moisture update
                 # ============================================================
                 # Weight for soil water removal
-                transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+                transpiration_grid = sum(transpiration_layers .* coverage_gpu .* cv_gpu, dims=4)
                 #transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
 
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
@@ -394,8 +394,7 @@ function process_year(year)
                 grnd_flux = net_radiation .- latent .- sensible
 
                 # Surface conductance
-                surf_cond = reshape(g_sw, ny, nx, 1, 1) .* 
-                           CUDA.ones(float_type, size(cv_gpu))
+                surf_cond = CUDA.ones(float_type, size(cv_gpu))
 
                 # ============================================================
                 # Spike diagnostics (selected days)
@@ -426,7 +425,7 @@ function process_year(year)
                         potential_evaporation, water_storage, net_radiation,
                         canopy_evaporation, max_water_storage, wilting_point,
                         soil_moisture_critical, soil_moisture_max, E_1_t, E_2_t,
-                        residual_moisture, cv_gpu, coverage_gpu,
+                        residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor,
                         # Output arrays
                         tsurf_output, aerodynamic_resistance_output,
                         aerodynamic_resistance_summed_output, transpiration_output,
@@ -446,7 +445,7 @@ function process_year(year)
                         canopy_evaporation_summed_output, max_water_storage_output,
                         max_water_storage_summed_output, wilting_point_output,
                         soil_moisture_critical_output, soil_moisture_max_output,
-                        E_1_t_output, E_2_t_output, residual_moisture_output
+                        E_1_t_output, E_2_t_output, residual_moisture_output, g_sw_output, dry_time_factor_output
                     )
                 end
 

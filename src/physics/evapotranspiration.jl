@@ -280,7 +280,7 @@ function calculate_transpiration(
     f2t = sum(@view(root_gpu[:, :, 2, :]), dims=3)[:, :, 1]
     g_sw_total = clamp.((f1t .* g1 .+ f2t .* g2) ./ (f1t .+ f2t .+ EPS), F0, F1)
 
-    return transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, g1, g2, g_sw_total
+    return transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, g1, g2, g_sw_veg, dry_time_factor
 end
 
 function calculate_soil_evaporation(soil_moisture, soil_moisture_max, 
