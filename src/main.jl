@@ -133,7 +133,7 @@ function process_year(year)
               throughfall_summed_output, topsoil_moisture_addition_output, delintercept_output, 
               inflow_output, surfstor_output, delsurfstor_output, delsoilmoist_output,
               asat_output, latent_output, sensible_output, grnd_flux_output, vp_output, 
-              vpd_output, surf_cond_output, density_output, g_sw_output, dry_time_factor_output =
+              vpd_output, surf_cond_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output =
               create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
         end
 
@@ -276,7 +276,7 @@ function process_year(year)
                 # Soil moisture update
                 # ============================================================
                 # Weight for soil water removal
-                transpiration_grid = sum(transpiration_layers .* coverage_gpu .* cv_gpu, dims=4)
+                transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
                 #transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
 
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
@@ -424,8 +424,8 @@ function process_year(year)
                         total_et, surface_runoff, total_runoff, kappa_array, cs_array,
                         potential_evaporation, water_storage, net_radiation,
                         canopy_evaporation, max_water_storage, wilting_point,
-                        soil_moisture_critical, soil_moisture_max, E_1_t, E_2_t,
-                        residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor,
+                        soil_moisture_critical, soil_moisture_max, E_1_t, E_2_t, 
+                        residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, g_sw_1, g_sw_2,
                         # Output arrays
                         tsurf_output, aerodynamic_resistance_output,
                         aerodynamic_resistance_summed_output, transpiration_output,
@@ -445,7 +445,8 @@ function process_year(year)
                         canopy_evaporation_summed_output, max_water_storage_output,
                         max_water_storage_summed_output, wilting_point_output,
                         soil_moisture_critical_output, soil_moisture_max_output,
-                        E_1_t_output, E_2_t_output, residual_moisture_output, g_sw_output, dry_time_factor_output
+                        E_1_t_output, E_2_t_output, residual_moisture_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_output, g_sw_2_output,
+                        g_sw_1_summed_output, g_sw_2_summed_output
                     )
                 end
 

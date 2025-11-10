@@ -150,12 +150,26 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
 
     E_1_t_output = defVar(out_ds, "E_1_t_output", float_type, ("lon", "lat", "time", "nveg"))
     E_2_t_output = defVar(out_ds, "E_2_t_output", float_type, ("lon", "lat", "time", "nveg"))
-    g_sw_1_output = defVar(out_ds, "g_sw_1_output", float_type, ("lon", "lat", "time", "nveg"))
-    g_sw_2_output = defVar(out_ds, "g_sw_2_output", float_type, ("lon", "lat", "time", "nveg"))
+    g_sw_1_output = defVar(out_ds, "g_sw_1_output", float_type, ("lon", "lat", "time"))
+    g_sw_2_output = defVar(out_ds, "g_sw_2_output", float_type, ("lon", "lat", "time"))
 
     g_sw_output = defVar(out_ds, "g_sw_output", float_type, ("lon", "lat", "time", "nveg"))
     g_sw_output.attrib["units"] = ""
     g_sw_output.attrib["description"] = "g_sw_output"
+
+    g_sw_summed_output = defVar(out_ds, "g_sw_summed_output", float_type, ("lon", "lat", "time"))
+    g_sw_summed_output.attrib["units"] = ""
+    g_sw_summed_output.attrib["description"] = "g_sw_summed_output"
+
+    g_sw_1_summed_output = defVar(out_ds, "g_sw_1_summed_output", float_type, ("lon", "lat", "time"))
+    g_sw_1_summed_output.attrib["units"] = ""
+    g_sw_1_summed_output.attrib["description"] = "g_sw_1_summed_output"
+
+    g_sw_2_summed_output = defVar(out_ds, "g_sw_2_summed_output", float_type, ("lon", "lat", "time"))
+    g_sw_2_summed_output.attrib["units"] = ""
+    g_sw_2_summed_output.attrib["description"] = "g_sw_2_summed_output"
+
+    
 
     dry_time_factor_output = defVar(out_ds, "dry_time_factor_output", float_type, ("lon", "lat", "time", "nveg"))
     dry_time_factor_output.attrib["units"] = ""
@@ -230,7 +244,7 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
            throughfall_output, throughfall_summed_output, topsoil_moisture_addition_output,
            delintercept_output, inflow_output, surfstor_output, delsurfstor_output, delsoilmoist_output,
            asat_output, latent_output, sensible_output, grnd_flux_output, vp_output, vpd_output,
-           surf_cond_output, density_output, g_sw_output, dry_time_factor_output
+           surf_cond_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output
 
 end
 
@@ -245,7 +259,7 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
                             potential_evaporation, water_storage, net_radiation,
                             canopy_evaporation, max_water_storage, wilting_point,
                             soil_moisture_critical, soil_moisture_max, E_1_t, 
-                            E_2_t, residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor,
+                            E_2_t, residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, g_sw_1, g_sw_2,
                             # Output array references
                             tsurf_output, aerodynamic_resistance_output,
                             aerodynamic_resistance_summed_output, 
@@ -270,8 +284,10 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
                             max_water_storage_summed_output,
                             wilting_point_output, soil_moisture_critical_output,
                             soil_moisture_max_output, E_1_t_output, E_2_t_output,
-                            residual_moisture_output, g_sw_output, dry_time_factor_output)
+                            residual_moisture_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_output, g_sw_2_output, g_sw_1_summed_output, g_sw_2_summed_output)
     
+
+
     # GPU-safe sanitizers
     san_nan = A -> begin
         T = eltype(A)
@@ -335,10 +351,31 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     kappa_array_output[:, :, day, :] = Array(kappa_array)
     cs_array_output[:, :, day, :] = Array(cs_array)
     
+    g_sw_processed = san_nan(g_sw)
+    g_sw_output[:, :, day, :] = Array(g_sw_processed)
+    g_sw_summed_output[:, :, day] = Array(
+        sum_with_nan_handling(
+            convcv(g_sw_processed) .* g_sw_processed, 4
+        )
+    )
 
-    g_sw_output[:, :, day, :] = Array(g_sw)
+    g_sw_1_processed = san_nan(g_sw_1)
+    g_sw_1_output[:, :, day] = Array(g_sw_1_processed)
+#    g_sw_1_summed_output[:, :, day] = Array(
+#        sum_with_nan_handling(
+#            convcv(g_sw_1_processed) .* g_sw_1_processed, 4
+#        )
+#    )
+
+    g_sw_2_processed = san_nan(g_sw_2)
+    g_sw_2_output[:, :, day] = Array(g_sw_2_processed)
+ #   g_sw_2_summed_output[:, :, day] = Array(
+ #       sum_with_nan_handling(
+ #           convcv(g_sw_2_processed) .* g_sw_2_processed, 4
+ #       )
+ #   )
+
     dry_time_factor_output[:, :, day, :] = Array(dry_time_factor)
-
 
     # Potential evaporation
     potential_evaporation_processed = san_nan(potential_evaporation)
@@ -354,7 +391,7 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     water_storage_output[:, :, day, :] = Array(water_storage_processed)
     water_storage_summed_output[:, :, day] = Array(
         sum_with_nan_handling(
-            convcv(water_storage_processed) .* water_storage_processed, 4
+            water_storage_processed, 4
         )
     )
     
