@@ -368,6 +368,8 @@ function process_year(year)
                 delsoilmoist .= soil_moisture_new .- soil_moisture_old
                 prev_water_storage = copy(water_storage)
 
+                println("CHECKPOINT 1")
+
                 # ============================================================
                 # Energy balance components
                 # ============================================================
@@ -396,6 +398,9 @@ function process_year(year)
                 # Surface conductance
                 surf_cond = CUDA.ones(float_type, size(cv_gpu))
 
+                println("CHECKPOINT 2")
+
+
                 # ============================================================
                 # Spike diagnostics (selected days)
                 # ============================================================
@@ -410,6 +415,8 @@ function process_year(year)
                 if day == 120
                     run_external_debug(day, g_sw_1, g_sw_2, root_gpu, transpiration)
                 end
+
+                println("CHECKPOINT 3")
 
                 # ============================================================
                 # Write outputs
