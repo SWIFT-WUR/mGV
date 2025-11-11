@@ -163,7 +163,7 @@ function solve_runoff_and_drainage(
     # Aggregate ET per layer (sum over veg; soil evap only on layer 1; GPU-safe with dropdims)
     layer_soil_evap = dropdims(sum(soil_evaporation[:, :, 1, :], dims=3), dims=3)  # (ny,nx)
     layer_transp = CUDA.zeros(eltype(soil_moisture), size(soil_moisture))  # (ny,nx,nlayer)
-    for l in 1:3#1:3
+    for l in 1:1#1:3
         layer_transp[:, :, l] .= dropdims(sum(transpiration[:, :, l, :], dims=3), dims=3)
     end
 
