@@ -459,9 +459,8 @@ function calculate_soil_evaporation(soil_moisture, soil_moisture_max,
     ratio_power = ratio_power .* ratio_beta
     dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 40.0f0)
 
-    
     beta_asp = as .+ (1.0f0 .- as) .* (1.0f0 .- ratio_beta) .* dummy
-    
+
     # Reshape beta_asp to 4D for proper broadcasting
     beta_asp_4d = reshape(beta_asp, size(beta_asp)..., 1)  # (ny, nx, 1, 1)
     mask_saturated_4d = reshape(mask_saturated, size(mask_saturated)..., 1)
@@ -506,8 +505,10 @@ function update_water_canopy_storage(water_storage, prec, cv, canopy_evap, Wm, t
     excess      = max.(0.0, new_storage .- Wm)           # P′_l in Eq. 16 (only when W hits Wm)
     water_storage = clamp.(new_storage, 0.0, Wm) .* cv
 
-    # Throughfall that reaches the ground must be grid-area weighted
-    throughfall = cv .* excess
+    throughfall_veg = cv .* excess .* coverage  # Veg-weighted.
+    throughfall_bare = prec .* (1.0 .- coverage) .* cv  # Direct to ground.
+    throughfall = throughfall_veg + throughfall_bare  # Grid-total.
+    
     return water_storage, throughfall
 end
 

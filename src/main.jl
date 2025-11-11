@@ -256,7 +256,7 @@ function process_year(year)
                 end
 
                 # Bare soil receives precipitation:
-                throughfall[:, :, :, end:end] = prec_gpu .* cv_gpu[:, :, :, end:end]
+                #throughfall[:, :, :, end:end] = prec_gpu .* cv_gpu[:, :, :, end:end]
     
 
                 # Calculate surface runoff
