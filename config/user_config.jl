@@ -178,7 +178,7 @@ elseif CASE == "mekong"
     input_vp_prefix        = "./input_data/mekong/forcing/vp/vp_WFDE5_v2.0_5arcmin_"
     input_swdown_prefix    = "./input_data/mekong/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_"
     input_lwdown_prefix    = "./input_data/mekong/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_"
-    # input_psurf_prefix     = "./input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_"
+    input_psurf_prefix     = "./input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_"
 
     # Input variable names (as specified in the input files' metadata)
     d0_var = "displacement"
@@ -226,6 +226,7 @@ elseif CASE == "mekong"
     vp_var = "vp"
     swdown_var = "swdown"
     lwdown_var = "lwdown"
+    psurf_var = "psurf"
 
     # Output file paths/names
     output_dir             = "./output_data/mekong/"

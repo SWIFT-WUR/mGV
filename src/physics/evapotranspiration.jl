@@ -110,7 +110,7 @@ function calculate_net_radiation(swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
 end
 
 function calculate_potential_evaporation(
-    tair_gpu, vp_gpu, elev_gpu,
+    tair_gpu, psurf_gpu, vp_gpu, elev_gpu,
     net_radiation, aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
 )
     # Element type hygiene
@@ -123,7 +123,12 @@ function calculate_potential_evaporation(
     scale_h     = T.(calculate_scale_height(tair_gpu, elev_gpu))
     p_sfc       = T(p_std) .* exp.(-T.(elev_gpu) ./ scale_h)
     gamma_      = T(1628.6) .* p_sfc ./ latent_heat
-    air_dens    = T(0.003486) .* p_sfc ./ (T(273.15) .+ T.(tair_gpu))
+    #air_dens    = T(0.003486) .* p_sfc ./ (T(273.15) .+ T.(tair_gpu))
+    air_dens    = T(0.003486) .* T.(psurf_gpu) .* pa_per_kpa ./ (T(273.15) .+ T.(tair_gpu))
+
+
+
+
 
     # --- Tile counts & slices (use ra as reference) ---
     N_all   = size(aerodynamic_resistance, 4)        # veg + bare

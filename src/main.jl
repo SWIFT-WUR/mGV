@@ -109,7 +109,7 @@ function process_year(year)
     # ------------------------------------------------------------------------
     println("Loading forcing data and allocating memory...")
     @timeit to "load_forcing" begin
-        @load_forcing year prec tair wind vp swdown lwdown
+        @load_forcing year prec tair wind vp swdown lwdown psurf
     end
 
     # ------------------------------------------------------------------------
@@ -171,7 +171,7 @@ function process_year(year)
                 
                 @timeit to "gpu_load_daily_inputs" begin
                     @time gpu_load_daily_inputs(day, day_prev, 
-                        @vars(prec, tair, wind, vp, swdown, lwdown)...)
+                        @vars(prec, tair, wind, vp, swdown, lwdown, psurf)...)
                 end
 
                 # Initialize surface temperature on first timestep
@@ -196,7 +196,7 @@ function process_year(year)
 
                 @timeit to "calculate_potential_evaporation" begin
                     @time potential_evaporation = calculate_potential_evaporation(
-                        tair_gpu, vp_gpu, elev_gpu, net_radiation, 
+                        tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation, 
                         aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                     )
                 end
@@ -276,7 +276,7 @@ function process_year(year)
                 # Soil moisture update
                 # ============================================================
                 # Weight for soil water removal
-                transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+                transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
                 #transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
 
                 @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
@@ -334,7 +334,7 @@ function process_year(year)
                             tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                             sum_with_nan_handling(cv_gpu .* aerodynamic_resistance, 4),
                             kappa_array, depth_gpu, day_sec, cs_array, total_et, 
-                            tair_gpu, cv_gpu
+                            tair_gpu, cv_gpu, psurf_gpu
                         )
                     end
 
@@ -353,7 +353,7 @@ function process_year(year)
                     @time tsurf = solve_surface_temperature(
                         tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                         ra_eff, kappa_array, depth_gpu, day_sec, cs_array, 
-                        total_et, tair_gpu, cv_gpu
+                        total_et, tair_gpu, cv_gpu, psurf_gpu
                     )
                 end
 

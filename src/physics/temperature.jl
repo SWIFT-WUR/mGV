@@ -1,4 +1,4 @@
-function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, kappa, depth_gpu, delta_t, Cs, total_et, T_a, cv_gpu)
+function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, kappa, depth_gpu, delta_t, Cs, total_et, T_a, cv_gpu, psurf_gpu)
 
     albedo = sum_with_nan_handling(cv_gpu .* albedo, 4)
     albedo .= ifelse.(isnan.(albedo) .| (abs.(albedo) .> 1e30), 0.0, albedo)
@@ -28,9 +28,10 @@ function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, 
 
     # eq.35 air-layer storage with z_a (e.g., 2 m)
     z_a = 10.0
-    air_storage = (rho_a .* c_p_air .* z_a) ./ (2.0 * delta_t)
+    air_dens    = (0.003486) .* (psurf_gpu) .* pa_per_kpa ./ ((273.15) .+ (T_a))
+    air_storage = (air_dens .* c_p_air .* z_a) ./ (2.0 * delta_t)
 
-    air_term    = (rho_a .* c_p_air ./ max.(rh, 1e-3)) .+ air_storage
+    air_term    = (air_dens .* c_p_air ./ max.(rh, 1e-3)) .+ air_storage
     common_term = heat_transfer_term .+ air_term
 
     function f(Ts_new, Ts_old)
@@ -41,7 +42,7 @@ function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, 
 
         term1 = (1 .- albedo) .* Rs
         term2 = emissivity .* RL
-        term3 = (rho_a .* c_p_air ./ max.(rh, 1e-3)) .* T_a_K
+        term3 = (air_dens .* c_p_air ./ max.(rh, 1e-3)) .* T_a_K
         term4 = rho_w .* calculate_latent_heat(Ts_new_K) .* (total_et ./ (delta_t .* mm_in_m))
         term5 = air_storage .* Ts_old_K  # <-- FIX: use z_a storage, not D1
         num   = (kappa_top .* T2_K ./ D2) .+ (Cs_top .* D2 .* T1_K ./ (2 * delta_t))
