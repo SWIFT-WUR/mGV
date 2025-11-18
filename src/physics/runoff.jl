@@ -89,10 +89,5 @@ function calculate_total_runoff(surface_runoff, subsurface_runoff, cv_gpu)
  #   total_runoff = sum_with_nan_handling(cv_gpu .* (surface_runoff .+ subsurface_runoff), 4) #./ 14. # C_v[n]
     total_runoff = (surface_runoff .+ subsurface_runoff) # TODO: with or without cv_gpu?
 
-    println("surface_runoff shape: ", size(surface_runoff))
-    println("subsurface_runoff shape: ", size(subsurface_runoff))
-    println("total_runoff shape: ", size(total_runoff))
-
-
     return total_runoff
 end

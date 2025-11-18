@@ -115,11 +115,11 @@ function process_year(year)
     # ------------------------------------------------------------------------
     # Create output file
     # ------------------------------------------------------------------------
-    println("Opening output file...")
+    @debug println("Opening output file...")
     @timeit to "create_output_netcdf" begin
         output_file = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
         
-        @time out_ds, precipitation_output, water_storage_output, water_storage_summed_output, 
+        out_ds, precipitation_output, water_storage_output, water_storage_summed_output, 
               Q12_output, tair_output, tsurf_output, canopy_evaporation_output, 
               canopy_evaporation_summed_output, transpiration_output, transpiration_summed_output, 
               aerodynamic_resistance_output, aerodynamic_resistance_summed_output,
@@ -131,14 +131,12 @@ function process_year(year)
               soil_moisture_critical_output, E_1_t_output, E_2_t_output, g_sw_1_output, 
               g_sw_2_output, g_sw_output, residual_moisture_output, throughfall_output, 
               throughfall_summed_output, topsoil_moisture_addition_output, delintercept_output, 
-              inflow_output, surfstor_output, delsurfstor_output, delsoilmoist_output,
-              asat_output, latent_output, sensible_output, grnd_flux_output, vp_output, 
-              vpd_output, surf_cond_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output =
+              surfstor_output, 
+              asat_output, vp_output, 
+              vpd_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output =
               create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
         end
-
-    println("Soil moisture at position [3,21,1]: ", Array(soil_moisture_new[4:4, 22:22, 1:1])[1])
-    
+   
     # ------------------------------------------------------------------------
     # Initialize diagnostic arrays
     # ------------------------------------------------------------------------
@@ -165,12 +163,12 @@ function process_year(year)
                 # Load daily/monthly inputs to GPU
                 # ============================================================
                 @timeit to "gpu_load_monthly_inputs" begin
-                    @time gpu_load_monthly_inputs(month, month_prev, 
+                    gpu_load_monthly_inputs(month, month_prev, 
                         @vars(d0, z0, LAI, albedo, coverage)...)
                 end
                 
                 @timeit to "gpu_load_daily_inputs" begin
-                    @time gpu_load_daily_inputs(day, day_prev, 
+                    gpu_load_daily_inputs(day, day_prev, 
                         @vars(prec, tair, wind, vp, swdown, lwdown, psurf)...)
                 end
 
@@ -183,19 +181,19 @@ function process_year(year)
                 # Energy balance and atmospheric calculations
                 # ============================================================
                 @timeit to "compute_aerodynamic_resistance" begin
-                    @time aerodynamic_resistance = compute_aerodynamic_resistance(
+                    aerodynamic_resistance = compute_aerodynamic_resistance(
                         z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
                     )
                 end
 
                 @timeit to "calculate_net_radiation" begin
-                    @time net_radiation = calculate_net_radiation(
+                    net_radiation = calculate_net_radiation(
                         swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
                     )
                 end
 
                 @timeit to "calculate_potential_evaporation" begin
-                    @time potential_evaporation = calculate_potential_evaporation(
+                    potential_evaporation = calculate_potential_evaporation(
                         tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation, 
                         aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                     )
@@ -205,11 +203,11 @@ function process_year(year)
                 # Canopy processes
                 # ============================================================
                 @timeit to "calculate_max_water_storage" begin
-                    @time max_water_storage = calculate_max_water_storage(LAI_gpu, cv_gpu, coverage_gpu)
+                    max_water_storage = calculate_max_water_storage(LAI_gpu, cv_gpu, coverage_gpu)
                 end
 
                 @timeit to "calculate_canopy_evaporation" begin
-                    @time canopy_evaporation, f_n = calculate_canopy_evaporation(
+                    canopy_evaporation, f_n = calculate_canopy_evaporation(
                         water_storage, max_water_storage, potential_evaporation, 
                         aerodynamic_resistance, rarc_gpu, prec_gpu, cv_gpu, 
                         rmin_gpu, LAI_gpu, tair_gpu, elev_gpu
@@ -220,7 +218,7 @@ function process_year(year)
                 # Transpiration
                 # ============================================================
                 @timeit to "calculate_transpiration" begin
-                    @time transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw, dry_time_factor = 
+                    transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw, dry_time_factor = 
                         calculate_transpiration(
                             potential_evaporation, aerodynamic_resistance, rarc_gpu, 
                             water_storage, max_water_storage, soil_moisture_old, 
@@ -229,38 +227,28 @@ function process_year(year)
                         )
                 end
 
-                println("Sample transpiration[4,22,1,1]: ", 
-                        Array(transpiration[4:4, 22:22, 1:1, 1:1])[1])
-                println("Sample soil_moisture_old[4,22,1]: ", 
-                        Array(soil_moisture_old[4:4, 22:22, 1:1])[1])
-
                 # ============================================================
                 # Soil evaporation
                 # ============================================================
                 @timeit to "calculate_soil_evaporation" begin
-                    @time soil_evaporation = calculate_soil_evaporation(
+                    soil_evaporation = calculate_soil_evaporation(
                         soil_moisture_old, soil_moisture_max, potential_evaporation, 
                         b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
                     )
                 end
 
-
                 # ============================================================
                 # Water balance: throughfall and runoff
                 # ============================================================
                 @timeit to "update_water_canopy_storage" begin
-                    @time water_storage, throughfall = update_water_canopy_storage(
+                    water_storage, throughfall = update_water_canopy_storage(
                         water_storage, prec_gpu, cv_gpu, canopy_evaporation, 
                         max_water_storage, throughfall, coverage_gpu
                     )
                 end
 
-                # Bare soil receives precipitation:
-                #throughfall[:, :, :, end:end] = prec_gpu .* cv_gpu[:, :, :, end:end]
-    
-
                 # Calculate surface runoff
-                @time surface_runoff, asat = calculate_surface_runoff(
+                surface_runoff, asat = calculate_surface_runoff(
                     prec_gpu, throughfall, soil_moisture_old, 
                     soil_moisture_max, b_infilt_gpu, cv_gpu
                 )
@@ -270,16 +258,16 @@ function process_year(year)
                 infiltration_raw = total_input .- surface_runoff
                 infiltration = max.(infiltration_raw, zero(eltype(infiltration_raw)))
 
-                println("neg. infiltration cells = ", count(<(0), Array(infiltration_raw)))
+                @debug println("neg. infiltration cells = ", count(<(0), Array(infiltration_raw)))
 
                 # ============================================================
                 # Soil moisture update
                 # ============================================================
                 # Weight for soil water removal
                 transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
-                #transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
+                #transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
 
-                @time soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
+                soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
                     infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
                     soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
                     Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
@@ -291,10 +279,10 @@ function process_year(year)
                 # Total fluxes
                 # ============================================================
                 @timeit to "compute_total_fluxes" begin
-                    @time total_et = calculate_total_evapotranspiration(
+                    total_et = calculate_total_evapotranspiration(
                         canopy_evaporation, transpiration, soil_evaporation, cv_gpu, coverage_gpu
                     )
-                    @time total_runoff = calculate_total_runoff(
+                    total_runoff = calculate_total_runoff(
                         surface_runoff, subsurface_runoff, cv_gpu
                     )
                 end
@@ -306,21 +294,21 @@ function process_year(year)
                 organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_new))
 
                 @timeit to "soil_conductivity" begin
-                    @time kappa_array = soil_conductivity(
+                    kappa_array = soil_conductivity(
                         soil_moisture_new, ice_frac, soil_dens_min, bulk_dens_min, 
                         quartz_gpu, organic_frac_gpu, porosity
                     )
                 end
 
                 @timeit to "volumetric_heat_capacity" begin
-                    @time cs_array = volumetric_heat_capacity(
+                    cs_array = volumetric_heat_capacity(
                         bulk_dens_gpu ./ soil_dens_gpu, 
                         soil_moisture_new ./ rho_w, ice_frac, organic_frac
                     )
                 end
 
                 @timeit to "estimate_layer_temperature" begin
-                    @time soil_temperature = estimate_layer_temperature(
+                    soil_temperature = estimate_layer_temperature(
                         depth_gpu, dp_gpu, tsurf, soil_temperature, Tavg_gpu
                     )
                 end
@@ -330,7 +318,7 @@ function process_year(year)
                 # ============================================================
                 if day == 1 && year == start_year
                     @timeit to "solve_surface_temperature" begin
-                        @time tsurf = solve_surface_temperature(
+                        tsurf = solve_surface_temperature(
                             tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                             sum_with_nan_handling(cv_gpu .* aerodynamic_resistance, 4),
                             kappa_array, depth_gpu, day_sec, cs_array, total_et, 
@@ -339,7 +327,7 @@ function process_year(year)
                     end
 
                     @timeit to "compute_aerodynamic_resistance" begin
-                        @time aerodynamic_resistance = compute_aerodynamic_resistance(
+                        aerodynamic_resistance = compute_aerodynamic_resistance(
                             z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
                         )
                     end
@@ -350,56 +338,12 @@ function process_year(year)
                 ra_eff = 1.0 ./ max.(ra_eff_inv, eps(eltype(ra_eff_inv)))
 
                 @timeit to "solve_surface_temperature" begin
-                    @time tsurf = solve_surface_temperature(
+                    tsurf = solve_surface_temperature(
                         tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                         ra_eff, kappa_array, depth_gpu, day_sec, cs_array, 
                         total_et, tair_gpu, cv_gpu, psurf_gpu
                     )
                 end
-
-                println("3 BEFORE OUTPUT Soil moisture at position [4,22,1]: ", 
-                        Array(soil_moisture_new[4:4, 22:22, 1:1])[1])
-
-                # ============================================================
-                # Update diagnostic arrays
-                # ============================================================
-                delintercept .= water_storage .- prev_water_storage
-                inflow = throughfall
-                delsoilmoist .= soil_moisture_new .- soil_moisture_old
-                prev_water_storage = copy(water_storage)
-
-                println("CHECKPOINT 1")
-
-                # ============================================================
-                # Energy balance components
-                # ============================================================
-                ny, nx = size(tair_gpu, 1), size(tair_gpu, 2)
-                nveg = size(cv_gpu, 4)
-
-                # Per-tile ET (mm/day)
-                et_tile = CUDA.zeros(float_type, size(cv_gpu))
-                et_tile[:, :, :, 1:nveg-1] .= canopy_evaporation[:, :, :, 1:nveg-1] .+ 
-                                               transpiration[:, :, :, 1:nveg-1]
-                et_tile[:, :, :, nveg:nveg] .= soil_evaporation
-
-                # Latent heat flux (W/m²)
-                latent_heat = calculate_latent_heat(tair_gpu .+ 273.15)
-                Lv4 = reshape(latent_heat, ny, nx, 1, 1)
-                latent = rho_w .* Lv4 .* (et_tile ./ (day_sec .* mm_in_m))
-
-                # Sensible heat flux (W/m²)
-                ΔT = reshape(tsurf .- tair_gpu, ny, nx, 1, 1)
-                ra_safe = max.(aerodynamic_resistance, eps(eltype(aerodynamic_resistance)))
-                sensible = rho_a .* c_p_air .* (ΔT ./ ra_safe)
-
-                # Ground heat flux by closure (W/m²)
-                grnd_flux = net_radiation .- latent .- sensible
-
-                # Surface conductance
-                surf_cond = CUDA.ones(float_type, size(cv_gpu))
-
-                println("CHECKPOINT 2")
-
 
                 # ============================================================
                 # Spike diagnostics (selected days)
@@ -416,17 +360,16 @@ function process_year(year)
                     run_external_debug(day, g_sw_1, g_sw_2, root_gpu, transpiration)
                 end
 
-                println("CHECKPOINT 3")
+                @debug println("Writing outputs")
 
                 # ============================================================
                 # Write outputs
                 # ============================================================
                 @timeit to "outputs" begin
-                    @time write_daily_outputs(
+                    write_daily_outputs(
                         day, tsurf, aerodynamic_resistance, ra_eff, transpiration,
-                        tair_gpu, prec_gpu, throughfall, delintercept, inflow, 
-                        surfstor, delsurfstor, delsoilmoist, asat, latent, sensible,
-                        grnd_flux, vp_gpu, calculate_vpd(tair_gpu, vp_gpu), surf_cond,
+                        tair_gpu, prec_gpu, throughfall, delintercept,  
+                        surfstor, delsurfstor, delsoilmoist, asat, vp_gpu, calculate_vpd(tair_gpu, vp_gpu), 
                         Q12, soil_evaporation, soil_temperature, soil_moisture_new,
                         total_et, surface_runoff, total_runoff, kappa_array, cs_array,
                         potential_evaporation, water_storage, net_radiation,
@@ -438,10 +381,10 @@ function process_year(year)
                         aerodynamic_resistance_summed_output, transpiration_output,
                         transpiration_summed_output, tair_output, precipitation_output,
                         throughfall_output, throughfall_summed_output,
-                        delintercept_output, inflow_output, surfstor_output,
-                        delsurfstor_output, delsoilmoist_output, asat_output,
-                        latent_output, sensible_output, grnd_flux_output, vp_output,
-                        vpd_output, surf_cond_output, density_output, Q12_output,
+                        delintercept_output, surfstor_output,
+                        asat_output,
+                        vp_output,
+                        vpd_output, density_output, Q12_output,
                         soil_evaporation_output, soil_temperature_output,
                         soil_moisture_output, total_et_output, surface_runoff_output, total_runoff_output,
                         kappa_array_output, cs_array_output,

@@ -82,14 +82,14 @@ function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, 
 
         converged = abs.(delta_Ts) .< tolerance
         if all(converged)
-            println("Converged after $iter iterations"); break
+            @debug println("Converged after $iter iterations"); break
         end
 
         delta_Ts = ifelse.(converged, 0.0, delta_Ts)
         Ts_new = clamp.(Ts_new .- delta_Ts, -100.0, 100.0)
 
-        println("Iteration $iter: Number of converged points = ", sum(converged))
-        println("Iteration $iter: Ts_new min/max: ", minimum(Ts_new), " / ", maximum(Ts_new))
+        @debug println("Iteration $iter: Number of converged points = ", sum(converged))
+        @debug println("Iteration $iter: Ts_new min/max: ", minimum(Ts_new), " / ", maximum(Ts_new))
         # NOTE: do NOT update Ts_old here
     end
 

@@ -182,37 +182,14 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     delintercept_output.attrib["units"] = "mm"
     delintercept_output.attrib["description"] = "Change in canopy interception storage"
 
-    inflow_output = defVar(out_ds, "inflow_output", float_type, ("lon", "lat", "time", "nveg"))
-    inflow_output.attrib["units"] = "mm"
-    inflow_output.attrib["description"] = "Water inflow to soil layers"
-
     surfstor_output = defVar(out_ds, "surfstor_output", float_type, ("lon", "lat", "time", "nveg"))
     surfstor_output.attrib["units"] = "mm"
     surfstor_output.attrib["description"] = "Surface water storage"
 
-    delsurfstor_output = defVar(out_ds, "delsurfstor_output", float_type, ("lon", "lat", "time", "nveg"))
-    delsurfstor_output.attrib["units"] = "mm"
-    delsurfstor_output.attrib["description"] = "Change in surface water storage"
-
-    delsoilmoist_output = defVar(out_ds, "delsoilmoist_output", float_type, ("lon", "lat", "time", "layer"))
-    delsoilmoist_output.attrib["units"] = "kg/m^3"
-    delsoilmoist_output.attrib["description"] = "Change in soil moisture"
 
     asat_output = defVar(out_ds, "asat_output", float_type, ("lon", "lat", "time"))
     asat_output.attrib["units"] = "fraction"
     asat_output.attrib["description"] = "Fraction of saturated area"
-
-    latent_output = defVar(out_ds, "latent_output", float_type, ("lon", "lat", "time", "nveg"))
-    latent_output.attrib["units"] = "W/m^2"
-    latent_output.attrib["description"] = "Latent heat flux"
-
-    sensible_output = defVar(out_ds, "sensible_output", float_type, ("lon", "lat", "time", "nveg"))
-    sensible_output.attrib["units"] = "W/m^2"
-    sensible_output.attrib["description"] = "Sensible heat flux"
-
-    grnd_flux_output = defVar(out_ds, "grnd_flux_output", float_type, ("lon", "lat", "time", "nveg"))
-    grnd_flux_output.attrib["units"] = "W/m^2"
-    grnd_flux_output.attrib["description"] = "Ground heat flux"
 
     vp_output = defVar(out_ds, "vp_output", float_type, ("lon", "lat", "time"))
     vp_output.attrib["units"] = "kPa"
@@ -221,10 +198,6 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     vpd_output = defVar(out_ds, "vpd_output", float_type, ("lon", "lat", "time"))
     vpd_output.attrib["units"] = "Pa"
     vpd_output.attrib["description"] = "Vapor pressure deficit"
-
-    surf_cond_output = defVar(out_ds, "surf_cond_output", float_type, ("lon", "lat", "time", "nveg"))
-    surf_cond_output.attrib["units"] = "m/s"
-    surf_cond_output.attrib["description"] = "Surface conductance"
 
     density_output = defVar(out_ds, "density_output", float_type, ("lon", "lat", "time"))
     density_output.attrib["units"] = "kg/m^3"
@@ -242,18 +215,18 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
            kappa_array_output, cs_array_output, wilting_point_output, soil_moisture_max_output, soil_moisture_critical_output,
            E_1_t_output, E_2_t_output, g_sw_1_output, g_sw_2_output, g_sw_output, residual_moisture_output, 
            throughfall_output, throughfall_summed_output, topsoil_moisture_addition_output,
-           delintercept_output, inflow_output, surfstor_output, delsurfstor_output, delsoilmoist_output,
-           asat_output, latent_output, sensible_output, grnd_flux_output, vp_output, vpd_output,
-           surf_cond_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output
+           delintercept_output, surfstor_output, 
+           asat_output, vp_output, vpd_output,
+           density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output
 
 end
 
 
 function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff, 
                             transpiration, tair_gpu, prec_gpu, throughfall,
-                            delintercept, inflow, surfstor, delsurfstor, 
-                            delsoilmoist, asat, latent, sensible, grnd_flux, 
-                            vp_gpu, vpd, surf_cond, Q12, soil_evaporation, 
+                            delintercept, surfstor, delsurfstor, 
+                            delsoilmoist, asat, 
+                            vp_gpu, vpd, Q12, soil_evaporation, 
                             soil_temperature, soil_moisture_new, total_et,
                             surface_runoff, total_runoff, kappa_array, cs_array, 
                             potential_evaporation, water_storage, net_radiation,
@@ -266,10 +239,9 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
                             transpiration_output, transpiration_summed_output,
                             tair_output, precipitation_output, throughfall_output,
                             throughfall_summed_output, delintercept_output,
-                            inflow_output, surfstor_output, delsurfstor_output,
-                            delsoilmoist_output, asat_output, latent_output,
-                            sensible_output, grnd_flux_output, vp_output,
-                            vpd_output, surf_cond_output, density_output,
+                            surfstor_output, asat_output, 
+                            vp_output,
+                            vpd_output, density_output,
                             Q12_output, soil_evaporation_output,
                             soil_temperature_output, soil_moisture_output,
                             total_et_output, surface_runoff_output, total_runoff_output,
@@ -316,22 +288,12 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     throughfall_summed_output[:, :, day] = Array(sum_with_nan_handling(throughfall, 4))
     
     # Diagnostic outputs
-    delintercept_output[:, :, day, :] = Array(delintercept)
-    inflow_output[:, :, day, :] = Array(inflow)
-    surfstor_output[:, :, day, :] = Array(surfstor)
-    delsurfstor_output[:, :, day, :] = Array(delsurfstor)
-    delsoilmoist_output[:, :, day, :] = Array(delsoilmoist)
     asat_output[:, :, day] = Array(asat)
-    
-    # Energy balance outputs
-    latent_output[:, :, day, :] = Array(latent)
-    sensible_output[:, :, day, :] = Array(sensible)
-    grnd_flux_output[:, :, day, :] = Array(grnd_flux)
-    
+        
     # Atmospheric outputs
     vp_output[:, :, day] = Array(vp_gpu)
     vpd_output[:, :, day] = Array(vpd)
-    surf_cond_output[:, :, day, :] = Array(surf_cond)
+
     density_output[:, :, day] = fill(
         float_type(rho_a), size(tair_gpu, 1), size(tair_gpu, 2)
     )
@@ -361,19 +323,10 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
 
     g_sw_1_processed = san_nan(g_sw_1)
     g_sw_1_output[:, :, day] = Array(g_sw_1_processed)
-#    g_sw_1_summed_output[:, :, day] = Array(
-#        sum_with_nan_handling(
-#            convcv(g_sw_1_processed) .* g_sw_1_processed, 4
-#        )
-#    )
+
 
     g_sw_2_processed = san_nan(g_sw_2)
     g_sw_2_output[:, :, day] = Array(g_sw_2_processed)
- #   g_sw_2_summed_output[:, :, day] = Array(
- #       sum_with_nan_handling(
- #           convcv(g_sw_2_processed) .* g_sw_2_processed, 4
- #       )
- #   )
 
     dry_time_factor_output[:, :, day, :] = Array(dry_time_factor)
 

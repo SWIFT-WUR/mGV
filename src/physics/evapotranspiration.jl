@@ -132,7 +132,6 @@ function calculate_potential_evaporation(
 
     # --- Tile counts & slices (use ra as reference) ---
     N_all   = size(aerodynamic_resistance, 4)        # veg + bare
-    @assert N_all ≥ 1 "aerodynamic_resistance must have ≥1 tiles"
     veg_dim = max(N_all - 1, 0)                      # vegetation tiles
     if veg_dim == 0
         # no vegetation tiles: just soil PET
@@ -243,11 +242,11 @@ function calculate_canopy_evaporation(
 
     # ---- diagnostics ----
     if rand() < 1.0
-        @info "canopy diag" med_ra=Statistics.median(Array(ra))
-        @info "canopy diag" med_ralpha=Statistics.median(Array(ralpha))
-        @info "canopy diag" med_ra_ratio=Statistics.median(Array(ra_ratio))
-        @info "canopy diag" med_W23=Statistics.median(Array((Wratio .^ T(2/3))))
-        @info "canopy diag" med_Epwet=Statistics.median(Array(E_p_wet))
+        @debug "canopy diag" med_ra=Statistics.median(Array(ra))
+        @debug "canopy diag" med_ralpha=Statistics.median(Array(ralpha))
+        @debug "canopy diag" med_ra_ratio=Statistics.median(Array(ra_ratio))
+        @debug "canopy diag" med_W23=Statistics.median(Array((Wratio .^ T(2/3))))
+        @debug "canopy diag" med_Epwet=Statistics.median(Array(E_p_wet))
     end
 
     return canopy_evaporation, f_n
@@ -487,22 +486,6 @@ function calculate_soil_evaporation(soil_moisture, soil_moisture_max,
     # Sum over vegetation types (dim 4)
     return sum(esoil, dims=4)  # (ny, nx, 1, 1)
 end
-
-
-#function update_water_canopy_storage(water_storage, prec_gpu, cv_gpu, canopy_evaporation, max_water_storage, throughfall, coverage)
-#
-#    # Calculate new water storage: current storage + (precipitation - canopy evaporation)
-##    new_water_storage = water_storage .+ (prec_gpu .* cv_gpu .* coverage) .- canopy_evaporation
-#    new_water_storage = water_storage .+ (prec_gpu .* cv_gpu) .- canopy_evaporation
-#
-#    # Compute throughfall: excess water beyond max storage
-#    throughfall = max.(0, new_water_storage .- max_water_storage)
-#    
-#    # Update water storage: clamp between 0 and max_water_storage
-#    water_storage = max.(0.0, min.(new_water_storage, max_water_storage))
-#    
-#    return (water_storage), throughfall 
-#end
 
 function update_water_canopy_storage(water_storage, prec, cv, canopy_evap, Wm, throughfall, coverage)
     # Canopy water balance is per canopy area (Liang 1994, Eq. 16)
