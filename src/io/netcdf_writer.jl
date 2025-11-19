@@ -60,7 +60,7 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
         v = defVar(ds, name, type, dims; 
                    chunksizes=chunks, 
                    deflatelevel=1, # COMPRESSION level
-                   shuffle=false)
+                   shuffle=true)
         return v
     end
 
