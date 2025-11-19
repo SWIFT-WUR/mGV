@@ -120,9 +120,9 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
 #    aerodynamic_resistance_summed_output.attrib["units"] = "s/m"
 #    aerodynamic_resistance_summed_output.attrib["description"] = "Total aerodynamic resistance"    
 
-#    potential_evaporation_summed_output = def_fast_var(out_ds, "potential_evaporation_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-#    potential_evaporation_summed_output.attrib["units"] = "mm"
-#    potential_evaporation_summed_output.attrib["description"] = "Potential evaporation"
+    potential_evaporation_summed_output = def_fast_var(out_ds, "potential_evaporation_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+    potential_evaporation_summed_output.attrib["units"] = "mm"
+    potential_evaporation_summed_output.attrib["description"] = "Potential evaporation"
 
     net_radiation_summed_output = def_fast_var(out_ds, "net_radiation_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
     net_radiation_summed_output.attrib["units"] = "W/m^2"
@@ -197,9 +197,9 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
 #    aerodynamic_resistance_output.attrib["units"] = "s/m"
 #    aerodynamic_resistance_output.attrib["description"] = "Aerodynamic resistance per vegetation"    
 
-    potential_evaporation_output = def_fast_var(out_ds, "potential_evaporation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    potential_evaporation_output.attrib["units"] = "mm"
-    potential_evaporation_output.attrib["description"] = "Potential evaporation per vegetation"
+#    potential_evaporation_output = def_fast_var(out_ds, "potential_evaporation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    potential_evaporation_output.attrib["units"] = "mm"
+#    potential_evaporation_output.attrib["description"] = "Potential evaporation per vegetation"
 
 #    net_radiation_output = def_fast_var(out_ds, "net_radiation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
 #    net_radiation_output.attrib["units"] = "W/m^2"
@@ -256,18 +256,44 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     # Initialize Transfer Buffer (Crucial for matching the optimized write function)
     transfer_buf = create_transfer_buffer(nx, ny, nveg, 3)
 
-    return out_ds, transfer_buf, precipitation_output, water_storage_output, water_storage_summed_output, Q12_output, 
-           tair_output, tsurf_output, canopy_evaporation_output,
-           canopy_evaporation_summed_output, transpiration_output, transpiration_summed_output, aerodynamic_resistance_output, aerodynamic_resistance_summed_output,
-           potential_evaporation_output, potential_evaporation_summed_output, net_radiation_output,
-           net_radiation_summed_output, max_water_storage_output, max_water_storage_summed_output,
-           soil_evaporation_output, soil_temperature_output, soil_moisture_output,  total_et_output, surface_runoff_output, total_runoff_output,
-           kappa_array_output, cs_array_output, wilting_point_output, soil_moisture_max_output, soil_moisture_critical_output,
-           E_1_t_output, E_2_t_output, g_sw_1_output, g_sw_2_output, g_sw_output, residual_moisture_output, 
-           throughfall_output, throughfall_summed_output,
-           surfstor_output, 
+    # return out_ds, transfer_buf, precipitation_output, water_storage_output, water_storage_summed_output, Q12_output, 
+    #        tair_output, tsurf_output, canopy_evaporation_output,
+    #        canopy_evaporation_summed_output, transpiration_output, transpiration_summed_output, aerodynamic_resistance_output, aerodynamic_resistance_summed_output,
+    #        potential_evaporation_output, potential_evaporation_summed_output, net_radiation_output,
+    #        net_radiation_summed_output, max_water_storage_output, max_water_storage_summed_output,
+    #        soil_evaporation_output, soil_temperature_output, soil_moisture_output,  total_et_output, surface_runoff_output, total_runoff_output,
+    #        kappa_array_output, cs_array_output, wilting_point_output, soil_moisture_max_output, soil_moisture_critical_output,
+    #        E_1_t_output, E_2_t_output, g_sw_1_output, g_sw_2_output, g_sw_output, residual_moisture_output, 
+    #        throughfall_output, throughfall_summed_output,
+    #        surfstor_output, 
+    #        asat_output, vp_output, vpd_output,
+    #        density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output
+    
+    return out_ds, transfer_buf, 
+           # 2D Summed/Standard Outputs
+           precipitation_output, water_storage_summed_output, 
+           tair_output, tsurf_output, 
+           canopy_evaporation_summed_output, transpiration_summed_output, 
+           potential_evaporation_summed_output, # Note: You left this one active in your code
+           net_radiation_summed_output, 
+           
+           # More 2D Outputs
+           total_et_output, surface_runoff_output, total_runoff_output,
+           
+           # 3D / Layer Outputs
+           Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output,
+           
+           # Soil Properties / Fixed Fields
+           soil_moisture_max_output, soil_moisture_critical_output,
+           
+           # G_SW variables (You had these active)
+           g_sw_1_output, g_sw_2_output, g_sw_output,
+           g_sw_summed_output, g_sw_1_summed_output, g_sw_2_summed_output,
+           
+           # Other active 2D variables
+           throughfall_summed_output, 
            asat_output, vp_output, vpd_output,
-           density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output
+           density_output
 end
 
 
@@ -275,7 +301,13 @@ end
 # 3. WRITE DAILY OUTPUTS (OPTIMIZED)
 # ============================================================================
 
-function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff, 
+# ============================================================================
+# 3. WRITE DAILY OUTPUTS (OPTIMIZED DEFINITION)
+# ============================================================================
+
+function write_daily_outputs(
+                            # --- INPUTS (These match the data passed in) ---
+                            day, tsurf, aerodynamic_resistance, ra_eff, 
                             transpiration, tair_gpu, prec_gpu, throughfall,
                             surfstor, delsurfstor, 
                             delsoilmoist, asat, 
@@ -286,32 +318,38 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
                             canopy_evaporation, max_water_storage, wilting_point,
                             soil_moisture_critical, soil_moisture_max, E_1_t, 
                             E_2_t, residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, g_sw_1, g_sw_2,
-                            # Output array references
-                            tsurf_output, aerodynamic_resistance_output,
-                            aerodynamic_resistance_summed_output, 
-                            transpiration_output, transpiration_summed_output,
-                            tair_output, precipitation_output, throughfall_output,
+                            
+                            # --- OUTPUTS (Updated to match your new shortened list) ---
+                            tsurf_output, 
+                            transpiration_summed_output,
+                            tair_output, 
+                            precipitation_output, 
                             throughfall_summed_output, 
-                            surfstor_output, asat_output, 
+                            asat_output, 
                             vp_output,
-                            vpd_output, density_output,
-                            Q12_output, soil_evaporation_output,
-                            soil_temperature_output, soil_moisture_output,
-                            total_et_output, surface_runoff_output, total_runoff_output,
-                            kappa_array_output, cs_array_output,
-                            potential_evaporation_output,
+                            vpd_output, 
+                            density_output,
+                            Q12_output, 
+                            soil_evaporation_output,
+                            soil_temperature_output, 
+                            soil_moisture_output,
+                            total_et_output, 
+                            surface_runoff_output, 
+                            total_runoff_output,
                             potential_evaporation_summed_output,
-                            water_storage_output, water_storage_summed_output,
-                            net_radiation_output, net_radiation_summed_output,
-                            canopy_evaporation_output,
+                            water_storage_summed_output,
+                            net_radiation_summed_output,
                             canopy_evaporation_summed_output,
-                            max_water_storage_output,
-                            max_water_storage_summed_output,
-                            wilting_point_output, soil_moisture_critical_output,
-                            soil_moisture_max_output, E_1_t_output, E_2_t_output,
-                            residual_moisture_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, 
-                            g_sw_1_output, g_sw_2_output, g_sw_1_summed_output, g_sw_2_summed_output,
-                            # NEW ARGUMENT
+                            soil_moisture_critical_output, 
+                            soil_moisture_max_output, 
+                            g_sw_output, 
+                            g_sw_summed_output, 
+                            g_sw_1_output, 
+                            g_sw_2_output, 
+                            g_sw_1_summed_output, 
+                            g_sw_2_summed_output,
+                            
+                            # --- BUFFER ---
                             transfer_buf)
     
     # GPU-safe sanitizers
@@ -454,7 +492,7 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     water_storage_summed_output[:, :, day] = transfer_buf.buf_2d
     
     # Net Radiation
-#    nr_processed = san_nan(net_radiation)
+    nr_processed = san_nan(net_radiation)
 #    copyto!(transfer_buf.buf_3d_veg, nr_processed)
 #    net_radiation_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
