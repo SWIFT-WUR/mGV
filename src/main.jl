@@ -379,7 +379,7 @@ function process_year(year)
                 # ============================================================
                 # Write outputs
                 # ============================================================
-                @timeit "outputs" begin
+                @timeit to "outputs" begin
                     write_daily_outputs(
                         # --- Input Data (Keep all these) ---
                         day, tsurf, aerodynamic_resistance, ra_eff, transpiration,

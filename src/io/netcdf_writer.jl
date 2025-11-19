@@ -34,7 +34,7 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     # ========================================================================
     # 1. DIMENSIONS & CHUNK CONFIGURATION
     # ========================================================================
-    nx = size(reference_array, 1)
+    nx = size(reference_array, 1) 
     ny = size(reference_array, 2)
     nt = size(reference_array, 3)
     nveg = size(reference_array2, 4)
@@ -49,18 +49,18 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
 
     # OPTIMIZATION 1: Define Optimal Chunks
     # We want chunks to be the size of one write operation (one day)
-    chunk_2d = (nx, ny, 1)
-    chunk_3d_veg = (nx, ny, 1, nveg)
-    chunk_3d_layer = (nx, ny, 1, 3)
-    chunk_3d_qlayer = (nx, ny, 1, 2)
-    chunk_3d_toplayer = (nx, ny, 1, 1)
+    chunk_2d = (nx ÷ 2, ny ÷ 2, 1)
+    chunk_3d_veg = (nx ÷ 2, ny ÷ 2, 1, nveg)
+    chunk_3d_layer = (nx ÷ 2, ny ÷ 2, 1, 3)
+    chunk_3d_qlayer = (nx ÷ 2, ny ÷ 2, 1, 2)
+    chunk_3d_toplayer = (nx ÷ 2, ny ÷ 2, 1, 1)
 
     # Helper to define variable with SPEED settings (No compression, explicit chunks)
     function def_fast_var(ds, name, type, dims; chunks=nothing)
         v = defVar(ds, name, type, dims; 
                    chunksizes=chunks, 
-                   deflatelevel=1, # COMPRESSION level
-                   shuffle=true)
+                   deflatelevel=0, # COMPRESSION level
+                   shuffle=false)
         return v
     end
 
