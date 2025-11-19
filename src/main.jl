@@ -119,7 +119,7 @@ function process_year(year)
     @timeit to "create_output_netcdf" begin
         output_file = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
         
-        out_ds, precipitation_output, water_storage_output, water_storage_summed_output, 
+        out_ds, transfer_buf, precipitation_output, water_storage_output, water_storage_summed_output, 
               Q12_output, tair_output, tsurf_output, canopy_evaporation_output, 
               canopy_evaporation_summed_output, transpiration_output, transpiration_summed_output, 
               aerodynamic_resistance_output, aerodynamic_resistance_summed_output,
@@ -130,7 +130,7 @@ function process_year(year)
               cs_array_output, wilting_point_output, soil_moisture_max_output, 
               soil_moisture_critical_output, E_1_t_output, E_2_t_output, g_sw_1_output, 
               g_sw_2_output, g_sw_output, residual_moisture_output, throughfall_output, 
-              throughfall_summed_output, topsoil_moisture_addition_output, delintercept_output, 
+              throughfall_summed_output,  
               surfstor_output, 
               asat_output, vp_output, 
               vpd_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output =
@@ -141,7 +141,6 @@ function process_year(year)
     # Initialize diagnostic arrays
     # ------------------------------------------------------------------------
     prev_water_storage = copy(water_storage)
-    delintercept = CUDA.zeros(float_type, size(water_storage))
     delsoilmoist = CUDA.zeros(float_type, size(soil_moisture_new))
     surfstor = CUDA.zeros(float_type, size(coverage_gpu))
     delsurfstor = CUDA.zeros(float_type, size(coverage_gpu))
@@ -368,7 +367,7 @@ function process_year(year)
                 @timeit to "outputs" begin
                     write_daily_outputs(
                         day, tsurf, aerodynamic_resistance, ra_eff, transpiration,
-                        tair_gpu, prec_gpu, throughfall, delintercept,  
+                        tair_gpu, prec_gpu, throughfall,   
                         surfstor, delsurfstor, delsoilmoist, asat, vp_gpu, calculate_vpd(tair_gpu, vp_gpu), 
                         Q12, soil_evaporation, soil_temperature, soil_moisture_new,
                         total_et, surface_runoff, total_runoff, kappa_array, cs_array,
@@ -381,7 +380,7 @@ function process_year(year)
                         aerodynamic_resistance_summed_output, transpiration_output,
                         transpiration_summed_output, tair_output, precipitation_output,
                         throughfall_output, throughfall_summed_output,
-                        delintercept_output, surfstor_output,
+                        surfstor_output,
                         asat_output,
                         vp_output,
                         vpd_output, density_output, Q12_output,
@@ -396,7 +395,7 @@ function process_year(year)
                         max_water_storage_summed_output, wilting_point_output,
                         soil_moisture_critical_output, soil_moisture_max_output,
                         E_1_t_output, E_2_t_output, residual_moisture_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_output, g_sw_2_output,
-                        g_sw_1_summed_output, g_sw_2_summed_output
+                        g_sw_1_summed_output, g_sw_2_summed_output, transfer_buf
                     )
                 end
 
