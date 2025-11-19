@@ -116,21 +116,21 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     transpiration_summed_output.attrib["units"] = "mm"
     transpiration_summed_output.attrib["description"] = "Total plant transpiration"
 
-    aerodynamic_resistance_summed_output = def_fast_var(out_ds, "aerodynamic_resistance_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    aerodynamic_resistance_summed_output.attrib["units"] = "s/m"
-    aerodynamic_resistance_summed_output.attrib["description"] = "Total aerodynamic resistance"    
+#    aerodynamic_resistance_summed_output = def_fast_var(out_ds, "aerodynamic_resistance_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    aerodynamic_resistance_summed_output.attrib["units"] = "s/m"
+#    aerodynamic_resistance_summed_output.attrib["description"] = "Total aerodynamic resistance"    
 
-    potential_evaporation_summed_output = def_fast_var(out_ds, "potential_evaporation_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    potential_evaporation_summed_output.attrib["units"] = "mm"
-    potential_evaporation_summed_output.attrib["description"] = "Potential evaporation"
+#    potential_evaporation_summed_output = def_fast_var(out_ds, "potential_evaporation_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    potential_evaporation_summed_output.attrib["units"] = "mm"
+#    potential_evaporation_summed_output.attrib["description"] = "Potential evaporation"
 
     net_radiation_summed_output = def_fast_var(out_ds, "net_radiation_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
     net_radiation_summed_output.attrib["units"] = "W/m^2"
     net_radiation_summed_output.attrib["description"] = "Net radiation"
 
-    max_water_storage_summed_output = def_fast_var(out_ds, "max_water_storage_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    max_water_storage_summed_output.attrib["units"] = "mm"
-    max_water_storage_summed_output.attrib["description"] = "The maximum amount of water intercepted by the canopy"
+#    max_water_storage_summed_output = def_fast_var(out_ds, "max_water_storage_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    max_water_storage_summed_output.attrib["units"] = "mm"
+#    max_water_storage_summed_output.attrib["description"] = "The maximum amount of water intercepted by the canopy"
 
     total_et_output = def_fast_var(out_ds, "total_et_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
     total_et_output.attrib["units"] = "mm"
@@ -177,52 +177,49 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
 
     # --- 3D + Time Variables (Vegetation) (Use chunk_3d_veg) ---
     
-    throughfall_output = def_fast_var(out_ds, "throughfall_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    throughfall_output.attrib["units"] = "mm/day"
-    throughfall_output.attrib["description"] = "Daily throughfall per vegetation"
+#    throughfall_output = def_fast_var(out_ds, "throughfall_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    throughfall_output.attrib["units"] = "mm/day"
+#    throughfall_output.attrib["description"] = "Daily throughfall per vegetation"
 
-    water_storage_output = def_fast_var(out_ds, "water_storage_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    water_storage_output.attrib["units"] = "mm"
-    water_storage_output.attrib["description"] = "Water stored in the canopy per vegetation"
+#    water_storage_output = def_fast_var(out_ds, "water_storage_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    water_storage_output.attrib["units"] = "mm"
+#    water_storage_output.attrib["description"] = "Water stored in the canopy per vegetation"
 
-    canopy_evaporation_output = def_fast_var(out_ds, "canopy_evaporation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    canopy_evaporation_output.attrib["units"] = "mm"
-    canopy_evaporation_output.attrib["description"] = "Evaporation from canopy interception per vegetation"
+#    canopy_evaporation_output = def_fast_var(out_ds, "canopy_evaporation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    canopy_evaporation_output.attrib["units"] = "mm"
+#    canopy_evaporation_output.attrib["description"] = "Evaporation from canopy interception per vegetation"
 
-    transpiration_output = def_fast_var(out_ds, "transpiration_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    transpiration_output.attrib["units"] = "mm"
-    transpiration_output.attrib["description"] = "Plant transpiration per vegetation"
+#    transpiration_output = def_fast_var(out_ds, "transpiration_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    transpiration_output.attrib["units"] = "mm"
+#    transpiration_output.attrib["description"] = "Plant transpiration per vegetation"
 
-    aerodynamic_resistance_output = def_fast_var(out_ds, "aerodynamic_resistance_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    aerodynamic_resistance_output.attrib["units"] = "s/m"
-    aerodynamic_resistance_output.attrib["description"] = "Aerodynamic resistance per vegetation"    
+#    aerodynamic_resistance_output = def_fast_var(out_ds, "aerodynamic_resistance_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    aerodynamic_resistance_output.attrib["units"] = "s/m"
+#    aerodynamic_resistance_output.attrib["description"] = "Aerodynamic resistance per vegetation"    
 
     potential_evaporation_output = def_fast_var(out_ds, "potential_evaporation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
     potential_evaporation_output.attrib["units"] = "mm"
     potential_evaporation_output.attrib["description"] = "Potential evaporation per vegetation"
 
-    net_radiation_output = def_fast_var(out_ds, "net_radiation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    net_radiation_output.attrib["units"] = "W/m^2"
-    net_radiation_output.attrib["description"] = "Net radiation, per vegetation"
+#    net_radiation_output = def_fast_var(out_ds, "net_radiation_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    net_radiation_output.attrib["units"] = "W/m^2"
+#    net_radiation_output.attrib["description"] = "Net radiation, per vegetation"
 
-    max_water_storage_output = def_fast_var(out_ds, "max_water_storage_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    max_water_storage_output.attrib["units"] = "mm"
-    max_water_storage_output.attrib["description"] = "The maximum amount of water intercepted by the canopy per vegetation"
+#    max_water_storage_output = def_fast_var(out_ds, "max_water_storage_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    max_water_storage_output.attrib["units"] = "mm"
+#    max_water_storage_output.attrib["description"] = "The maximum amount of water intercepted by the canopy per vegetation"
 
-    E_1_t_output = def_fast_var(out_ds, "E_1_t_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    E_2_t_output = def_fast_var(out_ds, "E_2_t_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    E_1_t_output = def_fast_var(out_ds, "E_1_t_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    E_2_t_output = def_fast_var(out_ds, "E_2_t_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
     
     g_sw_output = def_fast_var(out_ds, "g_sw_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
     g_sw_output.attrib["units"] = ""
     g_sw_output.attrib["description"] = "g_sw_output"
 
-    dry_time_factor_output = def_fast_var(out_ds, "dry_time_factor_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    dry_time_factor_output.attrib["units"] = ""
-    dry_time_factor_output.attrib["description"] = "dry_time_factor_output"
+#    dry_time_factor_output = def_fast_var(out_ds, "dry_time_factor_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    dry_time_factor_output.attrib["units"] = ""
+#    dry_time_factor_output.attrib["description"] = "dry_time_factor_output"
 
-    surfstor_output = def_fast_var(out_ds, "surfstor_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    surfstor_output.attrib["units"] = "mm"
-    surfstor_output.attrib["description"] = "Surface water storage"
 
     # --- 3D + Time Variables (Layers) ---
     
@@ -242,13 +239,13 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     soil_moisture_output.attrib["units"] = "kg/m^3"
     soil_moisture_output.attrib["description"] = "Volumetric soil moisture content per layer"
 
-    kappa_array_output = def_fast_var(out_ds, "kappa_array_output", float_type, ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
-    cs_array_output = def_fast_var(out_ds, "cs_array_output", float_type, ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
-    residual_moisture_output = def_fast_var(out_ds, "residual_moisture_output", float_type, ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
+#    kappa_array_output = def_fast_var(out_ds, "kappa_array_output", float_type, ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
+#    cs_array_output = def_fast_var(out_ds, "cs_array_output", float_type, ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
+#    residual_moisture_output = def_fast_var(out_ds, "residual_moisture_output", float_type, ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
 
     # --- Time-Invariant Variables (Can use standard defVar or static chunks) ---
     
-    wilting_point_output = defVar(out_ds, "wilting_point_output", float_type, ("lon", "lat", "layer"))
+#    wilting_point_output = defVar(out_ds, "wilting_point_output", float_type, ("lon", "lat", "layer"))
     soil_moisture_max_output = defVar(out_ds, "soil_moisture_max_output", float_type, ("lon", "lat", "layer"))
     soil_moisture_critical_output = defVar(out_ds, "soil_moisture_critical_output", float_type, ("lon", "lat", "layer"))
 
@@ -450,16 +447,16 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     
     # Water Storage
     ws_processed = san_nan(water_storage)
-    copyto!(transfer_buf.buf_3d_veg, ws_processed)
-    water_storage_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, ws_processed)
+#    water_storage_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
     copyto!(transfer_buf.buf_2d, sum_with_nan_handling(ws_processed, 4))
     water_storage_summed_output[:, :, day] = transfer_buf.buf_2d
     
     # Net Radiation
-    nr_processed = san_nan(net_radiation)
-    copyto!(transfer_buf.buf_3d_veg, nr_processed)
-    net_radiation_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    nr_processed = san_nan(net_radiation)
+#    copyto!(transfer_buf.buf_3d_veg, nr_processed)
+#    net_radiation_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
     copyto!(transfer_buf.buf_2d, sum_with_nan_handling(convcv(nr_processed) .* nr_processed, 4))
     net_radiation_summed_output[:, :, day] = transfer_buf.buf_2d
@@ -467,8 +464,8 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     # Transpiration
     tr_processed = san_nan(transpiration)
     tr_gc = tr_processed .* coverage_gpu
-    copyto!(transfer_buf.buf_3d_veg, tr_gc)
-    transpiration_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, tr_gc)
+#    transpiration_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
     copyto!(transfer_buf.buf_2d, sum_with_nan_handling(tr_gc, 4))
     transpiration_summed_output[:, :, day] = transfer_buf.buf_2d
