@@ -72,6 +72,7 @@ if CASE == "global"
     vp_var = "vp"
     swdown_var = "swdown"
     lwdown_var = "lwdown"
+    psurf_var = "psurf"
 
     # Output file paths/names
     output_dir             = "./output_data/global/"
@@ -150,6 +151,7 @@ elseif CASE == "indus"
     vp_var = "vp"
     swdown_var = "swdown"
     lwdown_var = "lwdown"
+    psurf_var = "psurf"
 
     # Output file paths/names
     output_dir             = "./output_data/indus/"
