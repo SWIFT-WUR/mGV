@@ -24,6 +24,7 @@ if CASE == "global"
     input_vp_prefix        = "./input_data/global/5arcmin/forcing/vp/vp_WFDE5_v2.0_5arcmin_"
     input_swdown_prefix    = "./input_data/global/5arcmin/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_"
     input_lwdown_prefix    = "./input_data/global/5arcmin/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_"
+    input_psurf_prefix     = "./input_data/global/5arcmin/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_"
 
     # Input variable names (as specified in the input files' metadata)
     d0_var = "displacement"
@@ -101,7 +102,7 @@ elseif CASE == "indus"
     input_vp_prefix        = "./input_data/indus/forcing/vp_daily_GFDL-ESM4_historical/vp_daily_GFDL-ESM4_historical_"
     input_swdown_prefix    = "./input_data/indus/forcing/swdown_daily_GFDL-ESM4adj_historical/swdown_daily_GFDL-ESM4adj_historical_"
     input_lwdown_prefix    = "./input_data/indus/forcing/lwdown_daily_GFDL-ESM4adj_historical/lwdown_daily_GFDL-ESM4adj_historical_"
-    # input_psurf_prefix     = "./input_data/indus/forcing/psurf_daily_GFDL-ESM4_historical/psurf_daily_GFDL-ESM4_historical_"
+    input_psurf_prefix     = "./input_data/indus/forcing/psurf_daily_GFDL-ESM4_historical/psurf_daily_GFDL-ESM4_historical_"
     
     # Input variable names (as specified in the input files' metadata)
     d0_var = "displacement"
