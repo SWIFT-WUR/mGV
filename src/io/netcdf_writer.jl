@@ -59,7 +59,7 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     function def_fast_var(ds, name, type, dims; chunks=nothing)
         v = defVar(ds, name, type, dims; 
                    chunksizes=chunks, 
-                   deflatelevel=0, # DISABLE COMPRESSION for speed
+                   deflatelevel=1, # COMPRESSION level
                    shuffle=false)
         return v
     end

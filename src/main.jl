@@ -427,7 +427,7 @@ function process_year(year)
                         transfer_buf
                     )
                 end
-
+                
             end # GPU_USE
 
             day_prev = day
@@ -444,6 +444,7 @@ function process_year(year)
     println("============ Completed run for year: $year ============\n")
     println("Postprocessing for year $year...")
     @timeit to "compress_file_async call" compress_file_async(output_file, 1)
+    flush(stdout)
 end
 
 # ============================================================================
