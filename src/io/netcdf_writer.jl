@@ -340,8 +340,8 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     copyto!(transfer_buf.buf_2d, tsurf)
     tsurf_output[:, :, day] = transfer_buf.buf_2d
 
-    copyto!(transfer_buf.buf_2d, ra_eff)
-    aerodynamic_resistance_summed_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, ra_eff)
+#    aerodynamic_resistance_summed_output[:, :, day] = transfer_buf.buf_2d
     
     copyto!(transfer_buf.buf_2d, tair_gpu)
     tair_output[:, :, day] = transfer_buf.buf_2d
@@ -377,73 +377,73 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     # ========================================================================
     # 3D Vegetation Variables (Use buf_3d_veg)
     # ========================================================================
-    copyto!(transfer_buf.buf_3d_veg, aerodynamic_resistance)
-    aerodynamic_resistance_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, aerodynamic_resistance)
+#    aerodynamic_resistance_output[:, :, day, :] = transfer_buf.buf_3d_veg
 
-    copyto!(transfer_buf.buf_3d_veg, throughfall)
-    throughfall_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, throughfall)
+#    throughfall_output[:, :, day, :] = transfer_buf.buf_3d_veg
 
-    copyto!(transfer_buf.buf_3d_veg, dry_time_factor)
-    dry_time_factor_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, dry_time_factor)
+#    dry_time_factor_output[:, :, day, :] = transfer_buf.buf_3d_veg
 
     # E_1_t and E_2_t
-    copyto!(transfer_buf.buf_3d_veg, E_1_t)
-    E_1_t_output[:, :, day, :] = transfer_buf.buf_3d_veg
-    copyto!(transfer_buf.buf_3d_veg, E_2_t)
-    E_2_t_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, E_1_t)
+#    E_1_t_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, E_2_t)
+#    E_2_t_output[:, :, day, :] = transfer_buf.buf_3d_veg
 
     # Processed Variables (Sanitization needed first)
     # Note: We sanitize into the buffer to avoid allocating a new GPU array
     
     # Q12 (Uses buf_3d_qlayer)
-    copyto!(transfer_buf.buf_3d_qlayer, san_zero(Q12))
-    Q12_output[:, :, day, :] = transfer_buf.buf_3d_qlayer
+#    copyto!(transfer_buf.buf_3d_qlayer, san_zero(Q12))
+#    Q12_output[:, :, day, :] = transfer_buf.buf_3d_qlayer
     
     # Soil Evaporation (Uses buf_3d_toplayer)
     copyto!(transfer_buf.buf_3d_toplayer, soil_evaporation)
     soil_evaporation_output[:, :, day, :] = transfer_buf.buf_3d_toplayer
 
     # Soil Properties (Uses buf_3d_layer)
-    copyto!(transfer_buf.buf_3d_layer, soil_temperature)
-    soil_temperature_output[:, :, day, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, soil_temperature)
+#    soil_temperature_output[:, :, day, :] = transfer_buf.buf_3d_layer
     
     copyto!(transfer_buf.buf_3d_layer, soil_moisture_new)
     soil_moisture_output[:, :, day, :] = transfer_buf.buf_3d_layer
     
-    copyto!(transfer_buf.buf_3d_layer, kappa_array)
-    kappa_array_output[:, :, day, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, kappa_array)
+#    kappa_array_output[:, :, day, :] = transfer_buf.buf_3d_layer
     
-    copyto!(transfer_buf.buf_3d_layer, cs_array)
-    cs_array_output[:, :, day, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, cs_array)
+#    cs_array_output[:, :, day, :] = transfer_buf.buf_3d_layer
 
-    copyto!(transfer_buf.buf_3d_layer, residual_moisture)
-    residual_moisture_output[:, :, day, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, residual_moisture)
+#    residual_moisture_output[:, :, day, :] = transfer_buf.buf_3d_layer
 
     # Complex Processed outputs (Sanitize + Sum)
     # Strategy: Sanitize to GPU temporary (if needed) or stream via buffer if simple
     
     # G_SW
-    g_sw_processed = san_nan(g_sw)
-    copyto!(transfer_buf.buf_3d_veg, g_sw_processed)
-    g_sw_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    g_sw_processed = san_nan(g_sw)
+#    copyto!(transfer_buf.buf_3d_veg, g_sw_processed)
+#    g_sw_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
-    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(convcv(g_sw_processed) .* g_sw_processed, 4))
-    g_sw_summed_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(convcv(g_sw_processed) .* g_sw_processed, 4))
+#    g_sw_summed_output[:, :, day] = transfer_buf.buf_2d
 
     # G_SW 1 & 2
-    g_sw_1_processed = san_nan(g_sw_1)
-    copyto!(transfer_buf.buf_2d, g_sw_1_processed)
-    g_sw_1_output[:, :, day] = transfer_buf.buf_2d
+#    g_sw_1_processed = san_nan(g_sw_1)
+#    copyto!(transfer_buf.buf_2d, g_sw_1_processed)
+#    g_sw_1_output[:, :, day] = transfer_buf.buf_2d
     # If you need summed output for g_sw_1, calculate and copy here too
 
-    g_sw_2_processed = san_nan(g_sw_2)
-    copyto!(transfer_buf.buf_2d, g_sw_2_processed)
-    g_sw_2_output[:, :, day] = transfer_buf.buf_2d
+#    g_sw_2_processed = san_nan(g_sw_2)
+#    copyto!(transfer_buf.buf_2d, g_sw_2_processed)
+#    g_sw_2_output[:, :, day] = transfer_buf.buf_2d
 
     # Potential Evaporation
     pe_processed = san_nan(potential_evaporation)
-    copyto!(transfer_buf.buf_3d_veg, pe_processed)
-    potential_evaporation_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, pe_processed)
+#    potential_evaporation_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
     copyto!(transfer_buf.buf_2d, sum_with_nan_handling(convcv(pe_processed) .* pe_processed, 4))
     potential_evaporation_summed_output[:, :, day] = transfer_buf.buf_2d
@@ -476,29 +476,29 @@ function write_daily_outputs(day, tsurf, aerodynamic_resistance, ra_eff,
     # Canopy Evaporation
     ce_processed = san_nan(canopy_evaporation)
     ce_gc = convcv(ce_processed) .* ce_processed .* coverage_gpu
-    copyto!(transfer_buf.buf_3d_veg, ce_gc)
-    canopy_evaporation_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    copyto!(transfer_buf.buf_3d_veg, ce_gc)
+#    canopy_evaporation_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
     copyto!(transfer_buf.buf_2d, sum_with_nan_handling(ce_gc, 4))
     canopy_evaporation_summed_output[:, :, day] = transfer_buf.buf_2d
     
     # Max Water Storage
-    mws_processed = san_nan(max_water_storage)
-    copyto!(transfer_buf.buf_3d_veg, mws_processed)
-    max_water_storage_output[:, :, day, :] = transfer_buf.buf_3d_veg
+#    mws_processed = san_nan(max_water_storage)
+#    copyto!(transfer_buf.buf_3d_veg, mws_processed)
+#    max_water_storage_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
-    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(convcv(mws_processed) .* mws_processed, 4))
-    max_water_storage_summed_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(convcv(mws_processed) .* mws_processed, 4))
+#    max_water_storage_summed_output[:, :, day] = transfer_buf.buf_2d
     
     # Soil properties (Time invariant daily write)
     # Note: Dimensions are usually just (lon, lat, layer), so we can't use day index.
     # Assuming these are 3D arrays on GPU being written to 3D vars in NC
-    copyto!(transfer_buf.buf_3d_layer, wilting_point)
-    wilting_point_output[:, :, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, wilting_point)
+#    wilting_point_output[:, :, :] = transfer_buf.buf_3d_layer
 
-    copyto!(transfer_buf.buf_3d_layer, soil_moisture_critical)
-    soil_moisture_critical_output[:, :, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, soil_moisture_critical)
+#    soil_moisture_critical_output[:, :, :] = transfer_buf.buf_3d_layer
     
-    copyto!(transfer_buf.buf_3d_layer, soil_moisture_max)
-    soil_moisture_max_output[:, :, :] = transfer_buf.buf_3d_layer
+#    copyto!(transfer_buf.buf_3d_layer, soil_moisture_max)
+#    soil_moisture_max_output[:, :, :] = transfer_buf.buf_3d_layer
 end
