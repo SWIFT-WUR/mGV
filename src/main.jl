@@ -137,19 +137,21 @@ function process_year(year)
         #       create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
         
         out_ds, transfer_buf, 
-                precipitation_output, water_storage_summed_output, 
+                precipitation_output, #water_storage_summed_output, 
                 tair_output, tsurf_output, 
                 canopy_evaporation_summed_output, transpiration_summed_output, 
                 potential_evaporation_summed_output, 
                 net_radiation_summed_output, 
                 total_et_output, surface_runoff_output, total_runoff_output,
-                Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output,
-                soil_moisture_max_output, soil_moisture_critical_output,
-                g_sw_1_output, g_sw_2_output, g_sw_output, 
-                g_sw_summed_output, g_sw_1_summed_output, g_sw_2_summed_output,
-                throughfall_summed_output, 
-                asat_output, vp_output, vpd_output, 
-                density_output = create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
+                Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output = create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
+                #,
+                #soil_moisture_max_output, soil_moisture_critical_output,
+                #g_sw_1_output, g_sw_2_output, g_sw_output, 
+                #g_sw_summed_output, g_sw_1_summed_output, g_sw_2_summed_output,
+                #throughfall_summed_output, 
+                #asat_output, vp_output, vpd_output, 
+                #density_output 
+                
         end
    
     # ------------------------------------------------------------------------
@@ -390,7 +392,7 @@ function process_year(year)
                         potential_evaporation, water_storage, net_radiation,
                         canopy_evaporation, max_water_storage, wilting_point,
                         soil_moisture_critical, soil_moisture_max, E_1_t, E_2_t, 
-                        residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, g_sw_1, g_sw_2,
+                        residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, #g_sw_1, g_sw_2,
                         
                         # --- Output Arrays (Cleaned List) ---
                         # These must match the arguments remaining in your write_daily_outputs definition
@@ -398,11 +400,11 @@ function process_year(year)
                         transpiration_summed_output, 
                         tair_output, 
                         precipitation_output, 
-                        throughfall_summed_output, 
-                        asat_output, 
-                        vp_output, 
-                        vpd_output, 
-                        density_output, 
+                        #throughfall_summed_output, 
+                        #asat_output, 
+                        #vp_output, 
+                        #vpd_output, 
+                        #density_output, 
                         Q12_output,
                         soil_evaporation_output, 
                         soil_temperature_output,
@@ -411,17 +413,17 @@ function process_year(year)
                         surface_runoff_output, 
                         total_runoff_output,
                         potential_evaporation_summed_output,
-                        water_storage_summed_output, 
+                        #water_storage_summed_output, 
                         net_radiation_summed_output, 
                         canopy_evaporation_summed_output, 
-                        soil_moisture_critical_output, 
-                        soil_moisture_max_output,
-                        g_sw_output, 
-                        g_sw_summed_output, 
-                        g_sw_1_output, 
-                        g_sw_2_output,
-                        g_sw_1_summed_output, 
-                        g_sw_2_summed_output, 
+                        #soil_moisture_critical_output, 
+                        #soil_moisture_max_output,
+                        #g_sw_output, 
+                        #g_sw_summed_output, 
+                        #g_sw_1_output, 
+                        #g_sw_2_output,
+                        #g_sw_1_summed_output, 
+                        #g_sw_2_summed_output, 
                         
                         # --- Buffer ---
                         transfer_buf

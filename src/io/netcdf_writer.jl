@@ -90,13 +90,13 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     precipitation_output.attrib["units"] = "mm/day"
     precipitation_output.attrib["description"] = "Daily precipitation"
 
-    throughfall_summed_output = def_fast_var(out_ds, "throughfall_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    throughfall_summed_output.attrib["units"] = "mm/day"
-    throughfall_summed_output.attrib["description"] = "Total daily throughfall"
+#    throughfall_summed_output = def_fast_var(out_ds, "throughfall_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    throughfall_summed_output.attrib["units"] = "mm/day"
+#    throughfall_summed_output.attrib["description"] = "Total daily throughfall"
 
-    water_storage_summed_output = def_fast_var(out_ds, "water_storage_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    water_storage_summed_output.attrib["units"] = "mm"
-    water_storage_summed_output.attrib["description"] = "Total water stored in the canopy"
+#    water_storage_summed_output = def_fast_var(out_ds, "water_storage_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    water_storage_summed_output.attrib["units"] = "mm"
+#    water_storage_summed_output.attrib["description"] = "Total water stored in the canopy"
 
     tair_output = def_fast_var(out_ds, "tair_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
     tair_output.attrib["units"] = "°C"
@@ -144,36 +144,36 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     total_runoff_output.attrib["units"] = "mm"
     total_runoff_output.attrib["description"] = "Total runoff"
 
-    g_sw_summed_output = def_fast_var(out_ds, "g_sw_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    g_sw_summed_output.attrib["units"] = ""
-    g_sw_summed_output.attrib["description"] = "g_sw_summed_output"
-
-    g_sw_1_summed_output = def_fast_var(out_ds, "g_sw_1_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    g_sw_1_summed_output.attrib["units"] = ""
-    g_sw_1_summed_output.attrib["description"] = "g_sw_1_summed_output"
-
-    g_sw_2_summed_output = def_fast_var(out_ds, "g_sw_2_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    g_sw_2_summed_output.attrib["units"] = ""
-    g_sw_2_summed_output.attrib["description"] = "g_sw_2_summed_output"
+#    g_sw_summed_output = def_fast_var(out_ds, "g_sw_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    g_sw_summed_output.attrib["units"] = ""
+#    g_sw_summed_output.attrib["description"] = "g_sw_summed_output"
+#
+#    g_sw_1_summed_output = def_fast_var(out_ds, "g_sw_1_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    g_sw_1_summed_output.attrib["units"] = ""
+#    g_sw_1_summed_output.attrib["description"] = "g_sw_1_summed_output"
+#
+#    g_sw_2_summed_output = def_fast_var(out_ds, "g_sw_2_summed_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    g_sw_2_summed_output.attrib["units"] = ""
+#    g_sw_2_summed_output.attrib["description"] = "g_sw_2_summed_output"
+#    
+#    g_sw_1_output = def_fast_var(out_ds, "g_sw_1_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    g_sw_2_output = def_fast_var(out_ds, "g_sw_2_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
     
-    g_sw_1_output = def_fast_var(out_ds, "g_sw_1_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    g_sw_2_output = def_fast_var(out_ds, "g_sw_2_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    
-    asat_output = def_fast_var(out_ds, "asat_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    asat_output.attrib["units"] = "fraction"
-    asat_output.attrib["description"] = "Fraction of saturated area"
+#    asat_output = def_fast_var(out_ds, "asat_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    asat_output.attrib["units"] = "fraction"
+#    asat_output.attrib["description"] = "Fraction of saturated area"
 
-    vp_output = def_fast_var(out_ds, "vp_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    vp_output.attrib["units"] = "kPa"
-    vp_output.attrib["description"] = "Vapor pressure"
+#    vp_output = def_fast_var(out_ds, "vp_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    vp_output.attrib["units"] = "kPa"
+#    vp_output.attrib["description"] = "Vapor pressure"
+#
+#    vpd_output = def_fast_var(out_ds, "vpd_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    vpd_output.attrib["units"] = "Pa"
+#    vpd_output.attrib["description"] = "Vapor pressure deficit"
 
-    vpd_output = def_fast_var(out_ds, "vpd_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    vpd_output.attrib["units"] = "Pa"
-    vpd_output.attrib["description"] = "Vapor pressure deficit"
-
-    density_output = def_fast_var(out_ds, "density_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
-    density_output.attrib["units"] = "kg/m^3"
-    density_output.attrib["description"] = "Air density"
+#    density_output = def_fast_var(out_ds, "density_output", float_type, ("lon", "lat", "time"); chunks=chunk_2d)
+#    density_output.attrib["units"] = "kg/m^3"
+#    density_output.attrib["description"] = "Air density"
 
     # --- 3D + Time Variables (Vegetation) (Use chunk_3d_veg) ---
     
@@ -212,9 +212,9 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
 #    E_1_t_output = def_fast_var(out_ds, "E_1_t_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
 #    E_2_t_output = def_fast_var(out_ds, "E_2_t_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
     
-    g_sw_output = def_fast_var(out_ds, "g_sw_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
-    g_sw_output.attrib["units"] = ""
-    g_sw_output.attrib["description"] = "g_sw_output"
+#    g_sw_output = def_fast_var(out_ds, "g_sw_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
+#    g_sw_output.attrib["units"] = ""
+#    g_sw_output.attrib["description"] = "g_sw_output"
 
 #    dry_time_factor_output = def_fast_var(out_ds, "dry_time_factor_output", float_type, ("lon", "lat", "time", "nveg"); chunks=chunk_3d_veg)
 #    dry_time_factor_output.attrib["units"] = ""
@@ -246,8 +246,8 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     # --- Time-Invariant Variables (Can use standard defVar or static chunks) ---
     
 #    wilting_point_output = defVar(out_ds, "wilting_point_output", float_type, ("lon", "lat", "layer"))
-    soil_moisture_max_output = defVar(out_ds, "soil_moisture_max_output", float_type, ("lon", "lat", "layer"))
-    soil_moisture_critical_output = defVar(out_ds, "soil_moisture_critical_output", float_type, ("lon", "lat", "layer"))
+#    soil_moisture_max_output = defVar(out_ds, "soil_moisture_max_output", float_type, ("lon", "lat", "layer"))
+#    soil_moisture_critical_output = defVar(out_ds, "soil_moisture_critical_output", float_type, ("lon", "lat", "layer"))
 
     # ========================================================================
     # 4. RETURN
@@ -271,7 +271,7 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
     
     return out_ds, transfer_buf, 
            # 2D Summed/Standard Outputs
-           precipitation_output, water_storage_summed_output, 
+           precipitation_output, #water_storage_summed_output, 
            tair_output, tsurf_output, 
            canopy_evaporation_summed_output, transpiration_summed_output, 
            potential_evaporation_summed_output, # Note: You left this one active in your code
@@ -281,19 +281,19 @@ function create_output_netcdf(output_file::String, reference_array, reference_ar
            total_et_output, surface_runoff_output, total_runoff_output,
            
            # 3D / Layer Outputs
-           Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output,
+           Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output#,
            
            # Soil Properties / Fixed Fields
-           soil_moisture_max_output, soil_moisture_critical_output,
+           #soil_moisture_max_output, soil_moisture_critical_output,
            
            # G_SW variables (You had these active)
-           g_sw_1_output, g_sw_2_output, g_sw_output,
-           g_sw_summed_output, g_sw_1_summed_output, g_sw_2_summed_output,
+           #g_sw_1_output, g_sw_2_output, g_sw_output,
+           #g_sw_summed_output, g_sw_1_summed_output, g_sw_2_summed_output,
            
            # Other active 2D variables
-           throughfall_summed_output, 
-           asat_output, vp_output, vpd_output,
-           density_output
+           #throughfall_summed_output, 
+           #asat_output, vp_output, vpd_output,
+           #density_output
 end
 
 
@@ -317,18 +317,18 @@ function write_daily_outputs(
                             potential_evaporation, water_storage, net_radiation,
                             canopy_evaporation, max_water_storage, wilting_point,
                             soil_moisture_critical, soil_moisture_max, E_1_t, 
-                            E_2_t, residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, g_sw_1, g_sw_2,
+                            E_2_t, residual_moisture, cv_gpu, coverage_gpu, g_sw, dry_time_factor, #g_sw_1, g_sw_2,
                             
                             # --- OUTPUTS (Updated to match your new shortened list) ---
                             tsurf_output, 
                             transpiration_summed_output,
                             tair_output, 
                             precipitation_output, 
-                            throughfall_summed_output, 
-                            asat_output, 
-                            vp_output,
-                            vpd_output, 
-                            density_output,
+                            #throughfall_summed_output, 
+                            #asat_output, 
+                            #vp_output,
+                            #vpd_output, 
+                            #density_output,
                             Q12_output, 
                             soil_evaporation_output,
                             soil_temperature_output, 
@@ -337,17 +337,17 @@ function write_daily_outputs(
                             surface_runoff_output, 
                             total_runoff_output,
                             potential_evaporation_summed_output,
-                            water_storage_summed_output,
+                            #water_storage_summed_output,
                             net_radiation_summed_output,
                             canopy_evaporation_summed_output,
-                            soil_moisture_critical_output, 
-                            soil_moisture_max_output, 
-                            g_sw_output, 
-                            g_sw_summed_output, 
-                            g_sw_1_output, 
-                            g_sw_2_output, 
-                            g_sw_1_summed_output, 
-                            g_sw_2_summed_output,
+                            #soil_moisture_critical_output, 
+                            #soil_moisture_max_output, 
+                            #g_sw_output, 
+                            #g_sw_summed_output, 
+                            #g_sw_1_output, 
+                            #g_sw_2_output, 
+                            #g_sw_1_summed_output, 
+                            #g_sw_2_summed_output,
                             
                             # --- BUFFER ---
                             transfer_buf)
@@ -384,21 +384,21 @@ function write_daily_outputs(
     copyto!(transfer_buf.buf_2d, prec_gpu)
     precipitation_output[:, :, day] = transfer_buf.buf_2d
 
-    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(throughfall, 4))
-    throughfall_summed_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(throughfall, 4))
+#    throughfall_summed_output[:, :, day] = transfer_buf.buf_2d
     
-    copyto!(transfer_buf.buf_2d, asat)
-    asat_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, asat)
+#    asat_output[:, :, day] = transfer_buf.buf_2d
     
-    copyto!(transfer_buf.buf_2d, vp_gpu)
-    vp_output[:, :, day] = transfer_buf.buf_2d
-    
-    copyto!(transfer_buf.buf_2d, vpd)
-    vpd_output[:, :, day] = transfer_buf.buf_2d
-
-    # Special case for density (filled scalar)
-    fill!(transfer_buf.buf_2d, eltype(tsurf)(rho_a)) 
-    density_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, vp_gpu)
+#    vp_output[:, :, day] = transfer_buf.buf_2d
+#    
+#    copyto!(transfer_buf.buf_2d, vpd)
+#    vpd_output[:, :, day] = transfer_buf.buf_2d
+#
+#    # Special case for density (filled scalar)
+#    fill!(transfer_buf.buf_2d, eltype(tsurf)(rho_a)) 
+#    density_output[:, :, day] = transfer_buf.buf_2d
     
     copyto!(transfer_buf.buf_2d, total_et)
     total_et_output[:, :, day] = transfer_buf.buf_2d
@@ -484,12 +484,12 @@ function write_daily_outputs(
     potential_evaporation_summed_output[:, :, day] = transfer_buf.buf_2d
     
     # Water Storage
-    ws_processed = san_nan(water_storage)
+#    ws_processed = san_nan(water_storage)
 #    copyto!(transfer_buf.buf_3d_veg, ws_processed)
 #    water_storage_output[:, :, day, :] = transfer_buf.buf_3d_veg
     
-    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(ws_processed, 4))
-    water_storage_summed_output[:, :, day] = transfer_buf.buf_2d
+#    copyto!(transfer_buf.buf_2d, sum_with_nan_handling(ws_processed, 4))
+#    water_storage_summed_output[:, :, day] = transfer_buf.buf_2d
     
     # Net Radiation
     nr_processed = san_nan(net_radiation)
