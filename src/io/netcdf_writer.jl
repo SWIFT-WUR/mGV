@@ -14,13 +14,22 @@ struct TransferBuffer
 end
 
 function create_transfer_buffer(nx, ny, nveg, nlayers)
-    TransferBuffer(
-        zeros(Float32, nx, ny),
-        zeros(Float32, nx, ny, nveg),
-        zeros(Float32, nx, ny, nlayers),
-        zeros(Float32, nx, ny, 2), # qlayers is fixed at 2
-        zeros(Float32, nx, ny, 1)  # top_layer is fixed at 1
-    )
+    # 1. Create standard arrays
+    b2d = zeros(Float32, nx, ny)
+    b3d_v = zeros(Float32, nx, ny, nveg)
+    b3d_l = zeros(Float32, nx, ny, nlayers)
+    b3d_q = zeros(Float32, nx, ny, 2)
+    b3d_t = zeros(Float32, nx, ny, 1)
+
+    # 2. Pin them (This locks them in physical RAM)
+    CUDA.Mem.pin(b2d)
+    CUDA.Mem.pin(b3d_v)
+    CUDA.Mem.pin(b3d_l)
+    CUDA.Mem.pin(b3d_q)
+    CUDA.Mem.pin(b3d_t)
+
+    # 3. Return struct
+    TransferBuffer(b2d, b3d_v, b3d_l, b3d_q, b3d_t)
 end
 
 # ============================================================================
