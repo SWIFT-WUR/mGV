@@ -34,6 +34,8 @@ global throughfall = CUDA.zeros(float_type, size(Ds_gpu))
 global canopy_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
 global net_radiation = CUDA.zeros(float_type, size(coverage_gpu))
 global Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
+global potential_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
+global aerodynamic_resistance = CUDA.zeros(float_type, size(coverage_gpu))
 global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
 
 # Soil property arrays
@@ -104,6 +106,7 @@ function process_year(year)
     global soil_moisture_critical, field_capacity, wilting_point, residual_moisture
     global soil_temperature, Lsum, tsurf
     global net_radiation
+    global potential_evaporation, aerodynamic_resistance
 
     println("============ Start run for year: $year ============")
     
@@ -200,7 +203,7 @@ function process_year(year)
                 # Energy balance and atmospheric calculations
                 # ============================================================
                 @timeit to "compute_aerodynamic_resistance" begin
-                    aerodynamic_resistance = compute_aerodynamic_resistance(
+                    aerodynamic_resistance .= compute_aerodynamic_resistance(
                         z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
                     )
                 end
@@ -212,7 +215,7 @@ function process_year(year)
                 end
 
                 @timeit to "calculate_potential_evaporation" begin
-                    potential_evaporation = calculate_potential_evaporation(
+                    potential_evaporation .= calculate_potential_evaporation(
                         tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation, 
                         aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                     )
