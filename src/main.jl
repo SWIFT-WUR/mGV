@@ -37,6 +37,8 @@ global Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
 global potential_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
 global aerodynamic_resistance = CUDA.zeros(float_type, size(coverage_gpu))
 global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
+# Missing: 
+# transpiration, soil_evaporation, total_et, total_runoff
 
 # Soil property arrays
 global bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -88,10 +90,10 @@ soil_moisture_old .= max.(soil_moisture_old, residual_moisture)
 soil_moisture_new .= copy(soil_moisture_old)
 
 # Print diagnostics
-println("Wmax (mean) [mm]: L1=", mean(Array(soil_moisture_max[:,:,1])),
+@debug println("Wmax (mean) [mm]: L1=", mean(Array(soil_moisture_max[:,:,1])),
                          " L2=", mean(Array(soil_moisture_max[:,:,2])),
                          " L3=", mean(Array(soil_moisture_max[:,:,3])))
-println("Ksat (median) [mm/day]: L1=", median(Array(ksat_gpu[:,:,1])),
+@debug println("Ksat (median) [mm/day]: L1=", median(Array(ksat_gpu[:,:,1])),
                                    " L2=", median(Array(ksat_gpu[:,:,2])),
                                    " L3=", median(Array(ksat_gpu[:,:,3])))
 
@@ -160,13 +162,6 @@ function process_year(year)
                 
         end
    
-    # ------------------------------------------------------------------------
-    # Initialize diagnostic arrays
-    # ------------------------------------------------------------------------
-    prev_water_storage = copy(water_storage)
-    delsoilmoist = CUDA.zeros(float_type, size(soil_moisture_new))
-    surfstor = CUDA.zeros(float_type, size(coverage_gpu))
-    delsurfstor = CUDA.zeros(float_type, size(coverage_gpu))
 
     # ------------------------------------------------------------------------
     # Daily timestep loop
@@ -203,19 +198,21 @@ function process_year(year)
                 # Energy balance and atmospheric calculations
                 # ============================================================
                 @timeit to "compute_aerodynamic_resistance" begin
-                    aerodynamic_resistance .= compute_aerodynamic_resistance(
+                    compute_aerodynamic_resistance!(
+                        aerodynamic_resistance,
                         z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
                     )
                 end
 
                 @timeit to "calculate_net_radiation" begin
-                    net_radiation .= calculate_net_radiation(
-                        swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    calculate_net_radiation!(
+                        net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
                     )
                 end
 
                 @timeit to "calculate_potential_evaporation" begin
-                    potential_evaporation .= calculate_potential_evaporation(
+                    calculate_potential_evaporation!(
+                        potential_evaporation,
                         tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation, 
                         aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                     )
@@ -340,8 +337,9 @@ function process_year(year)
                 # ============================================================
                 if day == 1 && year == start_year
                     @timeit to "solve_surface_temperature" begin
-                        tsurf .= solve_surface_temperature(
-                            tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+                        solve_surface_temperature!(
+                            tsurf,  # <--- Modified in-place
+                            soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                             sum_with_nan_handling(cv_gpu .* aerodynamic_resistance, 4),
                             kappa_array, depth_gpu, day_sec, cs_array, total_et, 
                             tair_gpu, cv_gpu, psurf_gpu
@@ -349,7 +347,8 @@ function process_year(year)
                     end
 
                     @timeit to "compute_aerodynamic_resistance" begin
-                        aerodynamic_resistance = compute_aerodynamic_resistance(
+                        compute_aerodynamic_resistance!(
+                            aerodynamic_resistance,
                             z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
                         )
                     end
@@ -360,10 +359,12 @@ function process_year(year)
                 ra_eff = 1.0 ./ max.(ra_eff_inv, eps(eltype(ra_eff_inv)))
 
                 @timeit to "solve_surface_temperature" begin
-                    tsurf .= solve_surface_temperature(
-                        tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
-                        ra_eff, kappa_array, depth_gpu, day_sec, cs_array, 
-                        total_et, tair_gpu, cv_gpu, psurf_gpu
+                    solve_surface_temperature!(
+                        tsurf,
+                        soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+                        ra_eff, 
+                        kappa_array, depth_gpu, day_sec, cs_array, total_et, 
+                        tair_gpu, cv_gpu, psurf_gpu
                     )
                 end
 
@@ -392,7 +393,7 @@ function process_year(year)
                         # --- Input Data (Keep all these) ---
                         day, tsurf, aerodynamic_resistance, ra_eff, transpiration,
                         tair_gpu, prec_gpu, throughfall,   
-                        surfstor, delsurfstor, delsoilmoist, asat, vp_gpu, calculate_vpd(tair_gpu, vp_gpu), 
+                        asat, vp_gpu, calculate_vpd(tair_gpu, vp_gpu), 
                         Q12, soil_evaporation, soil_temperature, soil_moisture_new,
                         total_et, surface_runoff, total_runoff, kappa_array, cs_array,
                         potential_evaporation, water_storage, net_radiation,

@@ -1,131 +1,112 @@
-function solve_surface_temperature(tsurf, soil_temperature, albedo, Rs, RL, rh, kappa, depth_gpu, delta_t, Cs, total_et, T_a, cv_gpu, psurf_gpu)
+function solve_surface_temperature!(
+    tsurf, # <--- Modified In-Place
+    soil_temperature, albedo_gpu, Rs, RL, 
+    ra_eff, kappa, depth_gpu, delta_t, Cs, total_et, 
+    T_a, cv_gpu, psurf_gpu
+)
+    T = eltype(tsurf) 
 
-    #### --- Preprocessing / NaN handling (same logic as original) --- ####
-
-    albedo = sum_with_nan_handling(cv_gpu .* albedo, 4)
-    albedo .= ifelse.(isnan.(albedo) .| (abs.(albedo) .> 1e30), 0.0, albedo)
-
-    rh    .= ifelse.(isnan.(rh)    .| (abs.(rh)    .> 1e30), 0.0, rh)
-    kappa .= ifelse.(isnan.(kappa) .| (abs.(kappa) .> 1e30), 0.0, kappa)
-    Cs    .= ifelse.(isnan.(Cs)    .| (abs.(Cs)    .> 1e30), 0.0, Cs)
-
-    # (optional) average of layers 1–2
-    # T1_K = (soil_temperature[:, :, 1:1] .+ soil_temperature[:, :, 2:2]) ./ 2 .+ 273.15
-    T1_K = soil_temperature[:, :, 2:2] .+ 273.15
-    T2_K = soil_temperature[:, :, 3:3] .+ 273.15
-    T1_K .= ifelse.(isnan.(T1_K) .| (abs.(T1_K) .> 1e15), 0.0, T1_K)
-    T2_K .= ifelse.(isnan.(T2_K) .| (abs.(T2_K) .> 1e15), 0.0, T2_K)
-
-    D1 = sum(depth_gpu[:, :, 1:2], dims = 3)
-    D2 = depth_gpu[:, :, 3:3]
-
-    T_a_K = T_a .+ 273.15
-    T_a_K .= ifelse.(isnan.(T_a_K) .| (abs.(T_a_K) .> 1e15), 0.0, T_a_K)
-
-    kappa_top = kappa[:, :, 1]
-    Cs_top    = Cs[:, :, 1]
-
-    base_term = (kappa_top ./ D2) .+ (Cs_top .* D2 ./ (2 * delta_t))
-    heat_transfer_term = base_term ./ (1 .+ (D1 ./ D2) .+ (Cs_top .* D1 .* D2 ./ (2.0 * delta_t .* kappa_top)))
-
-    # Precompute constant “layer 1–2” conductive term (term6)
-    num = (kappa_top .* T2_K ./ D2) .+ (Cs_top .* D2 .* T1_K ./ (2 * delta_t))
-    den = 1 .+ (D1 ./ D2) .+ (Cs_top .* D1 .* D2 ./ (2 * delta_t .* kappa_top))
-    term6_const = num ./ den
-
-    #### --- Air-layer storage term (eq. 35) --- ####
-
-    z_a = 10.0
-    air_dens    = (0.003486) .* (psurf_gpu) .* pa_per_kpa ./ ((273.15) .+ (T_a))
-    air_storage = (air_dens .* c_p_air .* z_a) ./ (2.0 * delta_t)
-
-    air_term    = (air_dens .* c_p_air ./ max.(rh, 1e-3)) .+ air_storage
-    common_term = heat_transfer_term .+ air_term
-
-    #### --- Terms that do not depend on Ts_new --- ####
-
-    term1 = (1 .- albedo) .* Rs
-    term2 = emissivity .* RL
-    term3 = (air_dens .* c_p_air ./ max.(rh, 1e-3)) .* T_a_K
-
-    Ts_prev = tsurf           # previous time step Ts (fixed during Newton)
-    Ts_old  = Ts_prev
-    Ts_new  = tsurf
-
-    Ts_old_K = Ts_old .+ 273.15
-
-    term5 = air_storage .* Ts_old_K
-
-    et_flux = total_et ./ (delta_t .* mm_in_m)
-
-    #### --- constants for latent-heat derivative --- ####
-
-    Hvap_Tb = 2.26e6
-    Tb      = 373.15
-    Tc      = 647.096
-    n       = 0.38
-    denom_L = Tc - Tb
-
-    #### --- residual and derivative (no nested broadcast of calculate_latent_heat) --- ####
-
-    function f(Ts_new, Ts_old)
-        Ts_new_K = Ts_new .+ 273.15
-        Ts_old_K = Ts_old .+ 273.15
-
-        lhs = emissivity .* sigma .* Ts_new_K.^4 .+ common_term .* Ts_new_K
-
-        # IMPORTANT: call calculate_latent_heat separately to avoid GPU nested broadcast
-        L_v   = calculate_latent_heat(Ts_new_K)       # same function you use elsewhere
-        term4 = rho_w .* L_v .* et_flux               # now a simple broadcast
-
-        return lhs .- (term1 .+ term2 .+ term3 .- term4 .+ term5 .+ term6_const)
+    # --- 1. Preprocessing & Constants ---
+    sigma_   = T(5.67f-8)
+    emis_    = T(emissivity) 
+    Hvap_Tb  = T(2.26e6)
+    Tb       = T(373.15)
+    Tc       = T(647.096)
+    n_exp    = T(0.38)
+    denom_L  = Tc - Tb
+    rho_w_   = T(rho_w)
+    
+    # Flatten albedo (4D -> 2D Grid Average)
+    albedo_grid = sum_with_nan_handling(cv_gpu .* albedo_gpu, 4)
+    albedo_grid .= ifelse.(isnan.(albedo_grid) .| (abs.(albedo_grid) .> T(1e30)), T(0), albedo_grid)
+    ra_eff .= ifelse.(isnan.(ra_eff) .| (abs.(ra_eff) .> T(1e30)), T(0), ra_eff)
+    
+    # --- 2. Soil & Air Terms ---
+    @views begin
+        T1_K = soil_temperature[:, :, 2] .+ T(273.15)
+        T2_K = soil_temperature[:, :, 3] .+ T(273.15)
+        D1   = depth_gpu[:, :, 1] .+ depth_gpu[:, :, 2]
+        D2   = depth_gpu[:, :, 3]
+        kap  = kappa[:, :, 1]
+        Cs_t = Cs[:, :, 1]
     end
+    
+    T_a_K    = T_a .+ T(273.15)
+    air_dens = T(0.003486) .* psurf_gpu .* T(pa_per_kpa) ./ (T(273.15) .+ T_a)
+    
+    # --- 3. Construct Constant Forcing Term ---
+    base_term = (kap ./ D2) .+ (Cs_t .* D2 ./ (2 * delta_t))
+    denom_ht  = 1 .+ (D1 ./ D2) .+ (Cs_t .* D1 .* D2 ./ (2 * delta_t .* kap))
+    ht_term   = base_term ./ denom_ht
+    
+    num_t6    = (kap .* T2_K ./ D2) .+ (Cs_t .* D2 .* T1_K ./ (2 * delta_t))
+    term6     = num_t6 ./ denom_ht
+    
+    z_a = T(10.0)
+    air_storage = (air_dens .* T(c_p_air) .* z_a) ./ (2 * delta_t)
+    air_cond    = air_dens .* T(c_p_air) ./ max.(ra_eff, T(1e-3))
+    
+    term5 = air_storage .* (tsurf .+ T(273.15)) 
+    
+    RHS_const = (1 .- albedo_grid) .* Rs .+ 
+                emis_ .* RL .+ 
+                air_cond .* T_a_K .+ 
+                term5 .+ 
+                term6
+                
+    LHS_coeff = ht_term .+ air_cond .+ air_storage
+    et_factor = total_et ./ (delta_t * mm_in_m)
 
-    function df_dTs_new(Ts_new)
-        Ts_new_K = Ts_new .+ 273.15
+    # --- 4. PRE-ALLOCATE ALL SCRATCH ARRAYS (Crucial!) ---
+    # These prevent UndefVarError and avoid allocation inside the loop
+    Tk      = similar(tsurf)  
+    step    = similar(tsurf)
+    term4   = similar(tsurf)  # Holds Latent Heat Flux
+    f_val   = similar(tsurf)  # Holds Residual
+    df_val  = similar(tsurf)  # Holds Derivative
 
-        ratio = (Tc .- Ts_new_K) ./ denom_L
-        ratio = max.(ratio, 1e-6)
+    # --- 5. Newton-Raphson Loop ---
+    for iter in 1:3
+        
+        # Step A: Calculate Temperature in Kelvin
+        @. Tk = tsurf + T(273.15)
 
-        L_v_deriv = ifelse.(Ts_new_K .< Tc,
-                            Hvap_Tb .* n .* (ratio .^ (n - 1)) .* (-1 ./ denom_L),
-                            0.0)
-
-        et_flux = total_et ./ (delta_t .* mm_in_m)
-        term4_deriv = rho_w .* L_v_deriv .* et_flux
-
-        return 4.0 .* emissivity .* sigma .* Ts_new_K.^3 .+ common_term .- term4_deriv
-    end
-
-    #### --- Newton iterations (same logic as your original) --- ####
-
-    tolerance = 1e-3
-    max_iter  = 3
-
-    for iter in 1:max_iter
-        residual   = f(Ts_new, Ts_old)   # Ts_old stays fixed = previous time step
-        derivative = df_dTs_new(Ts_new)
-
-        delta_Ts = ifelse.(abs.(derivative) .>= 1e-10, residual ./ derivative, 0.0)
-        delta_Ts = clamp.(delta_Ts, -10.0, 10.0)
-
-        converged = abs.(delta_Ts) .< tolerance
-        if all(converged)
-            @debug println("Converged after $iter iterations"); break
+        # Step B: Calculate Terms (Inlined L_v logic to avoid 'L_v' array)
+        @. begin
+            # 1. Calculate Term4 (Latent Heat Flux) directly
+            # L_v = (2.501e6 - 2370.0 * T_c)
+            term4 = rho_w_ * (2.501e6 - 2370.0 * (Tk - 273.15)) * et_factor
+            
+            # 2. Calculate Residual (f)
+            f_val = (emis_ * sigma_ * Tk^4 + LHS_coeff * Tk) - (RHS_const - term4)
+            
+            # 3. Calculate Derivative (df)
+            # We inline 'ratio' and 'Lv_deriv' here to save memory
+            # ratio = (Tc - Tk) / denom_L
+            # Lv_deriv logic handled by ifelse
+            # term4_deriv = rho_w * Lv_deriv * et_factor
+            
+            df_val = 4 * emis_ * sigma_ * Tk^3 + LHS_coeff - (
+                rho_w_ * ifelse(Tk < Tc, 
+                       Hvap_Tb * n_exp * (max((Tc - Tk) / denom_L, T(1e-6)) ^ (n_exp - 1)) * (-1 / denom_L), 
+                       T(0)
+                ) * et_factor
+            )
+            
+            # 4. Calculate Step
+            step = ifelse(abs(df_val) >= 1e-10, f_val / df_val, T(0))
+            step = clamp(step, T(-10.0), T(10.0))
         end
-
-        delta_Ts = ifelse.(converged, 0.0, delta_Ts)
-        Ts_new   = clamp.(Ts_new .- delta_Ts, -100.0, 100.0)
-
-        @debug println("Iteration $iter: Number of converged points = ", sum(converged))
-        @debug println("Iteration $iter: Ts_new min/max: ", minimum(Ts_new), " / ", maximum(Ts_new))
-        # NOTE: do NOT update Ts_old here
+        
+        # Step C: Apply Update
+        @. tsurf = clamp(tsurf - step, T(-100.0), T(100.0))
     end
-
-    Ts_new = ifelse.((Ts_new .== -100.0) .| (Ts_new .== 100.0), 0.0, Ts_new)
-    return Ts_new
+    
+    # Final Cleanup
+    @. tsurf = ifelse((tsurf == -100.0) | (tsurf == 100.0), T(0), tsurf)
+    
+    return nothing
 end
-
 
 
 

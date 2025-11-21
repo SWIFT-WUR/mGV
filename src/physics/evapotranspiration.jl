@@ -1,51 +1,90 @@
-function compute_aerodynamic_resistance(z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu)
-    # Use one element type everywhere
-    T   = eltype(cv_gpu)
-    Kt  = T(K); gt = T(g); Tf = T(t_freeze); Ric = T(Ri_cr)
+# --- Scalar Physics Kernel (Runs on every pixel) ---
+function aerodynamic_kernel(z0, d0, tsurf, tair, wind, z2, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max)
+    # 1. Roughness & Effective Height
+    rough = max(z0, z_floor)
+    d_eff = max(z2 - d0, d_floor)
 
-    # numeric safeties
-    z_floor    = T(1e-3)         # min roughness [m]
-    d_floor    = T(1e-2)         # min (z2 - d0) [m]
-    wind_floor = T(0.1)          # min wind [m/s]
-    L2_min     = T(log(1.01)^2)  # min (ln(arg))^2
-    ra_min     = T(1.0)          # clamp bounds [s/m]
-    ra_max     = T(1e5)
+    # 2. Log-law terms
+    ratio = clamp(d_eff / rough, 1f-6, 1f6)
+    L     = log(ratio)
+    L2    = max(L^2, L2_min)
+    a_sq  = (Kt^2) / L2
+    ccoef = 49.82f0 * a_sq * sqrt(ratio)
 
-    # roughness per tile (veg tiles from z0, last tile from soil z0)
-    roughness = CUDA.zeros(T, size(cv_gpu))
-    roughness[:, :, :, 1:end-1] .= max.(T.(z0_gpu[:, :, :, 1:end-1]), z_floor)
-    roughness[:, :, :, end:end] .= max.(T.(z0soil_gpu),               z_floor)
+    # 3. Stability (Richardson Number)
+    w_spd = max(wind, w_floor)
+    Tmean = max(((tair + Tf) + (tsurf + Tf)) * 0.5f0, 100.0f0)
+    
+    Ri_B  = gt * (tair - tsurf) * d_eff / (Tmean * w_spd^2)
+    Ri_B  = clamp(Ri_B, -0.5f0, Ric)
 
-    # effective height above displacement
-    z2T   = T(z2)
-    d_eff = max.(z2T .- T.(d0_gpu), d_floor)                      # 4D
+    # 4. Friction Factor (Fw)
+    Fw_neg = 1.0f0 - (9.4f0 * Ri_B) / (1.0f0 + ccoef * sqrt(abs(Ri_B)))
+    Fw_pos = 1.0f0 / (1.0f0 + 4.7f0 * Ri_B)^2
+    Fw     = ifelse(Ri_B < 0f0, Fw_neg, Fw_pos)
+    Fw     = clamp(Fw, 1f-3, 10.0f0)
 
-    # log-law pieces
-    ratio = clamp.(d_eff ./ roughness, T(1e-6), T(1e6))           # > 0
-    L     = log.(ratio)
-    L2    = max.(L .* L, L2_min)
-    a_sq  = (Kt^T(2)) ./ L2
-    ccoef = T(49.82) .* a_sq .* sqrt.(ratio)
+    # 5. Final Resistance
+    C_H = max(1.351f0 * a_sq * Fw, 1f-6)
+    ra_val = 1.0f0 / (C_H * w_spd)
+    
+    return clamp(ra_val, ra_min, ra_max)
+end
 
-    # stability: bulk Richardson number
-    Tmean = max.(((T.(tair_gpu) .+ Tf) .+ (T.(tsurf) .+ Tf)) .* T(0.5), T(100.0))  # 2D
-    w     = max.(T.(wind_gpu), wind_floor)                                         # 2D
-    Ri_B  = gt .* (T.(tair_gpu) .- T.(tsurf)) .* d_eff ./ (Tmean .* (w .* w))      # 4D via broadcast
-    Ri_B  = clamp.(Ri_B, T(-0.5), Ric)
 
-    # friction factor Fw
-    Fw_neg = T(1) .- (T(9.4) .* Ri_B) ./ (T(1) .+ ccoef .* sqrt.(abs.(Ri_B)))
-    Fw_pos = T(1) ./ (T(1) .+ T(4.7) .* Ri_B).^T(2)
-    Fw     = ifelse.(Ri_B .< T(0), Fw_neg, Fw_pos)
-    Fw     = clamp.(Fw, T(1e-3), T(10.0))
+function compute_aerodynamic_resistance!(
+    ra, 
+    z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
+)
+    T = eltype(ra)
 
-    # transfer coeff and aerodynamic resistance
-    C_H = T(1.351) .* a_sq .* Fw
-    C_H = max.(C_H, T(1e-6))
-    ra  = T(1.0) ./ (C_H .* w)                                     # broadcast 2D w over 4D C_H
-    ra  = clamp.(ra, ra_min, ra_max)
+    # --- Constants (Float32) ---
+    # We pass these into the kernel to ensure type stability
+    Kt      = T(K)
+    gt      = T(g)
+    Tf      = T(t_freeze)
+    Ric     = T(Ri_cr)
+    z_floor = T(1e-3)
+    d_floor = T(1e-2)
+    w_floor = T(0.1)
+    L2_min  = T(log(1.01)^2)
+    ra_min  = T(1.0)
+    ra_max  = T(1e5)
+    z2T     = T(z2)
+    
+    N_all   = size(ra, 4)
+    veg_dim = max(N_all - 1, 0)
 
-    return ra
+    # ========================================================================
+    # 1. SOIL TILES (Last Index)
+    # ========================================================================
+    # We broadcast the kernel. 
+    # Note: tsurf, tair_gpu, wind_gpu are 2D. ra is 4D slice. 
+    # Julia broadcasts (36,36) -> (36,36,1) automatically.
+    @views @. ra[:, :, :, N_all:N_all] = aerodynamic_kernel(
+        T(z0soil_gpu),          # z0 input (Soil specific)
+        d0_gpu[:,:,:,N_all:N_all], # d0 input
+        tsurf,                  # tsurf (2D)
+        tair_gpu,               # tair (2D)
+        wind_gpu,               # wind (2D)
+        z2T, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
+    )
+
+    # ========================================================================
+    # 2. VEGETATION TILES (Indices 1:veg_dim)
+    # ========================================================================
+    if veg_dim > 0
+        @views @. ra[:, :, :, 1:veg_dim] = aerodynamic_kernel(
+            z0_gpu[:,:,:,1:veg_dim],   # z0 input (Veg specific)
+            d0_gpu[:,:,:,1:veg_dim],   # d0 input
+            tsurf,
+            tair_gpu,
+            wind_gpu,
+            z2T, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
+        )
+    end
+
+    return nothing
 end
 
 #more vic like:
@@ -105,11 +144,18 @@ function compute_partial_canopy_resistance(rmin_gpu, LAI_gpu)
     return rmin_gpu ./ LAI_gpu
 end
 
-function calculate_net_radiation(swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
-    return (1.0f0 .- albedo_gpu) .* swdown_gpu .+ lwdown_gpu .- emissivity .* sigma .* (tsurf .+ 273.15f0).^4
+#function calculate_net_radiation(swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
+#    return (1.0f0 .- albedo_gpu) .* swdown_gpu .+ lwdown_gpu .- emissivity .* sigma .* (tsurf .+ 273.15f0).^4
+#end
+
+function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
+    @. net_rad = (1.0f0 - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + 273.15f0)^4
+    
+    return nothing
 end
 
-function calculate_potential_evaporation(
+function calculate_potential_evaporation!(
+    pe,
     tair_gpu, psurf_gpu, vp_gpu, elev_gpu,
     net_radiation, aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
 )
@@ -123,53 +169,45 @@ function calculate_potential_evaporation(
     scale_h     = T.(calculate_scale_height(tair_gpu, elev_gpu))
     p_sfc       = T(p_std) .* exp.(-T.(elev_gpu) ./ scale_h)
     gamma_      = T(1628.6) .* p_sfc ./ latent_heat
-    #air_dens    = T(0.003486) .* p_sfc ./ (T(273.15) .+ T.(tair_gpu))
     air_dens    = T(0.003486) .* T.(psurf_gpu) .* pa_per_kpa ./ (T(273.15) .+ T.(tair_gpu))
 
-
-
-
-
-    # --- Tile counts & slices (use ra as reference) ---
-    N_all   = size(aerodynamic_resistance, 4)        # veg + bare
-    veg_dim = max(N_all - 1, 0)                      # vegetation tiles
-    if veg_dim == 0
-        # no vegetation tiles: just soil PET
-        Rn_soil = T.(net_radiation[:, :, :, end:end])
-        ra_soil = aerodynamic_resistance[:, :, :, end:end]
-        num_s   = slope .* (Rn_soil .* day_sec) .+ (air_dens .* c_p_air .* vpd .* day_sec ./ ra_soil)
-        den_s   = latent_heat .* (slope .+ gamma_ .* (1 .+ T(0.0) ./ ra_soil))  # SOIL_RARC=0
-        pe = max.(num_s ./ den_s, T(0))
-        return pe
-    end
-
-    # Views that GUARANTEE matching tile counts
+    # --- Tile counts & slices ---
+    N_all   = size(aerodynamic_resistance, 4)
+    veg_dim = max(N_all - 1, 0)
+    
+    # --- Bare Soil Logic (Last Index) ---
+    # Use @views to avoid copying data when slicing
     @views begin
-        Rn_veg   = T.(net_radiation[:, :, :, 1:veg_dim])
-        rc_veg   = rmin_gpu[:, :, :, 1:veg_dim] ./ max.(LAI_gpu[:, :, :, 1:veg_dim], T(1e-6))
-        rarc_veg = rarc_gpu[:, :, :, 1:veg_dim]
-        ra_veg   = aerodynamic_resistance[:, :, :, 1:veg_dim]
-
-        Rn_soil  = T.(net_radiation[:, :, :, N_all:N_all])
-        ra_soil  = aerodynamic_resistance[:, :, :, N_all:N_all]
+        Rn_soil = T.(net_radiation[:, :, :, N_all:N_all])
+        ra_soil = aerodynamic_resistance[:, :, :, N_all:N_all]
+        
+        SOIL_RARC = T(100.0)
+        num_s = slope .* (Rn_soil .* day_sec) .+ (air_dens .* c_p_air .* vpd .* day_sec ./ ra_soil)
+        den_s = latent_heat .* (slope .+ gamma_ .* (1 .+ SOIL_RARC ./ ra_soil))
+        
+        # WRITE DIRECTLY TO INPUT ARRAY (No 'pe_soil' temp array)
+        @. pe[:, :, :, N_all:N_all] = max(num_s / den_s, T(0))
     end
 
-    # --- Vegetation PET (Penman–Monteith with rc=rmin/LAI) ---
-    num_v = slope .* (Rn_veg .* day_sec) .+ (air_dens .* c_p_air .* vpd .* day_sec ./ ra_veg)
-    den_v = latent_heat .* (slope .+ gamma_ .* (1 .+ (rc_veg .+ rarc_veg) ./ ra_veg))
-    pe_veg = max.(num_v ./ den_v, T(0))
+    # --- Vegetation Logic (Indices 1:veg_dim) ---
+    if veg_dim > 0
+        @views begin
+            Rn_veg   = T.(net_radiation[:, :, :, 1:veg_dim])
+            ra_veg   = aerodynamic_resistance[:, :, :, 1:veg_dim]
+            rarc_veg = rarc_gpu[:, :, :, 1:veg_dim]
+            
+            # Calculate rc_veg here to keep your readable structure
+            rc_veg   = rmin_gpu[:, :, :, 1:veg_dim] ./ max.(LAI_gpu[:, :, :, 1:veg_dim], T(1e-6))
 
-    # --- Bare soil PET (PM with rc=0) ---
-    SOIL_RARC = T(100.0)
-    num_s = slope .* (Rn_soil .* day_sec) .+ (air_dens .* c_p_air .* vpd .* day_sec ./ ra_soil)
-    den_s = latent_heat .* (slope .+ gamma_ .* (1 .+ SOIL_RARC ./ ra_soil))
-    pe_soil = max.(num_s ./ den_s, T(0))
+            num_v = slope .* (Rn_veg .* day_sec) .+ (air_dens .* c_p_air .* vpd .* day_sec ./ ra_veg)
+            den_v = latent_heat .* (slope .+ gamma_ .* (1 .+ (rc_veg .+ rarc_veg) ./ ra_veg))
+            
+            # WRITE DIRECTLY TO INPUT ARRAY (No 'pe_veg' temp array)
+            @. pe[:, :, :, 1:veg_dim] = max(num_v / den_v, T(0))
+        end
+    end
 
-    # --- Assemble full 4-D output with N_all tiles ---
-    pe = CUDA.zeros(T, size(net_radiation))
-    pe[:, :, :, 1:veg_dim] .= pe_veg
-    pe[:, :, :, N_all:N_all] .= pe_soil
-    return pe
+    return nothing
 end
 
 
