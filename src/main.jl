@@ -40,6 +40,8 @@ global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
 # Missing: 
 # transpiration, soil_evaporation, total_et, total_runoff
 
+global soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
+
 # Soil property arrays
 global bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
 global soil_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -250,7 +252,8 @@ function process_year(year)
                 # Soil evaporation
                 # ============================================================
                 @timeit to "calculate_soil_evaporation" begin
-                    soil_evaporation = calculate_soil_evaporation(
+                    calculate_soil_evaporation!(
+                        soil_evaporation, 
                         soil_moisture_old, soil_moisture_max, potential_evaporation, 
                         b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
                     )
@@ -338,7 +341,7 @@ function process_year(year)
                 if day == 1 && year == start_year
                     @timeit to "solve_surface_temperature" begin
                         solve_surface_temperature!(
-                            tsurf,  # <--- Modified in-place
+                            tsurf, 
                             soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                             sum_with_nan_handling(cv_gpu .* aerodynamic_resistance, 4),
                             kappa_array, depth_gpu, day_sec, cs_array, total_et, 

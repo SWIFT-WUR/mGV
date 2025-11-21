@@ -379,150 +379,89 @@ function calculate_transpiration(
     return transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, g1, g2, g_sw_veg, dry_time_factor
 end
 
-function calculate_soil_evaporation(soil_moisture, soil_moisture_max, 
-                                   potential_evaporation, b_i, cv_gpu, coverage_gpu,
-                                   residual_moisture)
+function calculate_soil_evaporation!(
+    soil_evap, # <--- Output array (Modified in-place, 2D Grid)
+    soil_moisture, soil_moisture_max, potential_evaporation, 
+    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
+)
+    T = eltype(soil_evap)
     
-    # Extract TOP LAYER ONLY at the start
-    soil_moisture_top = view(soil_moisture, :, :, 1:1)          # (ny, nx, 1)
-    soil_moisture_max_top = view(soil_moisture_max, :, :, 1:1)  # (ny, nx, 1)
-    residual_top = view(residual_moisture, :, :, 1:1)           # (ny, nx, 1)
-    
-    # Calculate maximum infiltration capacity
-    max_infil = (1.0f0 .+ b_i) .* soil_moisture_max_top
-    
-    # Calculate moisture ratio
-    ratio = 1.0f0 .- soil_moisture_top ./ soil_moisture_max_top
-    ratio = clamp.(ratio, 0.0f0, 1.0f0)
-    
-    # Handle b_i == -1.0f0 case
-    mask_special = b_i .== -1.0f0
-    ratio_adjusted = ifelse.(mask_special, ratio, ratio .^ (1.0f0 ./ (b_i .+ 1.0f0)))
-    tmp = max_infil .* (1.0f0 .- ratio_adjusted)
-    tmp = ifelse.(mask_special, max_infil, tmp)
-    
-    # Check if saturated
-    mask_saturated = tmp .>= max_infil
-    
-    # For unsaturated areas, calculate ARNO evaporation
-    ratio_unsat = tmp ./ max_infil
-    ratio_unsat = 1.0f0 .- ratio_unsat
-    ratio_unsat = clamp.(ratio_unsat, 0.0f0, 1.0f0)
-    
-    # Avoid division by zero
-    ratio_powered = ifelse.(ratio_unsat .> 0.0f0, ratio_unsat .^ b_i, 0.0f0)
-    as = 1.0f0 .- ratio_powered
-    
-    # FIXED: ratio_beta should be ratio_powered^(1/b) which equals ratio_unsat
-    ratio_beta = ifelse.(ratio_powered .> 0.0f0, ratio_powered .^ (1.0f0 ./ b_i), 0.0f0)
-    
-    # Initialize dummy as array of 1s (GPU-compatible)
-    dummy = ratio_beta .* 0.0f0 .+ 1.0f0
-    ratio_power = copy(ratio_beta)
-    
-    # Manually unroll 40 terms (keeping your existing code)
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 1.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 2.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 3.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 4.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 5.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 6.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 7.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 8.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 9.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 10.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 11.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 12.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 13.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 14.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 15.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 16.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 17.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 18.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 19.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 20.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 21.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 22.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 23.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 24.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 25.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 26.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 27.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 28.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 29.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 30.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 31.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 32.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 33.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 34.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 35.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 36.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 37.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 38.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 39.0f0)
-    ratio_power = ratio_power .* ratio_beta
-    dummy = dummy .+ b_i .* ratio_power ./ (b_i .+ 40.0f0)
+    # Clear the output array first (since we accumulate into it)
+    fill!(soil_evap, 0.0f0)
 
-    beta_asp = as .+ (1.0f0 .- as) .* (1.0f0 .- ratio_beta) .* dummy
+    # --- 1. The Scalar Physics Kernel (Inner Function) ---
+    function soil_evap_kernel(sm_top, sm_max_top, resid_top, pe, b_i, cv, cov)
+        # 1. Calculate Max Infiltration
+        max_infil = (1.0f0 + b_i) * sm_max_top
+        
+        # 2. Moisture Ratio
+        ratio = clamp(1.0f0 - sm_top / sm_max_top, 0.0f0, 1.0f0)
+        
+        # 3. Handle b_i == -1.0 case
+        ratio_adj = (b_i == -1.0f0) ? ratio : ratio ^ (1.0f0 / (b_i + 1.0f0))
+        
+        tmp = max_infil * (1.0f0 - ratio_adj)
+        if b_i == -1.0f0
+            tmp = max_infil
+        end
 
-    # Reshape beta_asp to 4D for proper broadcasting
-    beta_asp_4d = reshape(beta_asp, size(beta_asp)..., 1)  # (ny, nx, 1, 1)
-    mask_saturated_4d = reshape(mask_saturated, size(mask_saturated)..., 1)
+        # 4. Saturation Check
+        is_saturated = tmp >= max_infil
+        
+        # 5. ARNO Evaporation Logic
+        ratio_unsat = clamp(1.0f0 - (tmp / max_infil), 0.0f0, 1.0f0)
+        
+        ratio_powered = (ratio_unsat > 0.0f0) ? ratio_unsat ^ b_i : 0.0f0
+        as_val = 1.0f0 - ratio_powered
+        
+        ratio_beta = (ratio_powered > 0.0f0) ? ratio_powered ^ (1.0f0 / b_i) : 0.0f0
+        
+        # 6. Series Expansion (Replaces the 40 lines of unrolled code)
+        # Using a simple loop here uses registers, not VRAM arrays!
+        dummy = 1.0f0
+        ratio_pow_term = ratio_beta # Starts as x^1
+        
+        # Loop 40 times (matches your manual unrolling)
+        for k in 1:40
+            # dummy += b * (ratio_beta^k) / (b + k)
+            dummy += (b_i * ratio_pow_term) / (b_i + Float32(k))
+            ratio_pow_term *= ratio_beta # Increment power for next loop
+        end
+
+        beta_asp = as_val + (1.0f0 - as_val) * (1.0f0 - ratio_beta) * dummy
+        
+        # 7. Final Calculation
+        # If saturated, use PE. Else, scale by beta_asp
+        esoil = is_saturated ? pe : pe * beta_asp
+        
+        # Apply weights
+        esoil = esoil * (1.0f0 - cov) * cv
+        
+        # 8. Cap at Available Moisture
+        avail = max(sm_top - resid_top, 0.0f0)
+        esoil = clamp(esoil, 0.0f0, avail)
+        
+        return esoil
+    end
+
+    # --- 2. Apply Logic (Accumulate over Veg Types) ---
+    N_veg = size(cv_gpu, 4)
     
-    # Choose between potential and ARNO evaporation
-    esoil = ifelse.(mask_saturated_4d, potential_evaporation, potential_evaporation .* beta_asp_4d)
+    for i in 1:N_veg
+        # FIX: Slice 4D arrays down to 2D (nx, ny) using [:,:,1,i]
+        # FIX: Pass b_infilt_gpu directly (It is 2D, don't slice it!)
+        @views @. soil_evap += soil_evap_kernel(
+            soil_moisture[:,:,1],           
+            soil_moisture_max[:,:,1],       
+            residual_moisture[:,:,1],       
+            potential_evaporation[:,:,1,i], # <--- Slice dim 3 to ensure 2D
+            b_infilt_gpu,                   # <--- CORRECTED: No slicing!
+            cv_gpu[:,:,1,i],                # <--- Slice dim 3
+            coverage_gpu[:,:,1,i]           # <--- Slice dim 3
+        )
+    end
     
-    # Apply bare soil fraction and tile area weights
-    esoil = esoil .* (1.0f0 .- coverage_gpu) .* cv_gpu
-    
-    # FIXED: Cap at AVAILABLE moisture (total - residual)
-    available_moisture = soil_moisture_top .- residual_top
-    available_moisture = max.(available_moisture, 0.0f0)  # Can't be negative
-    available_moisture_4d = reshape(available_moisture, size(available_moisture)..., 1)  # (ny, nx, 1, 1)
-    
-    esoil = min.(esoil, available_moisture_4d)
-    esoil = max.(esoil, 0.0f0)
-    
-    # Sum over vegetation types (dim 4)
-    return sum(esoil, dims=4)  # (ny, nx, 1, 1)
+    return nothing
 end
 
 function update_water_canopy_storage(water_storage, prec, cv, canopy_evap, Wm, throughfall, coverage)
