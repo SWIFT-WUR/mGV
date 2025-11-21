@@ -32,8 +32,9 @@ reshape_static_inputs!()
 global water_storage = CUDA.zeros(float_type, size(coverage_gpu))
 global throughfall = CUDA.zeros(float_type, size(Ds_gpu))
 global canopy_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
-global tsurf = CUDA.zeros(float_type, size(d0_gpu))
+global net_radiation = CUDA.zeros(float_type, size(coverage_gpu))
 global Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
+global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
 
 # Soil property arrays
 global bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -56,6 +57,7 @@ global soil_moisture_critical = CUDA.zeros(float_type, soil_dims...)
 global field_capacity = CUDA.zeros(float_type, soil_dims...)
 global wilting_point = CUDA.zeros(float_type, soil_dims...)
 global residual_moisture = CUDA.zeros(float_type, soil_dims...)
+
 
 # ============================================================================
 # CALCULATE SOIL PROPERTIES
@@ -101,6 +103,7 @@ function process_year(year)
     global porosity, soil_moisture_old, Q_12, soil_moisture_new, soil_moisture_max
     global soil_moisture_critical, field_capacity, wilting_point, residual_moisture
     global soil_temperature, Lsum, tsurf
+    global net_radiation
 
     println("============ Start run for year: $year ============")
     
@@ -190,7 +193,7 @@ function process_year(year)
 
                 # Initialize surface temperature on first timestep
                 if day == 1 && year == start_year
-                    tsurf = tair_gpu
+                    tsurf .= tair_gpu
                 end
 
                 # ============================================================
@@ -203,7 +206,7 @@ function process_year(year)
                 end
 
                 @timeit to "calculate_net_radiation" begin
-                    net_radiation = calculate_net_radiation(
+                    net_radiation .= calculate_net_radiation(
                         swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
                     )
                 end
@@ -334,7 +337,7 @@ function process_year(year)
                 # ============================================================
                 if day == 1 && year == start_year
                     @timeit to "solve_surface_temperature" begin
-                        tsurf = solve_surface_temperature(
+                        tsurf .= solve_surface_temperature(
                             tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                             sum_with_nan_handling(cv_gpu .* aerodynamic_resistance, 4),
                             kappa_array, depth_gpu, day_sec, cs_array, total_et, 
@@ -354,7 +357,7 @@ function process_year(year)
                 ra_eff = 1.0 ./ max.(ra_eff_inv, eps(eltype(ra_eff_inv)))
 
                 @timeit to "solve_surface_temperature" begin
-                    tsurf = solve_surface_temperature(
+                    tsurf .= solve_surface_temperature(
                         tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                         ra_eff, kappa_array, depth_gpu, day_sec, cs_array, 
                         total_et, tair_gpu, cv_gpu, psurf_gpu

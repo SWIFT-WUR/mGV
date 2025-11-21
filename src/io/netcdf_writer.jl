@@ -361,6 +361,46 @@ function write_daily_outputs(
                             # --- BUFFER ---
                             transfer_buf)
     
+    # ========================================================================
+    # 🔍 DEBUG: TYPE CHECKER (Runs on Day 1 only)
+    # ========================================================================
+    if day == 1 
+        println("\n" * "="^60)
+        println("🔍  VARIABLE TYPE DIAGNOSTIC (Day $day)")
+        println("="^60)
+        
+        # Dictionary of ACTIVE variables currently being written below
+        vars_to_check = Dict(
+            "tsurf"                 => tsurf,
+            "tair_gpu"              => tair_gpu,
+            "prec_gpu"              => prec_gpu,
+            "total_et"              => total_et,
+            "surface_runoff"        => surface_runoff,
+            "total_runoff"          => total_runoff,
+            "soil_evaporation"      => soil_evaporation,
+            "soil_moisture_new"     => soil_moisture_new,
+            "potential_evaporation" => potential_evaporation,
+            "net_radiation"         => net_radiation,
+            "transpiration"         => transpiration,
+            "canopy_evaporation"    => canopy_evaporation,
+            "coverage_gpu"          => coverage_gpu, # Used in calc
+            "cv_gpu"                => cv_gpu        # Used in calc
+        )
+
+        # Iterate and Print
+        for (name, var) in sort(collect(vars_to_check), by=x->x[1])
+            d_type = eltype(var)
+            
+            # Add a visual flag if it's Float64 (usually unexpected in GPU->NetCDF pipelines)
+            status = (d_type == Float64) ? "⚠️  Float64" : "✅ Float32"
+            
+            println("$(rpad(name, 25)) : $(rpad(string(d_type), 10)) | $status")
+        end
+        println("="^60 * "\n")
+    end
+    # ========================================================================
+
+
     # GPU-safe sanitizers
     san_nan = A -> begin
         T = eltype(A)

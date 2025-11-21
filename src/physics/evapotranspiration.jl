@@ -106,7 +106,7 @@ function compute_partial_canopy_resistance(rmin_gpu, LAI_gpu)
 end
 
 function calculate_net_radiation(swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
-    return (1.0 .- albedo_gpu) .* swdown_gpu .+ lwdown_gpu .- emissivity .* sigma .* (tsurf .+ 273.15).^4
+    return (1.0f0 .- albedo_gpu) .* swdown_gpu .+ lwdown_gpu .- emissivity .* sigma .* (tsurf .+ 273.15f0).^4
 end
 
 function calculate_potential_evaporation(
@@ -187,7 +187,7 @@ function calculate_canopy_evaporation(
     tair_gpu, elev_gpu,
 )
     # ---- CONVERT FIRST! ----
-    T = eltype(water_storage)  # Get type from water_storage (Float32)
+    T = eltype(potential_evaporation)  # Get type from water_storage (Float32)
     max_water_storage = T.(max_water_storage)  # Convert Float64 -> Float32 IMMEDIATELY
     
     tiny = T(1e-6)
