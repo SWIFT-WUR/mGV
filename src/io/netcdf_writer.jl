@@ -3,33 +3,46 @@
 # ============================================================================
 
 struct TransferBuffer
-    # Buffers for 2D variables (lon, lat)
-    buf_2d::Matrix{Float32}
-    
-    # Buffers for 3D variables
-    buf_3d_veg::Array{Float32, 3}      # (lon, lat, nveg)
-    buf_3d_layer::Array{Float32, 3}    # (lon, lat, layer=3)
-    buf_3d_qlayer::Array{Float32, 3}   # (lon, lat, qlayers=2)
-    buf_3d_toplayer::Array{Float32, 3} # (lon, lat, top_layer=1)
+    # --- 2D Variables ---
+    tsurf::Matrix{Float32}
+    tair::Matrix{Float32}
+    prec::Matrix{Float32}
+    total_et::Matrix{Float32}
+    surface_runoff::Matrix{Float32}
+    total_runoff::Matrix{Float32}
+    pe_summed::Matrix{Float32}
+    nr_summed::Matrix{Float32}
+    tr_summed::Matrix{Float32}
+    ce_summed::Matrix{Float32}
+
+    # --- 3D Variables ---
+    soil_evaporation::Array{Float32, 3} # (lon, lat, top_layer)
+    soil_moisture::Array{Float32, 3}    # (lon, lat, layer)
 end
 
 function create_transfer_buffer(nx, ny, nveg, nlayers)
-    # 1. Create standard arrays
-    b2d = zeros(Float32, nx, ny)
-    b3d_v = zeros(Float32, nx, ny, nveg)
-    b3d_l = zeros(Float32, nx, ny, nlayers)
-    b3d_q = zeros(Float32, nx, ny, 2)
-    b3d_t = zeros(Float32, nx, ny, 1)
+    # Helper to alloc and pin
+    function make_pinned(dims...)
+        A = zeros(Float32, dims...)
+        CUDA.Mem.pin(A)
+        return A
+    end
 
-    # 2. Pin them (This locks them in physical RAM)
-    CUDA.Mem.pin(b2d)
-    CUDA.Mem.pin(b3d_v)
-    CUDA.Mem.pin(b3d_l)
-    CUDA.Mem.pin(b3d_q)
-    CUDA.Mem.pin(b3d_t)
-
-    # 3. Return struct
-    TransferBuffer(b2d, b3d_v, b3d_l, b3d_q, b3d_t)
+    TransferBuffer(
+        make_pinned(nx, ny),       # tsurf
+        make_pinned(nx, ny),       # tair
+        make_pinned(nx, ny),       # prec
+        make_pinned(nx, ny),       # total_et
+        make_pinned(nx, ny),       # surface_runoff
+        make_pinned(nx, ny),       # total_runoff
+        make_pinned(nx, ny),       # pe_summed
+        make_pinned(nx, ny),       # nr_summed
+        make_pinned(nx, ny),       # tr_summed
+        make_pinned(nx, ny),       # ce_summed
+        
+        make_pinned(nx, ny, 1),    # soil_evaporation (top layer)
+        make_pinned(nx, ny, nlayers) # soil_moisture
+    )
 end
 
 # ============================================================================
@@ -418,75 +431,63 @@ end
 # ============================================================================
 
 function transfer_and_write_outputs(
-    processed_data, # The NamedTuple from the previous function
+    processed_data, 
     day,
-    transfer_buf,   # The struct containing buf_2d, buf_3d_layer, etc.
+    buf::TransferBuffer, # Our new struct
     
-    # Output Arrays (CPU/NetCDF backed)
-    tsurf_output, tair_output, precipitation_output, 
-    total_et_output, surface_runoff_output, total_runoff_output,
-    soil_evaporation_output, soil_moisture_output,
-    potential_evaporation_summed_output, net_radiation_summed_output,
-    transpiration_summed_output, canopy_evaporation_summed_output
+    # Output Arrays (NetCDF vars)
+    tsurf_out, tair_out, prec_out, 
+    et_out, s_run_out, t_run_out,
+    soil_evap_out, soil_mst_out,
+    pe_out, nr_out, tr_out, ce_out
 )
 
     # ========================================================================
-    # 2D Variables (Use buf_2d)
+    # PHASE 1: FIRE EVERYTHING (GPU -> CPU)
     # ========================================================================
+    # Because we have separate buffers, we can queue all these copies 
+    # without waiting for the previous one to finish.
     
-    # TSurf
-    copyto!(transfer_buf.buf_2d, processed_data.tsurf)
-    tsurf_output[:, :, day] = transfer_buf.buf_2d
-
-    # TAir
-    copyto!(transfer_buf.buf_2d, processed_data.tair)
-    tair_output[:, :, day] = transfer_buf.buf_2d
+    # 2D Raw
+    copyto!(buf.tsurf,          processed_data.tsurf)
+    copyto!(buf.tair,           processed_data.tair)
+    copyto!(buf.prec,           processed_data.prec)
+    copyto!(buf.total_et,       processed_data.total_et)
+    copyto!(buf.surface_runoff, processed_data.surface_runoff)
+    copyto!(buf.total_runoff,   processed_data.total_runoff)
     
-    # Precipitation
-    copyto!(transfer_buf.buf_2d, processed_data.prec)
-    precipitation_output[:, :, day] = transfer_buf.buf_2d
+    # 2D Processed Sums
+    copyto!(buf.pe_summed,      processed_data.pe_summed)
+    copyto!(buf.nr_summed,      processed_data.nr_summed)
+    copyto!(buf.tr_summed,      processed_data.tr_summed)
+    copyto!(buf.ce_summed,      processed_data.ce_summed)
 
-    # Total ET
-    copyto!(transfer_buf.buf_2d, processed_data.total_et)
-    total_et_output[:, :, day] = transfer_buf.buf_2d
+    # 3D Layers
+    copyto!(buf.soil_evaporation, processed_data.soil_evaporation)
+    copyto!(buf.soil_moisture,    processed_data.soil_moisture_new)
 
-    # Runoff
-    copyto!(transfer_buf.buf_2d, processed_data.surface_runoff)
-    surface_runoff_output[:, :, day] = transfer_buf.buf_2d
-
-    copyto!(transfer_buf.buf_2d, processed_data.total_runoff)
-    total_runoff_output[:, :, day] = transfer_buf.buf_2d
+    # SYNC POINT: Wait for all data to land in RAM
+    CUDA.synchronize()
 
     # ========================================================================
-    # Processed Summed Variables (2D results calculated on GPU)
+    # PHASE 2: WRITE EVERYTHING (CPU -> DISK)
     # ========================================================================
-
-    # Potential Evaporation Sum
-    copyto!(transfer_buf.buf_2d, processed_data.pe_summed)
-    potential_evaporation_summed_output[:, :, day] = transfer_buf.buf_2d
-
-    # Net Radiation Sum
-    copyto!(transfer_buf.buf_2d, processed_data.nr_summed)
-    net_radiation_summed_output[:, :, day] = transfer_buf.buf_2d
-
-    # Transpiration Sum
-    copyto!(transfer_buf.buf_2d, processed_data.tr_summed)
-    transpiration_summed_output[:, :, day] = transfer_buf.buf_2d
-
-    # Canopy Evaporation Sum
-    copyto!(transfer_buf.buf_2d, processed_data.ce_summed)
-    canopy_evaporation_summed_output[:, :, day] = transfer_buf.buf_2d
-
-    # ========================================================================
-    # 3D Variables (Use buf_3d_toplayer or buf_3d_layer)
-    # ========================================================================
-
-    # Soil Evaporation (buf_3d_toplayer)
-    copyto!(transfer_buf.buf_3d_toplayer, processed_data.soil_evaporation)
-    soil_evaporation_output[:, :, day, :] = transfer_buf.buf_3d_toplayer
-
-    # Soil Moisture (buf_3d_layer)
-    copyto!(transfer_buf.buf_3d_layer, processed_data.soil_moisture_new)
-    soil_moisture_output[:, :, day, :] = transfer_buf.buf_3d_layer
-
+    # Now that data is safely in RAM, we write to NetCDF.
+    
+    tsurf_out[:, :, day]     = buf.tsurf
+    tair_out[:, :, day]      = buf.tair
+    prec_out[:, :, day]      = buf.prec
+    et_out[:, :, day]        = buf.total_et
+    s_run_out[:, :, day]     = buf.surface_runoff
+    t_run_out[:, :, day]     = buf.total_runoff
+    
+    pe_out[:, :, day]        = buf.pe_summed
+    nr_out[:, :, day]        = buf.nr_summed
+    tr_out[:, :, day]        = buf.tr_summed
+    ce_out[:, :, day]        = buf.ce_summed
+    
+    soil_evap_out[:, :, day, :] = buf.soil_evaporation
+    soil_mst_out[:, :, day, :]  = buf.soil_moisture
+    
+    return nothing
 end
