@@ -301,64 +301,77 @@ end
 
 
 # ============================================================================
-# 4. WRITE DAILY OUTPUTS
+# 4. SPLIT TRANSFER AND WRITE-OUTPUTS (ASYNC OPTIMIZATION)
 # ============================================================================
 
-function transfer_and_write_outputs(
+"""
+Phase 1: Queue the copies on the GPU stream. 
+This returns immediately, allowing the CPU to proceed.
+"""
+function async_transfer!(
     processed_data, 
-    day,
-    buf::TransferBuffer, # Our new struct
+    buf::TransferBuffer, 
+    stream::CuStream
+)
+    # Helper for low-level async copy
+    # Note: unsafe_copyto! requires contiguous arrays. 
+    function async_copy(dest, src)
+        # We use unsafe_copyto! to bypass Julia's default blocking mechanisms
+        # The stream argument tells CUDA to queue this and move on.
+        CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
+    end
+
+    # --- 2D Raw ---
+    async_copy(buf.tsurf,          processed_data.tsurf)
+    async_copy(buf.tair,           processed_data.tair)
+    async_copy(buf.prec,           processed_data.prec)
+    async_copy(buf.total_et,       processed_data.total_et)
+    async_copy(buf.surface_runoff, processed_data.surface_runoff)
+    async_copy(buf.total_runoff,   processed_data.total_runoff)
+
+    # --- 2D Processed Sums ---
+    async_copy(buf.pe_summed,      processed_data.pe_summed)
+    async_copy(buf.nr_summed,      processed_data.nr_summed)
+    async_copy(buf.tr_summed,      processed_data.tr_summed)
+    async_copy(buf.ce_summed,      processed_data.ce_summed)
+
+    # --- 3D Layers ---
+    async_copy(buf.soil_evaporation, processed_data.soil_evaporation)
+    async_copy(buf.soil_moisture,    processed_data.soil_moisture_new)
     
+    return nothing
+end
+
+"""
+Phase 2: Synchronize stream (ensure data is in RAM) and write to Disk.
+"""
+function finalize_write!(
+    day,
+    buf::TransferBuffer,
+    stream::CuStream,
     # Output Arrays (NetCDF vars)
     tsurf_out, tair_out, prec_out, 
     et_out, s_run_out, t_run_out,
     soil_evap_out, soil_mst_out,
     pe_out, nr_out, tr_out, ce_out
 )
+    # 1. WAIT for the specific stream to finish the copy.
+    # While we wait here, the GPU can actually be busy calculating the NEXT day 
+    # if we structure the main loop correctly.
+    synchronize(stream)
 
-    # ========================================================================
-    # PHASE 1: FIRE EVERYTHING (GPU -> CPU)
-    # ========================================================================
-    # Because we have separate buffers, we can queue all these copies 
-    # without waiting for the previous one to finish.
+    # 2. WRITE to Disk (Standard CPU blocking I/O)
+    tsurf_out[:, :, day]        = buf.tsurf
+    tair_out[:, :, day]         = buf.tair
+    prec_out[:, :, day]         = buf.prec
+    et_out[:, :, day]           = buf.total_et
+    s_run_out[:, :, day]        = buf.surface_runoff
+    t_run_out[:, :, day]        = buf.total_runoff
     
-    # 2D Raw
-    copyto!(buf.tsurf,          processed_data.tsurf)
-    copyto!(buf.tair,           processed_data.tair)
-    copyto!(buf.prec,           processed_data.prec)
-    copyto!(buf.total_et,       processed_data.total_et)
-    copyto!(buf.surface_runoff, processed_data.surface_runoff)
-    copyto!(buf.total_runoff,   processed_data.total_runoff)
-    
-    # 2D Processed Sums
-    copyto!(buf.pe_summed,      processed_data.pe_summed)
-    copyto!(buf.nr_summed,      processed_data.nr_summed)
-    copyto!(buf.tr_summed,      processed_data.tr_summed)
-    copyto!(buf.ce_summed,      processed_data.ce_summed)
-
-    # 3D Layers
-    copyto!(buf.soil_evaporation, processed_data.soil_evaporation)
-    copyto!(buf.soil_moisture,    processed_data.soil_moisture_new)
-
-    # SYNC POINT: Wait for all data to land in RAM
-#    CUDA.synchronize()
-
-    # ========================================================================
-    # PHASE 2: WRITE EVERYTHING (CPU -> DISK)
-    # ========================================================================
-    # Now that data is safely in RAM, we write to NetCDF.
-    
-    tsurf_out[:, :, day]     = buf.tsurf
-    tair_out[:, :, day]      = buf.tair
-    prec_out[:, :, day]      = buf.prec
-    et_out[:, :, day]        = buf.total_et
-    s_run_out[:, :, day]     = buf.surface_runoff
-    t_run_out[:, :, day]     = buf.total_runoff
-    
-    pe_out[:, :, day]        = buf.pe_summed
-    nr_out[:, :, day]        = buf.nr_summed
-    tr_out[:, :, day]        = buf.tr_summed
-    ce_out[:, :, day]        = buf.ce_summed
+    pe_out[:, :, day]           = buf.pe_summed
+    nr_out[:, :, day]           = buf.nr_summed
+    tr_out[:, :, day]           = buf.tr_summed
+    ce_out[:, :, day]           = buf.ce_summed
     
     soil_evap_out[:, :, day, :] = buf.soil_evaporation
     soil_mst_out[:, :, day, :]  = buf.soil_moisture

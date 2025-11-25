@@ -514,14 +514,19 @@ end
 
 
 # Eq. (23): Total evapotranspiration
-function calculate_total_evapotranspiration(canopy_evap, transp, soil_evap, cv_gpu, coverage_gpu)
-    # Weight canopy evap and transpiration
-    canopy_weighted = sum_with_nan_handling(
-        canopy_evap .* coverage_gpu .* cv_gpu, 4
-    )
-    transp_weighted = sum_with_nan_handling(
-        transp .* coverage_gpu, 4
-    )
+function calculate_total_evapotranspiration!(
+    total_et,    # Mutated Output
+    canopy_evap, transp, soil_evap, cv, coverage
+)
+    # 1. Initialize with Soil Evaporation
+    @. total_et = soil_evap
+
+    # 2. Accumulate Vegetation Fluxes
+    # We loop over tiles to avoid allocating massive 4D intermediate arrays.
+    # The @views macro ensures slicing (e.g., [:,:,:,i]) is zero-allocation.
+    for i in 1:size(canopy_evap, 4)
+        @views @. total_et += (canopy_evap[:,:,:,i] * cv[:,:,:,i] + transp[:,:,:,i]) * coverage[:,:,:,i]
+    end
     
-    return canopy_weighted + transp_weighted + soil_evap  # soil_evap already weighted
+    return nothing
 end

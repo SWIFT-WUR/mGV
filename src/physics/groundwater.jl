@@ -130,6 +130,33 @@ function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
     return max.(bf, T(0))
 end
 
+
+function calculate_infiltration!(infiltration, throughfall, surface_runoff)
+    # Logic: infiltration = max(sum(throughfall) - runoff, 0)
+    
+    # 1. Initialize with negative runoff
+    # This sets the baseline: we subtract runoff from the inputs.
+    @. infiltration = -surface_runoff
+    
+    # 2. Accumulate Throughfall (Sum over tiles)
+    # We iterate tiles to fuse the "sum_with_nan_handling" logic without allocations.
+    n_tiles = size(throughfall, 4)
+    
+    for i in 1:n_tiles
+        thr_i = @view throughfall[:, :, :, i]
+        
+        # Accumulate valid values only (NaN -> 0.0f0)
+        # This acts as the "Total Input" summation
+        @. infiltration += ifelse(isnan(thr_i), 0.0f0, thr_i)
+    end
+
+    # 3. Clamp to zero
+    # If runoff > input (conceptually impossible but good for safety), clamp to 0.
+    @. infiltration = max(infiltration, 0.0f0)
+
+    return nothing
+end
+
 function solve_runoff_and_drainage(
     surface_inflow,      # (ny,nx)  [mm]
     soil_evaporation,    # (ny,nx,nlayer,nveg)  [mm]

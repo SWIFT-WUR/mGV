@@ -44,6 +44,7 @@ global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
 
 global soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
 global total_et = CUDA.zeros(float_type, size(Tavg_gpu))
+global infiltration = CUDA.zeros(float_type, size(Tavg_gpu))
 
 # Soil property arrays
 global bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -119,6 +120,7 @@ function process_year(year)
     global max_water_storage
     global ice_frac, organic_frac_gpu
     global total_et
+    
     println("============ Start run for year: $year ============")
     
     # ------------------------------------------------------------------------
@@ -148,6 +150,9 @@ function process_year(year)
                 
         end
    
+
+    # Create a stream for data transfers
+    transfer_stream = CuStream()
 
     # ------------------------------------------------------------------------
     # Daily timestep loop
@@ -263,9 +268,11 @@ function process_year(year)
                 )
 
                 # Calculate infiltration
-                total_input = sum_with_nan_handling(throughfall, 4)
-                infiltration_raw = total_input .- surface_runoff
-                infiltration = max.(infiltration_raw, zero(eltype(infiltration_raw)))
+                calculate_infiltration!(infiltration, throughfall, surface_runoff)
+
+#                total_input = sum_with_nan_handling(throughfall, 4)
+#                infiltration_raw = total_input .- surface_runoff
+#                infiltration = max.(infiltration_raw, zero(eltype(infiltration_raw)))
 
                 @debug println("neg. infiltration cells = ", count(<(0), Array(infiltration_raw)))
 
@@ -288,8 +295,10 @@ function process_year(year)
                 # Total fluxes
                 # ============================================================
                 @timeit to "compute_total_fluxes" begin
-                    total_et = calculate_total_evapotranspiration(
-                        canopy_evaporation, transpiration, soil_evaporation, cv_gpu, coverage_gpu
+                    calculate_total_evapotranspiration!(
+                        total_et,
+                        canopy_evaporation, transpiration, soil_evaporation, 
+                        cv_gpu, coverage_gpu
                     )
                     total_runoff = calculate_total_runoff(
                         surface_runoff, subsurface_runoff, cv_gpu
@@ -383,18 +392,44 @@ function process_year(year)
                 # Write outputs
                 # ============================================================
                 @debug println("Writing outputs")
-                @timeit to "outputs" begin
-                    transfer_and_write_outputs(
-                        gpu_results,
-                        day,
-                        transfer_buf,
-                        # --- CPU output arrays ---
-                        tsurf_output, tair_output, precipitation_output, 
-                        total_et_output, surface_runoff_output, total_runoff_output,
-                        soil_evaporation_output, soil_moisture_output,
-                        potential_evaporation_summed_output, net_radiation_summed_output,
-                        transpiration_summed_output, canopy_evaporation_summed_output
-                    )
+                @timeit to "outputs" begin          
+                    # 1. Start the transfer for TODAY (Day N)
+                    # This is non-blocking on CPU; it just queues commands to the GPU.
+                    async_transfer!(gpu_results, transfer_buf, transfer_stream)
+        
+                    # 2. Finish writing YESTERDAY (Day N-1)
+                    # While the GPU is starting to transfer Day N (and soon calculating Day N+1),
+                    # the CPU writes Day N-1.
+                    if day > 1
+                        # We simply finalize the write using the DATA that is already in the buffer.
+                        # Note: Since we use a single buffer, we must ensure the GPU copy 
+                        # for Day N doesn't overwrite Day N-1 before we write it.
+                        # However, since GPU calc > Disk Write, we sync here to be safe.
+                        
+                        # OPTIMIZATION: To be truly parallel with single buffer, 
+                        # we sync the stream immediately, write, then let GPU continue.
+                        
+                        # To get maximum speed, we actually just do:
+                        finalize_write!(
+                            day, # Actually, we write the current day immediately after sync in this config
+                            transfer_buf, transfer_stream,
+                            tsurf_output, tair_output, precipitation_output, 
+                            total_et_output, surface_runoff_output, total_runoff_output,
+                            soil_evaporation_output, soil_moisture_output,
+                            potential_evaporation_summed_output, net_radiation_summed_output,
+                            transpiration_summed_output, canopy_evaporation_summed_output
+                        )
+                    else
+                        # Day 1: Just do it standard way
+                        finalize_write!(
+                            day, transfer_buf, transfer_stream,
+                            tsurf_output, tair_output, precipitation_output, 
+                            total_et_output, surface_runoff_output, total_runoff_output,
+                            soil_evaporation_output, soil_moisture_output,
+                            potential_evaporation_summed_output, net_radiation_summed_output,
+                            transpiration_summed_output, canopy_evaporation_summed_output
+                        )
+                    end
                 end
                 
             end # GPU_USE
