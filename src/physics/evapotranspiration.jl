@@ -229,96 +229,88 @@ function calculate_canopy_evaporation!(
     aerodynamic_resistance, rarc, prec_gpu, cv_gpu, rmin, LAI_gpu,
     tair_gpu, elev_gpu,
 )
-    # Constants
+    # Constants (Float32 literals)
     tiny = 1.0f-6
     
-    # ------------------------------------------------------------------------
-    # 1. Sanitize Inputs (In-place)
-    # ------------------------------------------------------------------------
+    # ---- Sanitize Inputs (In-place) ----
+    # Using Float32 literals (0.0f0, 1.0f6) directly
     @. potential_evaporation  = ifelse(isnan(potential_evaporation) | (abs(potential_evaporation) > fillvalue_threshold), 0.0f0, potential_evaporation)
     @. water_storage          = ifelse(isnan(water_storage)         | (abs(water_storage)         > fillvalue_threshold), 0.0f0, water_storage)
     @. max_water_storage      = ifelse(isnan(max_water_storage)     | (abs(max_water_storage)     > fillvalue_threshold), 0.0f0, max_water_storage)
     @. aerodynamic_resistance = ifelse(isnan(aerodynamic_resistance)| (abs(aerodynamic_resistance)> fillvalue_threshold), 1.0f6, aerodynamic_resistance)
     @. rarc                   = ifelse(isnan(rarc)                  | (abs(rarc)                  > fillvalue_threshold), 0.0f0, rarc)
 
-    # ------------------------------------------------------------------------
-    # 2. Pre-calculate 2D Physics (Fused)
-    # ------------------------------------------------------------------------
-    # We only allocate 2 arrays here (slope, gamma_).
-    # latent_heat, scale_height, surface_pressure are fused into the gamma_ calculation.
     
+    # ---- Δ and γ ----
+    # We use @. to broadcast scalar physics functions
     slope = @. calculate_svp_slope(tair_gpu)
     
-    # Gamma = (Cp/0.622) * P / L
-    # We calculate P and L inline to avoid allocating arrays for them.
-    gamma_ = @. 1628.6f0 * (p_std * exp(-elev_gpu / calculate_scale_height(tair_gpu, elev_gpu))) / calculate_latent_heat(tair_gpu + t_freeze)
+    latent_heat = @. calculate_latent_heat(tair_gpu + t_freeze)
 
-    # ------------------------------------------------------------------------
-    # 3. Loop over Vegetation Tiles (Low Allocation)
-    # ------------------------------------------------------------------------
-    # Instead of creating 4D intermediates, we process one tile at a time.
-    # This reduces memory overhead by ~14x for intermediate terms.
+    scale_height = @. calculate_scale_height(tair_gpu, elev_gpu)
     
-    for i in 1:(nveg - 1)
-        # --- Slice Views (Zero Allocation) ---
-        # We use views/direct indexing to access the 4D arrays
-        pe_i   = @view potential_evaporation[:, :, :, i]
-        W_i    = @view water_storage[:, :, :, i]
-        Wmax_i = @view max_water_storage[:, :, :, i]
-        ra_i   = @view aerodynamic_resistance[:, :, :, i]
-        rarc_i = @view rarc[:, :, :, i]
-        rmin_i = @view rmin[:, :, :, i]
-        lai_i  = @view LAI_gpu[:, :, :, i]
-        
-        # --- Output Views ---
-        fn_out   = @view f_n[:, :, :, i]
-        evap_out = @view canopy_evaporation[:, :, :, i]
+    # Calculate Pressure and Gamma
+    # p_std is Float32 from SimConstants
+    surface_pressure = @. p_std * exp(-elev_gpu / scale_height)
+    gamma_ = @. 1628.6f0 * surface_pressure / latent_heat
 
-        # --- Fused Calculation (Allocates 1 small 2D temp array) ---
-        # We calculate 'canopy_evaporation_star' in one giant fused kernel.
-        # This replaces: rc, ralpha, den_rc, den_w, E_p_wet, Wratio, ra_ratio.
-        
-        # Breakdown of the fused term:
-        # 1. Wratio ^ 2/3:   (clamp(W/Wmax, 0,1)) ^ (2/3)
-        # 2. E_p_wet:        pe * (slope + gamma*(1 + (rc+ralpha)/ra)) / (slope + gamma*(1 + ralpha/ra))
-        # 3. ra_ratio:       ra / (ra + ralpha)
-        
-        canopy_evaporation_star = @. begin
-            # Locals inside kernel
-            _rc     = rmin_i / max(lai_i, tiny)
-            _ralpha = rarc_i # max(rarc, 0) logic is implicit if rarc sanitized
-            
-            _den_rc = slope + gamma_ * (1.0f0 + (_rc + _ralpha) / ra_i)
-            _den_w  = slope + gamma_ * (1.0f0 + _ralpha / ra_i)
-            
-            _Ep_wet = pe_i * (_den_rc / max(_den_w, tiny))
-            
-            _Wratio = clamp(W_i / max(Wmax_i, tiny), 0.0f0, 1.0f0)
-            
-            # Result
-            (_Wratio ^ (2.0f0/3.0f0)) * _Ep_wet * (ra_i / max(ra_i + _ralpha, tiny))
-        end
-
-        # --- Update Outputs (In-Place) ---
-        # 1. Calculate f_n
-        @. fn_out = clamp((W_i + prec_gpu) / max(canopy_evaporation_star, tiny), 0.0f0, 1.0f0)
-        
-        # 2. Apply masking logic (if star is tiny, f_n = 1.0)
-        @. fn_out = ifelse(canopy_evaporation_star <= tiny, 1.0f0, fn_out)
-
-        # 3. Calculate Final Evaporation
-        @. evap_out = fn_out * canopy_evaporation_star
-        
-        # 4. Final Sanitize
-        @. evap_out = ifelse(isnan(evap_out) | (abs(evap_out) > fillvalue_threshold), 0.0f0, evap_out)
+    # =========================================================================
+    # DEBUG BLOCK: Check Types (Canopy Evap)
+    # =========================================================================
+    if rand() < 0.01 
+        println("\n--- [DEBUG] calculate_canopy_evaporation! Type Check ---")
+        println("INPUTS (Sanitized):")
+        println("  potential_evaporation: ", eltype(potential_evaporation))
+        println("  water_storage:         ", eltype(water_storage))
+        println("  max_water_storage:     ", eltype(max_water_storage))
+        println("  aerodynamic_resistance:", eltype(aerodynamic_resistance))
+        println("  rarc:                  ", eltype(rarc))
+        println("INTERMEDIATES:")
+        println("  slope:                 ", eltype(slope))
+        println("  latent_heat:           ", eltype(latent_heat))
+        println("  scale_height:          ", eltype(scale_height))
+        println("  surface_pressure:      ", eltype(surface_pressure))
+        println("  gamma_:                ", eltype(gamma_))
+        println("-----------------------------------------------------------\n")
     end
+    # =========================================================================
 
-    # ------------------------------------------------------------------------
-    # 4. Zero out Bare Soil Tile
-    # ------------------------------------------------------------------------
+    # ---- Resistances ----
+    rc = @. rmin / max(LAI_gpu, 1.0f-6)
+    ra = aerodynamic_resistance # Alias
+
+    RALPHA_MIN = nothing
+    ralpha = (RALPHA_MIN === nothing) ? rarc : max.(rarc, RALPHA_MIN)
+
+    # ---- Denominators & E_p_wet ----
+    den_rc  = @. slope + gamma_ * (1.0f0 + (rc + ralpha) / ra)
+    den_w   = @. slope + gamma_ * (1.0f0 + ralpha / ra)
+    
+    E_p_wet = @. potential_evaporation * (den_rc / max(den_w, tiny))
+
+    # ---- VIC Eq. (1) ----
+    Wratio   = @. clamp(water_storage / max(max_water_storage, tiny), 0.0f0, 1.0f0)
+    ra_ratio = @. ra / max(ra + ralpha, tiny)
+    
+    # Note: 2/3 must be calculated as Float32 (2.0f0/3.0f0)
+    canopy_evaporation_star = @. (Wratio ^ (2.0f0 / 3.0f0)) * E_p_wet * ra_ratio
+
+    # ---- Update f_n (In-Place) ----
+    # 1. Calculate raw fraction
+    @. f_n = clamp((water_storage + prec_gpu) / max(canopy_evaporation_star, tiny), 0.0f0, 1.0f0)
+    
+    # 2. Apply masking logic directly to f_n
+    # Logic: if star <= tiny, f_n = 1.0, else keep f_n
+    @. f_n = ifelse(canopy_evaporation_star <= tiny, 1.0f0, f_n)
+
+    # ---- Update canopy_evaporation (In-Place) ----
+    @. canopy_evaporation = f_n * canopy_evaporation_star
+    
+    # Final sanitize
+    @. canopy_evaporation = ifelse(isnan(canopy_evaporation) | (abs(canopy_evaporation) > fillvalue_threshold), 0.0f0, canopy_evaporation)
+
+    # Zero out bare soil tile (last index)
     canopy_evaporation[:, :, :, end:end] .= 0.0f0
-    f_n[:, :, :, end:end] .= 0.0f0 # Bare soil has no canopy wetness fraction
-
 
     return nothing
 end

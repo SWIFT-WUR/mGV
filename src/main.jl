@@ -66,6 +66,8 @@ global field_capacity = CUDA.zeros(float_type, soil_dims...)
 global wilting_point = CUDA.zeros(float_type, soil_dims...)
 global residual_moisture = CUDA.zeros(float_type, soil_dims...)
 
+global ice_frac = CUDA.zeros(float_type, size(soil_moisture_old))
+global organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_old))
 
 # ============================================================================
 # CALCULATE SOIL PROPERTIES
@@ -114,6 +116,7 @@ function process_year(year)
     global net_radiation
     global potential_evaporation, aerodynamic_resistance
     global max_water_storage
+    global ice_frac, organic_frac_gpu
 
     println("============ Start run for year: $year ============")
     
@@ -318,9 +321,6 @@ function process_year(year)
                 # ============================================================
                 # Soil thermal properties
                 # ============================================================
-                ice_frac = CUDA.zeros(float_type, size(soil_moisture_new))
-                organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_new))
-
                 @timeit to "soil_conductivity" begin
                     kappa_array = soil_conductivity(
                         soil_moisture_new, ice_frac, soil_dens_min, bulk_dens_min, 
