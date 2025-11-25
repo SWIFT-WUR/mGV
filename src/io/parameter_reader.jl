@@ -3,40 +3,49 @@ function read_and_allocate_parameter(varname::String)
 
     # 1) Open netCDF file, read variable into a CPU array and copy array into preload
     dataset       = NetCDF.open(input_param_file)
-    cpu_arr       = dataset[varname]
-    var_dims      = size(dataset[varname])  # Get the dimensions of the variable
+    # cpu_arr access removed as it wasn't used/needed if we read immediately below
+    var_dims      = size(dataset[varname]) 
 
     # Handle slicing based on dimensionality
-    if length(var_dims) == 1
-        cpu_preload = dataset[varname][:]
-        println("Element type for 1D: ", eltype(cpu_preload))
+    cpu_preload = if length(var_dims) == 1
+        dataset[varname][:]
     elseif length(var_dims) == 2
-        cpu_preload = dataset[varname][:, :]
-        println("Element type for 2D: ", eltype(cpu_preload))
+        dataset[varname][:, :]
     elseif length(var_dims) == 3
-        cpu_preload = dataset[varname][:, :, :]
-        println("Element type for 3D: ", eltype(cpu_preload))
+        dataset[varname][:, :, :]
     elseif length(var_dims) == 4
-        cpu_preload = dataset[varname][:, :, :, :]
-        println("Element type for 4D: ", eltype(cpu_preload))
+        dataset[varname][:, :, :, :]
     else
         error("Unsupported variable dimensionality: ", length(var_dims))
     end
+    
+    # Print info
+    if length(var_dims) <= 4
+        println("Element type for $(length(var_dims))D: ", eltype(cpu_preload))
+    end
+    println("Full size of $varname: ", size(cpu_preload))
 
-    # Print array dimension sizes
-    full_size = size(dataset[varname])
-    println("Full size of $varname: ", full_size)
-
-    # 2) Conditionally allocate a GPU array
+    # 2) Conditionally allocate a GPU array AND PIN CPU MEMORY
     if GPU_USE
+        # --- PINNING OPTIMIZATION ---
+        # "Pin" the CPU memory. This prevents the OS from swapping it out 
+        # and enables high-speed DMA transfers to the GPU.
+        try
+            CUDA.Mem.pin(cpu_preload)
+            println("  -> CPU memory pinned successfully.")
+        catch e
+            println("  -> WARNING: Failed to pin CPU memory. Transfer will be slower. Error: $e")
+        end
+        # ----------------------------
+
         # Adjust dimensions for the GPU array
         adjusted_dims = if length(var_dims) == 4
-            (var_dims[1], var_dims[2], (var_dims[3] == 12 ? 1 : var_dims[3]), var_dims[4])  # Third dimension is reduced to 1 if time dimension (i.e. months)
+            (var_dims[1], var_dims[2], (var_dims[3] == 12 ? 1 : var_dims[3]), var_dims[4])
         else
-            var_dims  # For 2D or 3D cases, keep original dimensions
+            var_dims
         end
 
-        gpu_arr = CUDA.zeros(float_type, adjusted_dims...)  # Allocate based on adjusted dimensions
+        gpu_arr = CUDA.zeros(float_type, adjusted_dims...)
         println("Allocated GPU array of size: ", size(gpu_arr))
         return cpu_preload, gpu_arr
     else
@@ -87,21 +96,33 @@ end
 function read_and_allocate_forcing(prefix::String, year::Int, varname::String)
     println("Loading $varname forcing input...")
 
-    # 1) Open netCDF file, read variable into a CPU array and copy array into preload
+    # 1) Open netCDF file, read variable into a CPU array
     file_path     = "$(prefix)$(year).nc"
     dataset       = NetCDF.open(file_path)
-    cpu_arr       = dataset[varname]
+    
+    # Read the data into a standard Julia Array
     cpu_preload   = dataset[varname][:, :, :]
     
-    # 2) Conditionally allocate a GPU array
+    # 2) Conditionally allocate a GPU array AND PIN CPU MEMORY
     if GPU_USE
-        gpu_arr = CUDA.zeros(float_type, size(cpu_arr, 1), size(cpu_arr, 2))
-        println("Allocated GPU array of size: ", size(gpu_arr))
+        # --- PINNING OPTIMIZATION ---
+        try
+            CUDA.Mem.pin(cpu_preload)
+        catch e
+            println("  -> WARNING: Failed to pin CPU memory for $varname. Error: $e")
+        end
+        # ----------------------------
+
+        # Allocate 2D buffer on GPU (since forcing is loaded day-by-day)
+        gpu_arr = CUDA.zeros(float_type, size(cpu_preload, 1), size(cpu_preload, 2))
+        println("Allocated GPU buffer size: ", size(gpu_arr))
+        
         return cpu_preload, gpu_arr
     else
         return cpu_preload, nothing
     end
 end
+
 
 """
     @load_forcing(year_var, names...)

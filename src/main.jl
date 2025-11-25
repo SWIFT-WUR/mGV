@@ -135,38 +135,15 @@ function process_year(year)
     @timeit to "create_output_netcdf" begin
         output_file = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
         
-        # out_ds, transfer_buf, precipitation_output, water_storage_output, water_storage_summed_output, 
-        #       Q12_output, tair_output, tsurf_output, canopy_evaporation_output, 
-        #       canopy_evaporation_summed_output, transpiration_output, transpiration_summed_output, 
-        #       aerodynamic_resistance_output, aerodynamic_resistance_summed_output,
-        #       potential_evaporation_output, potential_evaporation_summed_output, 
-        #       net_radiation_output, net_radiation_summed_output, max_water_storage_output, 
-        #       max_water_storage_summed_output, soil_evaporation_output, soil_temperature_output, 
-        #       soil_moisture_output, total_et_output, surface_runoff_output, total_runoff_output, kappa_array_output, 
-        #       cs_array_output, wilting_point_output, soil_moisture_max_output, 
-        #       soil_moisture_critical_output, E_1_t_output, E_2_t_output, g_sw_1_output, 
-        #       g_sw_2_output, g_sw_output, residual_moisture_output, throughfall_output, 
-        #       throughfall_summed_output,  
-        #       surfstor_output, 
-        #       asat_output, vp_output, 
-        #       vpd_output, density_output, g_sw_output, g_sw_summed_output, dry_time_factor_output, g_sw_1_summed_output, g_sw_2_summed_output =
-        #       create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
-        
         out_ds, transfer_buf, 
-                precipitation_output, #water_storage_summed_output, 
+                precipitation_output, 
                 tair_output, tsurf_output, 
                 canopy_evaporation_summed_output, transpiration_summed_output, 
                 potential_evaporation_summed_output, 
                 net_radiation_summed_output, 
                 total_et_output, surface_runoff_output, total_runoff_output,
                 Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output = create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
-                #,
-                #soil_moisture_max_output, soil_moisture_critical_output,
-                #g_sw_1_output, g_sw_2_output, g_sw_output, 
-                #g_sw_summed_output, g_sw_1_summed_output, g_sw_2_summed_output,
-                #throughfall_summed_output, 
-                #asat_output, vp_output, vpd_output, 
-                #density_output 
+
                 
         end
    
