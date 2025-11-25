@@ -30,15 +30,17 @@ reshape_static_inputs!()
 
 # Canopy and surface states
 global water_storage = CUDA.zeros(float_type, size(coverage_gpu))
-global throughfall = CUDA.zeros(float_type, size(Ds_gpu))
+global max_water_storage = CUDA.zeros(float_type, size(coverage_gpu))
+global throughfall = CUDA.zeros(float_type, size(coverage_gpu))
 global canopy_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
+global f_n = CUDA.zeros(float_type, size(coverage_gpu)) 
+
 global net_radiation = CUDA.zeros(float_type, size(coverage_gpu))
 global Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
 global potential_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
 global aerodynamic_resistance = CUDA.zeros(float_type, size(coverage_gpu))
 global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
-# Missing: 
-# transpiration, soil_evaporation, total_et, total_runoff
+
 
 global soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
 
@@ -111,6 +113,7 @@ function process_year(year)
     global soil_temperature, Lsum, tsurf
     global net_radiation
     global potential_evaporation, aerodynamic_resistance
+    global max_water_storage
 
     println("============ Start run for year: $year ============")
     
@@ -224,11 +227,12 @@ function process_year(year)
                 # Canopy processes
                 # ============================================================
                 @timeit to "calculate_max_water_storage" begin
-                    max_water_storage = calculate_max_water_storage(LAI_gpu, cv_gpu, coverage_gpu)
+                    calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu, coverage_gpu)
                 end
 
                 @timeit to "calculate_canopy_evaporation" begin
-                    canopy_evaporation, f_n = calculate_canopy_evaporation(
+                    calculate_canopy_evaporation!(
+                        canopy_evaporation, f_n,
                         water_storage, max_water_storage, potential_evaporation, 
                         aerodynamic_resistance, rarc_gpu, prec_gpu, cv_gpu, 
                         rmin_gpu, LAI_gpu, tair_gpu, elev_gpu
@@ -263,9 +267,11 @@ function process_year(year)
                 # Water balance: throughfall and runoff
                 # ============================================================
                 @timeit to "update_water_canopy_storage" begin
-                    water_storage, throughfall = update_water_canopy_storage(
-                        water_storage, prec_gpu, cv_gpu, canopy_evaporation, 
-                        max_water_storage, throughfall, coverage_gpu
+                    # Mutating call: updates water_storage and throughfall in-place
+                    update_water_canopy_storage!(
+                        water_storage, throughfall, 
+                        prec_gpu, cv_gpu, canopy_evaporation, 
+                        max_water_storage, coverage_gpu
                     )
                 end
 
