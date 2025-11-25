@@ -43,6 +43,7 @@ global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
 
 
 global soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
+global total_et = CUDA.zeros(float_type, size(Tavg_gpu))
 
 # Soil property arrays
 global bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -117,7 +118,7 @@ function process_year(year)
     global potential_evaporation, aerodynamic_resistance
     global max_water_storage
     global ice_frac, organic_frac_gpu
-
+    global total_et
     println("============ Start run for year: $year ============")
     
     # ------------------------------------------------------------------------

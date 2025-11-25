@@ -323,22 +323,22 @@ function transfer_and_write_outputs(
     # without waiting for the previous one to finish.
     
     # 2D Raw
-#    copyto!(buf.tsurf,          processed_data.tsurf)
-#    copyto!(buf.tair,           processed_data.tair)
-#    copyto!(buf.prec,           processed_data.prec)
-#    copyto!(buf.total_et,       processed_data.total_et)
-#    copyto!(buf.surface_runoff, processed_data.surface_runoff)
-#    copyto!(buf.total_runoff,   processed_data.total_runoff)
-#    
-#    # 2D Processed Sums
-#    copyto!(buf.pe_summed,      processed_data.pe_summed)
-#    copyto!(buf.nr_summed,      processed_data.nr_summed)
-#    copyto!(buf.tr_summed,      processed_data.tr_summed)
-#    copyto!(buf.ce_summed,      processed_data.ce_summed)
-#
-#    # 3D Layers
-#    copyto!(buf.soil_evaporation, processed_data.soil_evaporation)
-#    copyto!(buf.soil_moisture,    processed_data.soil_moisture_new)
+    copyto!(buf.tsurf,          processed_data.tsurf)
+    copyto!(buf.tair,           processed_data.tair)
+    copyto!(buf.prec,           processed_data.prec)
+    copyto!(buf.total_et,       processed_data.total_et)
+    copyto!(buf.surface_runoff, processed_data.surface_runoff)
+    copyto!(buf.total_runoff,   processed_data.total_runoff)
+    
+    # 2D Processed Sums
+    copyto!(buf.pe_summed,      processed_data.pe_summed)
+    copyto!(buf.nr_summed,      processed_data.nr_summed)
+    copyto!(buf.tr_summed,      processed_data.tr_summed)
+    copyto!(buf.ce_summed,      processed_data.ce_summed)
+
+    # 3D Layers
+    copyto!(buf.soil_evaporation, processed_data.soil_evaporation)
+    copyto!(buf.soil_moisture,    processed_data.soil_moisture_new)
 
     # SYNC POINT: Wait for all data to land in RAM
 #    CUDA.synchronize()
