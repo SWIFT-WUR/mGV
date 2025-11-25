@@ -318,7 +318,10 @@ function async_transfer!(
     function async_copy(dest, src)
         # We use unsafe_copyto! to bypass Julia's default blocking mechanisms
         # The stream argument tells CUDA to queue this and move on.
-        CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
+        #CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
+        CUDA.stream!(stream) do
+            copyto!(dest, src)
+        end
     end
 
     # --- 2D Raw ---
