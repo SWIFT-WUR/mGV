@@ -12,7 +12,7 @@ if CASE == "global"
 
     println("Loading configuration for 'global'...")
     global nveg = 14
-    global fillvalue_threshold = 1e30
+    global fillvalue_threshold = 1f30
 
     # =========================== GLOBAL CONFIGURATION ===========================
         
@@ -91,7 +91,7 @@ elseif CASE == "indus"
 
     println("Loading configuration for 'indus'...")
     global nveg = 22
-    global fillvalue_threshold = 1e30
+    global fillvalue_threshold = 1f30
 
     # ============================ INDUS CONFIGURATION ============================
    
@@ -170,7 +170,7 @@ elseif CASE == "mekong"
 
     println("Loading configuration for 'mekong'...")
     global nveg = 14
-    global fillvalue_threshold = 9998
+    global fillvalue_threshold = 9998.0f0
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
