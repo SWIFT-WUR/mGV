@@ -132,21 +132,36 @@ it generates a call to `read_and_allocate_forcing`, creating the
 corresponding `_cpu` and `_gpu` variables.
 """
 macro load_forcing(year_var, names...)
-    # The `quote ... end` block collects all the generated lines of code.
-    quote
-        # `map` iterates through each variable name provided (e.g., :prec, :tair)
-        $(map(names) do name
-            # Construct all the necessary variable names from the base name
-            cpu_var      = esc(Symbol(String(name), "_cpu"))
-            gpu_var      = esc(Symbol(String(name), "_gpu"))
-            prefix_var   = esc(Symbol("input_", String(name), "_prefix"))
-            source_var   = esc(Symbol(String(name), "_var"))
-            year_esc     = esc(year_var)
+    # 1. Generate unique symbols for the tasks to avoid variable collisions
+    task_vars = [gensym("task_$(name)") for name in names]
+    
+    # 2. Create the expressions to SPAWN the tasks
+    spawn_exprs = map(zip(names, task_vars)) do (name, task_sym)
+        prefix_var = esc(Symbol("input_", String(name), "_prefix"))
+        source_var = esc(Symbol(String(name), "_var"))
+        year_esc   = esc(year_var)
+        
+        # Threads.@spawn schedules the read function on any available thread
+        :($task_sym = Threads.@spawn read_and_allocate_forcing($prefix_var, $year_esc, $source_var))
+    end
 
-            # This is the line of code that will be generated for each name:
-            # e.g., (prec_cpu, prec_gpu) = read_and_allocate_forcing(input_prec_prefix, year, prec_var)
-            :(($cpu_var, $gpu_var) = read_and_allocate_forcing($prefix_var, $year_esc, $source_var))
-        end...)
+    # 3. Create the expressions to FETCH the results
+    fetch_exprs = map(zip(names, task_vars)) do (name, task_sym)
+        cpu_var = esc(Symbol(String(name), "_cpu"))
+        gpu_var = esc(Symbol(String(name), "_gpu"))
+        
+        # fetch() waits for the specific task to finish and retrieves the return value
+        :(($cpu_var, $gpu_var) = fetch($task_sym))
+    end
+
+    quote
+        # A. Start all loads in parallel
+        $(spawn_exprs...)
+        
+        # B. Wait for all to finish and assign to your variables
+        $(fetch_exprs...)
+        
+        println("Parallel forcing load complete.")
     end
 end
 
