@@ -249,27 +249,6 @@ function calculate_canopy_evaporation!(
     surface_pressure = @. p_std * exp(-elev_gpu / scale_height)
     gamma_ = @. 1628.6f0 * surface_pressure / latent_heat
 
-    # =========================================================================
-    # DEBUG BLOCK: Check Types (Canopy Evap)
-    # =========================================================================
-    if rand() < 0.01 
-        println("\n--- [DEBUG] calculate_canopy_evaporation! Type Check ---")
-        println("INPUTS (Sanitized):")
-        println("  potential_evaporation: ", eltype(potential_evaporation))
-        println("  water_storage:         ", eltype(water_storage))
-        println("  max_water_storage:     ", eltype(max_water_storage))
-        println("  aerodynamic_resistance:", eltype(aerodynamic_resistance))
-        println("  rarc:                  ", eltype(rarc))
-        println("INTERMEDIATES:")
-        println("  slope:                 ", eltype(slope))
-        println("  latent_heat:           ", eltype(latent_heat))
-        println("  scale_height:          ", eltype(scale_height))
-        println("  surface_pressure:      ", eltype(surface_pressure))
-        println("  gamma_:                ", eltype(gamma_))
-        println("-----------------------------------------------------------\n")
-    end
-    # =========================================================================
-
     # ---- Resistances ----
     rc = @. rmin / max(LAI_gpu, 1.0f-6)
     ra = aerodynamic_resistance # Alias

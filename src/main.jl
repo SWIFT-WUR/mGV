@@ -378,17 +378,17 @@ function process_year(year)
                 # ============================================================
                 # Spike diagnostics (selected days)
                 # ============================================================
-                if day in [20, 120, 200, 320]
-                    run_spike_diagnostics(day, transpiration, soil_moisture_old, 
-                                        soil_moisture_critical, wilting_point, root_gpu, 
-                                        cv_gpu, water_storage, max_water_storage, f_n, 
-                                        potential_evaporation)
-                end
+                #if day in [20, 120, 200, 320]
+                #    @debug run_spike_diagnostics(day, transpiration, soil_moisture_old, 
+                #                        soil_moisture_critical, wilting_point, root_gpu, 
+                #                        cv_gpu, water_storage, max_water_storage, f_n, 
+                #                        potential_evaporation)
+                #end
 
                 # External debug for day 120
-                if day == 120
-                    run_external_debug(day, g_sw_1, g_sw_2, root_gpu, transpiration)
-                end
+                #if day == 120
+                #    @debug run_external_debug(day, g_sw_1, g_sw_2, root_gpu, transpiration)
+                #end
 
                 @timeit to "preprocess_daily_data" begin gpu_results = preprocess_daily_outputs(
                         day, tsurf, tair_gpu, prec_gpu, 
