@@ -285,11 +285,6 @@ function process_year(year)
 
                 # Calculate infiltration
                 calculate_infiltration!(infiltration, throughfall, surface_runoff)
-
-#                total_input = sum_with_nan_handling(throughfall, 4)
-#                infiltration_raw = total_input .- surface_runoff
-#                infiltration = max.(infiltration_raw, zero(eltype(infiltration_raw)))
-
                 @debug println("neg. infiltration cells = ", count(<(0), Array(infiltration_raw)))
 
                 # ============================================================

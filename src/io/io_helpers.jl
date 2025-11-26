@@ -70,27 +70,28 @@ function reshape_static_inputs!()
 end
 
 # Helper function to sum over a dimension with NaN handling
-function sum_with_nan_handling(arr::CuArray, dim::Int)
-    # Grab the element type of arr
-    elty = eltype(arr)
-
-    # Create a zero and a NaN of that same type
-    zero_val = zero(elty)
-    nan_val  = elty(NaN)
-
-    # Replace NaNs with zero for summation
-    arr_no_nan = ifelse.(isnan.(arr), zero_val, arr)
-
-    # Compute sum over specified dimension
-    sum_non_nan   = dropdims(sum(arr_no_nan, dims=dim), dims=dim)
-
-    # Count non-NaN elements; if zero, all were NaN
-    count_non_nan = dropdims(sum(.!isnan.(arr), dims=dim), dims=dim)
-
-    # Replace sum with NaN where all elements were NaN
-    summed = ifelse.(count_non_nan .== 0, nan_val, sum_non_nan)
+function sum_with_nan_handling(arr::CuArray{T}, dim::Int) where T
+    # 1. Fused Map & Reduce
+    # Map: x -> (value_or_zero, count)
+    #      If NaN, we contribute 0.0 to sum and 0 to count.
+    #      If Valid, we contribute x to sum and 1 to count.
+    # Reduce: Element-wise sum of the tuples.
     
-    return summed
+    results = mapreduce(
+        x -> isnan(x) ? (zero(T), Int32(0)) : (x, Int32(1)), 
+        (a, b) -> (a[1] + b[1], a[2] + b[2]), 
+        arr; 
+        dims = dim, 
+        init = (zero(T), Int32(0))
+    )
+
+    # 2. Post-Process (Lightweight)
+    # Extract the sum. If count is 0 (all were NaN), return NaN.
+    # We map over the much smaller 'results' array here.
+    output = map(r -> r[2] == 0 ? T(NaN) : r[1], results)
+
+    # 3. Match original API (drop the singleton dimension)
+    return dropdims(output, dims=dim)
 end
 
 
