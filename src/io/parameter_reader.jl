@@ -159,7 +159,29 @@ end
 function gpu_load_monthly_inputs(month, month_prev, cpu_vars, gpu_vars)
     if month != month_prev
         for (cpu, gpu) in zip(cpu_vars, gpu_vars)
-            CUDA.copyto!(gpu, cpu[:, :, month, :])
+            # 1. Get dimensions
+            # cpu is typically (nx, ny, 12, nveg)
+            # gpu is typically (nx, ny, 1, nveg)
+            nx, ny = size(cpu, 1), size(cpu, 2)
+            n_months = size(cpu, 3) # Should be 12
+            n_tiles = size(cpu, 4)  # Vegetation tiles (1 if variable is 3D)
+
+            block_size = nx * ny
+
+            # 2. Iterate over vegetation tiles to copy each contiguous chunk
+            for k in 1:n_tiles
+                # Calculate Source Offset (CPU)
+                # Skip previous tiles (k-1) * (months * block)
+                # Skip previous months in current tile (month-1) * block
+                offset_cpu = (k - 1) * (block_size * n_months) + (month - 1) * block_size + 1
+
+                # Calculate Dest Offset (GPU)
+                # GPU only has 1 month, so we just skip previous tiles
+                offset_gpu = (k - 1) * block_size + 1
+
+                # 3. Direct Copy
+                copyto!(gpu, offset_gpu, cpu, offset_cpu, block_size)
+            end
         end
     end
 end
