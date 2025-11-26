@@ -1,5 +1,6 @@
 using NetCDF
 using NCDatasets
+using Zarr
 using ProgressMeter
 using CUDA
 using Dates

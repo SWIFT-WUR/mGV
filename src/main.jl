@@ -134,21 +134,18 @@ function process_year(year)
     # ------------------------------------------------------------------------
     # Create output file
     # ------------------------------------------------------------------------
-    @debug println("Opening output file...")
-    @timeit to "create_output_netcdf" begin
-        output_file = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
+    @debug println("Opening output Zarr store...")
+    @timeit to "create_output_zarr" begin
+        # Change extension to .zarr
+        output_path = joinpath(output_dir, "$(output_file_prefix)$(year).zarr")
         
-        out_ds, transfer_buf, 
-                precipitation_output, 
-                tair_output, tsurf_output, 
-                canopy_evaporation_summed_output, transpiration_summed_output, 
-                potential_evaporation_summed_output, 
-                net_radiation_summed_output, 
-                total_et_output, surface_runoff_output, total_runoff_output,
-                Q12_output, soil_evaporation_output, soil_temperature_output, soil_moisture_output = create_output_netcdf(output_file, prec_cpu, LAI_cpu, float_type, lat_cpu, lon_cpu)
-
-                
-        end
+        nx, ny = size(prec_cpu, 1), size(prec_cpu, 2)
+        nt = size(prec_cpu, 3)
+        nlayers = 3 # Hardcoded based on your usage
+        
+        # Initialize Store and Buffer
+        zarr_store, transfer_buf = create_output_zarr(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+    end
    
 
     # Create a stream for data transfers
@@ -392,44 +389,21 @@ function process_year(year)
                 # Write outputs
                 # ============================================================
                 @debug println("Writing outputs")
-                @timeit to "outputs" begin          
+                @timeit to "outputs" begin    
+                    
                     # 1. Start the transfer for TODAY (Day N)
-                    # This is non-blocking on CPU; it just queues commands to the GPU.
+                    # This queues commands to the GPU stream and returns immediately.
                     async_transfer!(gpu_results, transfer_buf, transfer_stream)
         
-                    # 2. Finish writing YESTERDAY (Day N-1)
-                    # While the GPU is starting to transfer Day N (and soon calculating Day N+1),
-                    # the CPU writes Day N-1.
-                    if day > 1
-                        # We simply finalize the write using the DATA that is already in the buffer.
-                        # Note: Since we use a single buffer, we must ensure the GPU copy 
-                        # for Day N doesn't overwrite Day N-1 before we write it.
-                        # However, since GPU calc > Disk Write, we sync here to be safe.
-                        
-                        # OPTIMIZATION: To be truly parallel with single buffer, 
-                        # we sync the stream immediately, write, then let GPU continue.
-                        
-                        # To get maximum speed, we actually just do:
-                        finalize_write!(
-                            day, # Actually, we write the current day immediately after sync in this config
-                            transfer_buf, transfer_stream,
-                            tsurf_output, tair_output, precipitation_output, 
-                            total_et_output, surface_runoff_output, total_runoff_output,
-                            soil_evaporation_output, soil_moisture_output,
-                            potential_evaporation_summed_output, net_radiation_summed_output,
-                            transpiration_summed_output, canopy_evaporation_summed_output
-                        )
-                    else
-                        # Day 1: Just do it standard way
-                        finalize_write!(
-                            day, transfer_buf, transfer_stream,
-                            tsurf_output, tair_output, precipitation_output, 
-                            total_et_output, surface_runoff_output, total_runoff_output,
-                            soil_evaporation_output, soil_moisture_output,
-                            potential_evaporation_summed_output, net_radiation_summed_output,
-                            transpiration_summed_output, canopy_evaporation_summed_output
-                        )
-                    end
+                    # 2. Synchronize and Write to Disk
+                    # This waits for the GPU transfer to finish, then writes to Zarr.
+                    # Because Zarr writes are so fast (chunked), we can do this simply here.
+                    write_zarr_slice!(
+                        day, 
+                        transfer_buf, 
+                        transfer_stream,
+                        zarr_store
+                    )
                 end
                 
             end # GPU_USE
@@ -442,12 +416,12 @@ function process_year(year)
     # ------------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------------
-    println("Closing output file...")
-    @timeit to "closing outputfile" close(out_ds)
+    #println("Closing output file...")
+    #@timeit to "closing outputfile" close(out_ds)
     
     println("============ Completed run for year: $year ============\n")
-    println("Postprocessing for year $year...")
-    @timeit to "compress_file_async call" compress_file_async(output_file, 1)
+    #println("Postprocessing for year $year...")
+    #@timeit to "compress_file_async call" compress_file_async(output_file, 1)
     flush(stdout)
 end
 
