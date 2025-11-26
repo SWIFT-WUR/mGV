@@ -168,40 +168,45 @@ end
 # 5. WRITE SLICE (Phase 2)
 # ============================================================================
 # Synchronizes stream and writes from Pinned Buffer to Zarr Store
-function write_zarr_slice!(
-    day,
-    buf::TransferBuffer,
-    stream::CuStream,
-    store::ZarrOutputStore
-)
-    # 1. Wait for GPU to finish copying to the buffer
+function write_zarr_slice!(day, buf::TransferBuffer, stream::CuStream, store::ZarrOutputStore)
+    
+    # 1. Wait for GPU
     synchronize(stream)
 
+    # 2. Unpack handles FIRST (The "Function Barrier")
+    # By assigning these to local variables, we force Julia to resolve their types
+    # BEFORE entering the threaded block.
+    v_tsurf = store.tsurf
+    v_tair  = store.tair
+    v_prec  = store.prec
+    v_et    = store.total_et
+    v_srun  = store.surface_runoff
+    v_trun  = store.total_runoff
+    v_pe    = store.pe_summed
+    v_nr    = store.nr_summed
+    v_tr    = store.tr_summed
+    v_ce    = store.ce_summed
+    
+    v_soil_evap = store.soil_evaporation
+    v_soil_mst  = store.soil_moisture
 
-    # 2. Parallel Write to Disk
-    # 'Threads.@sync' ensures we wait for ALL variables to finish writing 
-    # before we return. This prevents the buffer from being overwritten early.
+    # 3. Parallel Write
     Threads.@sync begin
+        Threads.@spawn v_tsurf[:, :, day] = buf.tsurf
+        Threads.@spawn v_tair[:, :, day]  = buf.tair
+        Threads.@spawn v_prec[:, :, day]  = buf.prec
+        Threads.@spawn v_et[:, :, day]    = buf.total_et
+        Threads.@spawn v_srun[:, :, day]  = buf.surface_runoff
+        Threads.@spawn v_trun[:, :, day]  = buf.total_runoff
+        Threads.@spawn v_pe[:, :, day]    = buf.pe_summed
+        Threads.@spawn v_nr[:, :, day]    = buf.nr_summed
+        Threads.@spawn v_tr[:, :, day]    = buf.tr_summed
+        Threads.@spawn v_ce[:, :, day]    = buf.ce_summed
         
-        # 2D Writes
-        Threads.@spawn store.tsurf[:, :, day]          = buf.tsurf
-        Threads.@spawn store.tair[:, :, day]           = buf.tair
-        Threads.@spawn store.prec[:, :, day]           = buf.prec
-        Threads.@spawn store.total_et[:, :, day]       = buf.total_et
-        Threads.@spawn store.surface_runoff[:, :, day] = buf.surface_runoff
-        Threads.@spawn store.total_runoff[:, :, day]   = buf.total_runoff
-        Threads.@spawn store.pe_summed[:, :, day]      = buf.pe_summed
-        Threads.@spawn store.nr_summed[:, :, day]      = buf.nr_summed
-        Threads.@spawn store.tr_summed[:, :, day]      = buf.tr_summed
-        Threads.@spawn store.ce_summed[:, :, day]      = buf.ce_summed
-
-        # 4D Writes (Layered vars)
-        Threads.@spawn store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
-        Threads.@spawn store.soil_moisture[:, :, day, :]    = buf.soil_moisture
+        # 4D Writes
+        Threads.@spawn v_soil_evap[:, :, day, :] = buf.soil_evaporation
+        Threads.@spawn v_soil_mst[:, :, day, :]  = buf.soil_moisture
     end
-
-    # NOTE: Q12 and SoilTemperature are in the store, but your original
-    # logic did not copy them to the buffer, so we leave them as NaN/Empty.
     
     return nothing
 end
