@@ -27,6 +27,7 @@ reshape_static_inputs!()
 # ============================================================================
 # INITIALIZE GPU STATE ARRAYS
 # ============================================================================
+println("DEBUG: Julia has started with $(Threads.nthreads()) threads.")
 
 # Canopy and surface states
 global water_storage = CUDA.zeros(float_type, size(coverage_gpu))

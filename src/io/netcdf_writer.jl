@@ -44,146 +44,88 @@ function create_transfer_buffer(nx, ny, nlayers)
 end
 
 # ============================================================================
-# 2. ZARR STORE STRUCT
+# 2. ZARR STORE STRUCT (OPTIMIZED)
 # ============================================================================
-# Holds handles to the on-disk Zarr arrays
-struct ZarrOutputStore
-    tsurf::ZArray{Float32, 3}
-    tair::ZArray{Float32, 3}
-    prec::ZArray{Float32, 3}
-    total_et::ZArray{Float32, 3}
-    surface_runoff::ZArray{Float32, 3}
-    total_runoff::ZArray{Float32, 3}
-    pe_summed::ZArray{Float32, 3}
-    nr_summed::ZArray{Float32, 3}
-    tr_summed::ZArray{Float32, 3}
-    ce_summed::ZArray{Float32, 3}
+# A3 = Type for 3D Arrays (2D + Time)
+# A4 = Type for 4D Arrays (3D + Time)
+# This strict typing prevents memory allocations during writing.
+struct ZarrOutputStore{A3, A4}
+    tsurf::A3
+    tair::A3
+    prec::A3
+    total_et::A3
+    surface_runoff::A3
+    total_runoff::A3
+    pe_summed::A3
+    nr_summed::A3
+    tr_summed::A3
+    ce_summed::A3
     
-    # 4D Variables
-    Q12::ZArray{Float32, 4}
-    soil_evaporation::ZArray{Float32, 4}
-    soil_temperature::ZArray{Float32, 4}
-    soil_moisture::ZArray{Float32, 4}
+    Q12::A4
+    soil_evaporation::A4
+    soil_temperature::A4
+    soil_moisture::A4
 end
 
 # ============================================================================
-# 3. INITIALIZE ZARR (With Metadata)
+# 3. INITIALIZE ZARR
 # ============================================================================
 function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
     println("Initializing Zarr store at: $output_path")
     
-    # Clean up previous run if exists
     isdir(output_path) && rm(output_path, recursive=true)
     mkpath(output_path)
 
-    # --- Compression & Chunking ---
-    # Blosc (Zstd) is much faster than NetCDF deflate
-    compressor = Zarr.BloscCompressor(cname="zstd", clevel=3, shuffle=true)
+    # Use LZ4 for maximum speed (low CPU, decent compression)
+    compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=false)
 
-    # Chunking strategy matching your daily write pattern
     chunk_2d = (nx, ny, 1)
     chunk_3d_qlayer = (nx, ny, 1, 2)
     chunk_3d_layer = (nx, ny, 1, 3)
     chunk_3d_top = (nx, ny, 1, 1)
 
-    # --- Helper to create Array with Attributes ---
+    # Helper to create arrays with attributes
     function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
         path = joinpath(output_path, name)
-        
-        # Create array
-        arr = zcreate(Float32, dims...; 
-                      path=path, chunks=chunks, compressor=compressor,
-                      fill_value=NaN32)
-        
-        # 1. Essential YAXArrays/Xarray Metadata
+        arr = zcreate(Float32, dims...; path=path, chunks=chunks, compressor=compressor, fill_value=NaN32)
         arr.attrs["_ARRAY_DIMENSIONS"] = dim_names
-        
-        # 2. User defined metadata (Units, Description, etc.)
-        for (k, v) in attrs
-            arr.attrs[k] = v
-        end
+        for (k, v) in attrs; arr.attrs[k] = v; end
         return arr
     end
 
-    # ========================================================================
-    # A. COORDINATE VARIABLES (Lat/Lon)
-    # ========================================================================
-    
-    # Latitude
+    # Create Coordinate Arrays
     z_lat = zcreate(Float32, length(lat_cpu), path=joinpath(output_path, "lat"), compressor=compressor)
     z_lat[:] = lat_cpu
     z_lat.attrs["_ARRAY_DIMENSIONS"] = ["lat"]
-    z_lat.attrs["axis"] = "Y"
-    z_lat.attrs["long_name"] = "latitude"
-    z_lat.attrs["standard_name"] = "latitude"
-    z_lat.attrs["units"] = "degrees_north"
+    z_lat.attrs["axis"] = "Y"; z_lat.attrs["units"] = "degrees_north"
 
-    # Longitude
     z_lon = zcreate(Float32, length(lon_cpu), path=joinpath(output_path, "lon"), compressor=compressor)
     z_lon[:] = lon_cpu
     z_lon.attrs["_ARRAY_DIMENSIONS"] = ["lon"]
-    z_lon.attrs["axis"] = "X"
-    z_lon.attrs["long_name"] = "longitude"
-    z_lon.attrs["standard_name"] = "longitude"
-    z_lon.attrs["units"] = "degrees_east"
+    z_lon.attrs["axis"] = "X"; z_lon.attrs["units"] = "degrees_east"
 
-    # ========================================================================
-    # B. DATA VARIABLES
-    # ========================================================================
-    
+    # Create the Store
+    # Julia will automatically detect the types A3 and A4 from these calls
     store = ZarrOutputStore(
-        # --- 2D + Time ---
-        make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "°C", "description" => "Surface temperature per vegetation")),
-            
-        make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "°C", "description" => "Air temperature at reference height", 
-                       "_FillValue" => 1.0e20, "missing_value" => 1.0e20)),
-                       
-        make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm/day", "description" => "Daily precipitation")),
-            
-        make_zarr("total_et_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm", "description" => "Total evapotranspiration")),
-            
-        make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm", "description" => "Surface runoff")),
-            
-        make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm", "description" => "Total runoff")),
-            
-        make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm", "description" => "Potential evaporation")),
-            
-        make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "W/m^2", "description" => "Net radiation")),
-            
-        make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm", "description" => "Total plant transpiration")),
-            
-        make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"];
-            attrs=Dict("units" => "mm", "description" => "Total evaporation from canopy interception")),
-
-        # --- 3D + Time (Layers) ---
-        # Note: Dims are (lon, lat, time, layer/qlayers)
+        make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"°C")),
+        make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"°C")),
+        make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm/day")),
+        make_zarr("total_et_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
+        make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
+        make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
+        make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
+        make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"W/m^2")),
+        make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
+        make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
         
-        make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, ["lon", "lat", "time", "qlayers"];
-            attrs=Dict("units" => "mm", "description" => "Interlayer drainage")),
-            
-        make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, ["lon", "lat", "time", "top_layer"];
-            attrs=Dict("units" => "mm", "description" => "Evaporation from the soil surface per top soil layer")),
-            
-        make_zarr("soil_temperature_output", (nx, ny, nt, 3), chunk_3d_layer, ["lon", "lat", "time", "layer"];
-            attrs=Dict("units" => "°C", "description" => "Soil temperature per layer")),
-            
-        make_zarr("soil_moisture_output", (nx, ny, nt, 3), chunk_3d_layer, ["lon", "lat", "time", "layer"];
-            attrs=Dict("units" => "kg/m^3", "description" => "Volumetric soil moisture content per layer"))
+        # 4D Variables
+        make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, ["lon", "lat", "time", "qlayers"]; attrs=Dict("units"=>"mm")),
+        make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, ["lon", "lat", "time", "top_layer"]; attrs=Dict("units"=>"mm")),
+        make_zarr("soil_temperature_output", (nx, ny, nt, 3), chunk_3d_layer, ["lon", "lat", "time", "layer"]; attrs=Dict("units"=>"°C")),
+        make_zarr("soil_moisture_output", (nx, ny, nt, 3), chunk_3d_layer, ["lon", "lat", "time", "layer"]; attrs=Dict("units"=>"kg/m^3"))
     )
     
-    # Initialize buffer
-    # Note: We stick to 3 layers based on your hardcoded usage in main.jl
-    transfer_buf = create_transfer_buffer(nx, ny, 3) 
-
+    transfer_buf = create_transfer_buffer(nx, ny, 3)
     return store, transfer_buf
 end
 
