@@ -22,12 +22,16 @@ end
     depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil
 )...)
 
-reshape_static_inputs!()
+@timeit to "reshaping_inputs" begin
+    reshape_static_inputs!()
+end
 
 # ============================================================================
 # INITIALIZE GPU STATE ARRAYS
 # ============================================================================
 println("DEBUG: Julia has started with $(Threads.nthreads()) threads.")
+
+@timeit to "initialize_GPU_arrays" begin
 
 # Canopy and surface states
 global water_storage = CUDA.zeros(float_type, size(coverage_gpu))
@@ -71,17 +75,25 @@ global residual_moisture = CUDA.zeros(float_type, soil_dims...)
 
 global ice_frac = CUDA.zeros(float_type, size(soil_moisture_old))
 global organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_old))
+end
 
 # ============================================================================
 # CALCULATE SOIL PROPERTIES
 # ============================================================================
 
-_bulk_dens_min, _soil_dens_min, _porosity, _soil_moisture_max, 
-_soil_moisture_critical, _field_capacity, _wilting_point, _residual_moisture = 
-    calculate_soil_properties(
-        bulk_dens_gpu, soil_dens_gpu, depth_gpu, 
-        Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu
-    )
+@timeit to "calculate_soil_properties" begin
+
+    _bulk_dens_min, _soil_dens_min, _porosity, _soil_moisture_max, 
+    _soil_moisture_critical, _field_capacity, _wilting_point, _residual_moisture = 
+        calculate_soil_properties(
+            bulk_dens_gpu, soil_dens_gpu, depth_gpu, 
+            Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu
+        )
+
+end
+
+
+@timeit to "copy_soil_properties" begin
 
 # Copy calculated values into global GPU arrays
 bulk_dens_min .= _bulk_dens_min
@@ -97,6 +109,8 @@ residual_moisture .= _residual_moisture
 soil_moisture_old .= min.(init_moist_gpu, soil_moisture_max)
 soil_moisture_old .= max.(soil_moisture_old, residual_moisture)
 soil_moisture_new .= copy(soil_moisture_old)
+
+end
 
 # Print diagnostics
 @debug println("Wmax (mean) [mm]: L1=", mean(Array(soil_moisture_max[:,:,1])),
