@@ -139,15 +139,6 @@ end
 #end
 
 
-function compute_partial_canopy_resistance(rmin_gpu, LAI_gpu)
-    # Canopy resistance based on soil moisture (Eq. 6), without gsm multiplication; done in evapotranspiration calculation step   
-    return rmin_gpu ./ LAI_gpu
-end
-
-#function calculate_net_radiation(swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
-#    return (1.0f0 .- albedo_gpu) .* swdown_gpu .+ lwdown_gpu .- emissivity .* sigma .* (tsurf .+ 273.15f0).^4
-#end
-
 function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
     @. net_rad = (1.0f0 - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + 273.15f0)^4
     
@@ -189,17 +180,21 @@ function calculate_potential_evaporation!(
     air_dens_term = @. ((AIR_C * psurf_gpu * pa_per_kpa) / (t_freeze + tair_gpu)) * c_p_air * calculate_vpd(tair_gpu, vp_gpu) * day_sec
 
     # 3. Apply Logic (Tile Level)
-    # Loop over vegetation tiles (Indices 1 to 13)
-    for i in 1:(nveg - 1)
-        @. pe[:, :, :, i] = max(
-            (slope * (net_radiation[:, :, :, i] * day_sec) + (air_dens_term / aerodynamic_resistance[:, :, :, i])) / 
-            (latent_heat * (slope + gamma_ * (T(1) + ( (rmin_gpu[:, :, :, i] / max(LAI_gpu[:, :, :, i], EPS)) + rarc_gpu[:, :, :, i]) / aerodynamic_resistance[:, :, :, i]))),
-            T(0)
-        )
-    end
+    # Define the range for vegetation tiles
+    veg_indices = 1:(nveg - 1)
+    
+    # Single fused kernel launch for all vegetation tiles
+    @views @. pe[:, :, :, veg_indices] = max(
+        (slope * (net_radiation[:, :, :, veg_indices] * day_sec) + 
+         (air_dens_term / aerodynamic_resistance[:, :, :, veg_indices])) / 
+        (latent_heat * (slope + gamma_ * (T(1) + 
+         ((rmin_gpu[:, :, :, veg_indices] / max(LAI_gpu[:, :, :, veg_indices], EPS)) + 
+          rarc_gpu[:, :, :, veg_indices]) / aerodynamic_resistance[:, :, :, veg_indices]))),
+        T(0)
+    )
 
     # --- Bare Soil Tile (Index 14) ---
-    @. pe[:, :, :, nveg] = max(
+    @views @. pe[:, :, :, nveg] = max(
         (slope * (net_radiation[:, :, :, nveg] * day_sec) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
         (latent_heat * (slope + gamma_ * (T(1) + SOIL_RC / aerodynamic_resistance[:, :, :, nveg]))),
         T(0)
