@@ -167,9 +167,14 @@ end
 function gpu_load_daily_inputs(day, day_prev, cpu_vars, gpu_vars)
     if day != day_prev
         for (cpu, gpu) in zip(cpu_vars, gpu_vars)
-            # println("CPU Array Type: ", eltype(cpu))
-            # println("GPU Array Type: ", eltype(gpu))
-            CUDA.copyto!(gpu, cpu[:, :, day])
+        # Calculate the starting linear index for the current day
+            # cpu is (nx, ny, days), gpu is (nx, ny)
+            len = length(gpu)
+            offset = (day - 1) * len + 1
+            
+            # Direct copy using linear offsets: copyto!(dest, dest_offset, src, src_offset, count)
+            # This avoids allocating a View and guarantees a fast Memcpy
+            copyto!(gpu, 1, cpu, offset, len)
         end
     end
 end
