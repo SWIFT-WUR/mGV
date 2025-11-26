@@ -112,6 +112,8 @@ soil_moisture_new .= copy(soil_moisture_old)
 
 function process_year(year)
     # Ensure we're modifying global variables
+    @timeit to "take_in_global_arrays" begin
+
     global water_storage, throughfall, canopy_evaporation, bulk_dens_min, soil_dens_min
     global porosity, soil_moisture_old, Q_12, soil_moisture_new, soil_moisture_max
     global soil_moisture_critical, field_capacity, wilting_point, residual_moisture
@@ -122,6 +124,8 @@ function process_year(year)
     global ice_frac, organic_frac_gpu
     global total_et
     
+    end
+
     println("============ Start run for year: $year ============")
     
     # ------------------------------------------------------------------------
