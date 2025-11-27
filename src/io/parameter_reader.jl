@@ -92,37 +92,20 @@ macro vars(names...)
     end
 end
 
-# Create a lock for thread-safe file opening
-const NETCDF_LOCK = ReentrantLock()
 
 function read_and_allocate_forcing(prefix::String, year::Int, varname::String)
     println("Loading $varname forcing input...")
 
-    # 1) Open netCDF file, read variable into a CPU array
+    # 1) Open netCDF file, read variable into a CPU array and copy array into preload
     file_path     = "$(prefix)$(year).nc"
-    
-    # We lock this part so threads don't crash the NetCDF library
-    dataset = lock(NETCDF_LOCK) do
-        NetCDF.open(file_path)
-    end
-
-    # Read the data into a standard Julia Array
+    dataset       = NetCDF.open(file_path)
+    cpu_arr       = dataset[varname]
     cpu_preload   = dataset[varname][:, :, :]
     
-    # 2) Conditionally allocate a GPU array AND PIN CPU MEMORY
+    # 2) Conditionally allocate a GPU array
     if GPU_USE
-        # --- PINNING OPTIMIZATION ---
-        try
-            CUDA.Mem.pin(cpu_preload)
-        catch e
-            println("  -> WARNING: Failed to pin CPU memory for $varname. Error: $e")
-        end
-        # ----------------------------
-
-        # Allocate 2D buffer on GPU (since forcing is loaded day-by-day)
-        gpu_arr = CUDA.zeros(float_type, size(cpu_preload, 1), size(cpu_preload, 2))
-        println("Allocated GPU buffer size: ", size(gpu_arr))
-        
+        gpu_arr = CUDA.zeros(float_type, size(cpu_arr, 1), size(cpu_arr, 2))
+        println("Allocated GPU array of size: ", size(gpu_arr))
         return cpu_preload, gpu_arr
     else
         return cpu_preload, nothing
