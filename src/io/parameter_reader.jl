@@ -96,16 +96,27 @@ end
 function read_and_allocate_forcing(prefix::String, year::Int, varname::String)
     println("Loading $varname forcing input...")
 
-    # 1) Open netCDF file, read variable into a CPU array and copy array into preload
+    # 1) Open netCDF file, read variable into a CPU array
     file_path     = "$(prefix)$(year).nc"
     dataset       = NetCDF.open(file_path)
-    cpu_arr       = dataset[varname]
+    
+    # Read the data into a standard Julia Array
     cpu_preload   = dataset[varname][:, :, :]
     
-    # 2) Conditionally allocate a GPU array
+    # 2) Conditionally allocate a GPU array AND PIN CPU MEMORY
     if GPU_USE
-        gpu_arr = CUDA.zeros(float_type, size(cpu_arr, 1), size(cpu_arr, 2))
-        println("Allocated GPU array of size: ", size(gpu_arr))
+        # --- PINNING OPTIMIZATION ---
+        try
+            CUDA.Mem.pin(cpu_preload)
+        catch e
+            println("  -> WARNING: Failed to pin CPU memory for $varname. Error: $e")
+        end
+        # ----------------------------
+
+        # Allocate 2D buffer on GPU (since forcing is loaded day-by-day)
+        gpu_arr = CUDA.zeros(float_type, size(cpu_preload, 1), size(cpu_preload, 2))
+        println("Allocated GPU buffer size: ", size(gpu_arr))
+        
         return cpu_preload, gpu_arr
     else
         return cpu_preload, nothing
@@ -119,42 +130,23 @@ end
 Takes a year variable and a list of base variable names. For each name,
 it generates a call to `read_and_allocate_forcing`, creating the
 corresponding `_cpu` and `_gpu` variables.
-Parallelized version: Spawns a thread for each variable to read from disk concurrently.
 """
-
 macro load_forcing(year_var, names...)
-    # Generate unique temporary names for the tasks
-    task_vars = [gensym() for _ in names]
-
-    # 1. Create a block of code to SPAWN all tasks immediately
-    spawns = map(zip(names, task_vars)) do (name, task_var)
-        prefix_sym = esc(Symbol("input_", String(name), "_prefix"))
-        source_sym = esc(Symbol(String(name), "_var"))
-        year_esc   = esc(year_var)
-
-        # Generate: task_1 = Threads.@spawn read_and_allocate_forcing(...)
-        quote
-            $task_var = Threads.@spawn read_and_allocate_forcing($prefix_sym, $year_esc, $source_sym)
-        end
-    end
-
-    # 2. Create a block of code to FETCH results into your variables
-    fetches = map(zip(names, task_vars)) do (name, task_var)
-        cpu_var = esc(Symbol(String(name), "_cpu"))
-        gpu_var = esc(Symbol(String(name), "_gpu"))
-
-        # Generate: (prec_cpu, prec_gpu) = fetch(task_1)
-        quote
-            ($cpu_var, $gpu_var) = fetch($task_var)
-        end
-    end
-
-    # 3. Return the combined block
+    # The `quote ... end` block collects all the generated lines of code.
     quote
-        println("Starting parallel forcing load for year ", $(esc(year_var)), " with ", Threads.nthreads(), " threads...")
-        $(spawns...)  # Launch all reads
-        $(fetches...) # Wait for all reads
-        println("Parallel load complete.")
+        # `map` iterates through each variable name provided (e.g., :prec, :tair)
+        $(map(names) do name
+            # Construct all the necessary variable names from the base name
+            cpu_var      = esc(Symbol(String(name), "_cpu"))
+            gpu_var      = esc(Symbol(String(name), "_gpu"))
+            prefix_var   = esc(Symbol("input_", String(name), "_prefix"))
+            source_var   = esc(Symbol(String(name), "_var"))
+            year_esc     = esc(year_var)
+
+            # This is the line of code that will be generated for each name:
+            # e.g., (prec_cpu, prec_gpu) = read_and_allocate_forcing(input_prec_prefix, year, prec_var)
+            :(($cpu_var, $gpu_var) = read_and_allocate_forcing($prefix_var, $year_esc, $source_var))
+        end...)
     end
 end
 
