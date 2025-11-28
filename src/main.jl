@@ -449,6 +449,10 @@ for year in start_year:end_year
         
         show(to)  # Print profiling data
         
+        @timeit to "garbage collection" begin
+            Base.GC.gc()
+            CUDA.reclaim()
+        end
     else
         println("Skipping year $year due to missing input files.")
     end
