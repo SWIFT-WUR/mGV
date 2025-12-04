@@ -253,7 +253,6 @@ end
 close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
 close_output(store::NetCDFOutputStore) = close(store.ds)
 
-# Copy the preprocess_daily_outputs function from the old file here...
 function preprocess_daily_outputs(
     day, tsurf, tair_gpu, prec_gpu, 
     total_et, surface_runoff, total_runoff,
@@ -261,33 +260,57 @@ function preprocess_daily_outputs(
     potential_evaporation, net_radiation, transpiration, canopy_evaporation,
     coverage_gpu, cv_gpu, fillvalue_threshold
 )
-    # ... (Keep the existing implementation)
-    # [Insert content from lines 104-123 of original netcdf_writer.jl here]
-    # For brevity, I assume you have this function available.
-    
+    # --- HELPER FUNCTIONS ---
     san_nan = A -> begin
         T = eltype(A)
         thr = T(fillvalue_threshold)
         rep = T(NaN)
         ifelse.(isnan.(A) .| (abs.(A) .> thr), rep, A)
     end
+    
+    # Helper to broadcast convert cv_gpu to match input array type
     convcv = A -> convert.(eltype(A), cv_gpu)
 
+    # --- CALCULATION & SANITIZATION ---
+
+    # 1. Potential Evaporation
     pe_processed = san_nan(potential_evaporation)
     pe_summed    = sum_with_nan_handling(convcv(pe_processed) .* pe_processed, 4)
+
+    # 2. Net Radiation
     nr_processed = san_nan(net_radiation)
     nr_summed    = sum_with_nan_handling(convcv(nr_processed) .* nr_processed, 4)
+
+    # 3. Transpiration
     tr_processed = san_nan(transpiration)
+    # Weight by coverage
     tr_gc        = tr_processed .* coverage_gpu
     tr_summed    = sum_with_nan_handling(tr_gc, 4)
+
+    # 4. Canopy Evaporation
     ce_processed = san_nan(canopy_evaporation)
+    # Weight by coverage AND cv
     ce_gc        = convcv(ce_processed) .* ce_processed .* coverage_gpu
     ce_summed    = sum_with_nan_handling(ce_gc, 4)
 
+    # --- PACKAGING ---
     return (
-        tsurf = tsurf, tair = tair_gpu, prec = prec_gpu,
-        total_et = total_et, surface_runoff = surface_runoff, total_runoff = total_runoff,
-        soil_evaporation = soil_evaporation, soil_moisture_new = soil_moisture_new,
-        pe_summed = pe_summed, nr_summed = nr_summed, tr_summed = tr_summed, ce_summed = ce_summed
+        # Direct 2D
+        tsurf          = tsurf,
+        tair           = tair_gpu,
+        prec           = prec_gpu,
+        total_et       = total_et,
+        surface_runoff = surface_runoff,
+        total_runoff   = total_runoff,
+        
+        # Direct 3D (Layers)
+        soil_evaporation  = soil_evaporation,
+        soil_moisture_new = soil_moisture_new,
+
+        # Calculated Sums (2D results from 3D inputs)
+        pe_summed = pe_summed,
+        nr_summed = nr_summed,
+        tr_summed = tr_summed,
+        ce_summed = ce_summed
     )
 end

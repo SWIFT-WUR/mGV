@@ -11,7 +11,7 @@ include("src/utils/diagnostics.jl")
 
 # I/O Helpers
 include("src/io/io_helpers.jl")
-include("src/io/netcdf_writer.jl")
+include("src/io/io_writer.jl")
 include("src/io/parameter_reader.jl")
 
 # Initialization routines
