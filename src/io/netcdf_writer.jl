@@ -1,10 +1,11 @@
 using Zarr
+using NetCDF
+using NCDatasets
 using CUDA
 
 # ============================================================================
-# 1. TRANSFER BUFFER
+# 1. TRANSFER BUFFER (Common)
 # ============================================================================
-# Matches the original struct exactly to ensure main.jl compatibility
 struct TransferBuffer
     tsurf::Matrix{Float32}
     tair::Matrix{Float32}
@@ -38,17 +39,16 @@ function create_transfer_buffer(nx, ny, nlayers)
         make_pinned(nx, ny),       # nr_summed
         make_pinned(nx, ny),       # tr_summed
         make_pinned(nx, ny),       # ce_summed
-        make_pinned(nx, ny, 1),    # soil_evaporation (top layer)
+        make_pinned(nx, ny, 1),    # soil_evaporation
         make_pinned(nx, ny, nlayers) # soil_moisture
     )
 end
 
 # ============================================================================
-# 2. ZARR STORE STRUCT (OPTIMIZED)
+# 2. OUTPUT STORES (Polymorphic)
 # ============================================================================
-# A3 = Type for 3D Arrays (2D + Time)
-# A4 = Type for 4D Arrays (3D + Time)
-# This strict typing prevents memory allocations during writing.
+
+# --- Zarr Store ---
 struct ZarrOutputStore{A3, A4}
     tsurf::A3
     tair::A3
@@ -60,31 +60,49 @@ struct ZarrOutputStore{A3, A4}
     nr_summed::A3
     tr_summed::A3
     ce_summed::A3
-    
     Q12::A4
     soil_evaporation::A4
     soil_temperature::A4
     soil_moisture::A4
 end
 
+# --- NetCDF Store ---
+# We wrap the NCDataset and the variables to mimic the Zarr struct structure
+struct NetCDFOutputStore
+    ds::NCDataset
+    tsurf::Any
+    tair::Any
+    prec::Any
+    total_et::Any
+    surface_runoff::Any
+    total_runoff::Any
+    pe_summed::Any
+    nr_summed::Any
+    tr_summed::Any
+    ce_summed::Any
+    Q12::Any
+    soil_evaporation::Any
+    soil_temperature::Any
+    soil_moisture::Any
+end
+
 # ============================================================================
-# 3. INITIALIZE ZARR
+# 3. INITIALIZATION FUNCTIONS
 # ============================================================================
+
+# --- ZARR INITIALIZATION ---
 function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
     println("Initializing Zarr store at: $output_path")
-    
     isdir(output_path) && rm(output_path, recursive=true)
     mkpath(output_path)
 
-    # Use LZ4 for maximum speed (low CPU, decent compression)
     compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=false)
 
     chunk_2d = (nx, ny, 1)
     chunk_3d_qlayer = (nx, ny, 1, 2)
-    chunk_3d_layer = (nx, ny, 1, 3)
+    chunk_3d_layer = (nx, ny, 1, nlayers)
     chunk_3d_top = (nx, ny, 1, 1)
 
-    # Helper to create arrays with attributes
     function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
         path = joinpath(output_path, name)
         arr = zcreate(Float32, dims...; path=path, chunks=chunks, compressor=compressor, fill_value=NaN32)
@@ -93,97 +111,109 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
         return arr
     end
 
-    # Create Coordinate Arrays
-    z_lat = zcreate(Float32, length(lat_cpu), path=joinpath(output_path, "lat"), compressor=compressor)
+    # Coords
+    z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs=Dict("units"=>"degrees_north", "axis"=>"Y"))
     z_lat[:] = lat_cpu
-    z_lat.attrs["_ARRAY_DIMENSIONS"] = ["lat"]
-    z_lat.attrs["axis"] = "Y"; z_lat.attrs["units"] = "degrees_north"
-
-    z_lon = zcreate(Float32, length(lon_cpu), path=joinpath(output_path, "lon"), compressor=compressor)
+    z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
     z_lon[:] = lon_cpu
-    z_lon.attrs["_ARRAY_DIMENSIONS"] = ["lon"]
-    z_lon.attrs["axis"] = "X"; z_lon.attrs["units"] = "degrees_east"
 
-    # Create the Store
-    # Julia will automatically detect the types A3 and A4 from these calls
     store = ZarrOutputStore(
-        make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"°C")),
-        make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"°C")),
-        make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm/day")),
-        make_zarr("total_et_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
-        make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
-        make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
-        make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
-        make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"W/m^2")),
-        make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
-        make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"mm")),
-        
-        # 4D Variables
-        make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, ["lon", "lat", "time", "qlayers"]; attrs=Dict("units"=>"mm")),
-        make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, ["lon", "lat", "time", "top_layer"]; attrs=Dict("units"=>"mm")),
-        make_zarr("soil_temperature_output", (nx, ny, nt, 3), chunk_3d_layer, ["lon", "lat", "time", "layer"]; attrs=Dict("units"=>"°C")),
-        make_zarr("soil_moisture_output", (nx, ny, nt, 3), chunk_3d_layer, ["lon", "lat", "time", "layer"]; attrs=Dict("units"=>"kg/m^3"))
+        make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("total_et_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, ["lon", "lat", "time", "qlayers"]),
+        make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, ["lon", "lat", "time", "top_layer"]),
+        make_zarr("soil_temperature_output", (nx, ny, nt, nlayers), chunk_3d_layer, ["lon", "lat", "time", "layer"]),
+        make_zarr("soil_moisture_output", (nx, ny, nt, nlayers), chunk_3d_layer, ["lon", "lat", "time", "layer"])
     )
     
-    transfer_buf = create_transfer_buffer(nx, ny, 3)
-    return store, transfer_buf
+    return store, create_transfer_buffer(nx, ny, nlayers)
+end
+
+# --- NETCDF INITIALIZATION ---
+function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+    println("Creating NetCDF output file at: $output_file")
+    out_ds = NCDataset(output_file, "c")
+    
+    # Dimensions
+    defDim(out_ds, "lon", nx); defDim(out_ds, "lat", ny); defDim(out_ds, "time", nt)
+    defDim(out_ds, "qlayers", 2); defDim(out_ds, "layer", nlayers); defDim(out_ds, "top_layer", 1)
+
+    # Chunks
+    chunk_2d = (nx, ny, 1)
+    chunk_3d_qlayer = (nx, ny, 1, 2)
+    chunk_3d_layer = (nx, ny, 1, nlayers)
+    chunk_3d_top = (nx, ny, 1, 1)
+
+    function def_fast_var(name, dims; chunks=nothing)
+        defVar(out_ds, name, Float32, dims; chunksizes=chunks, deflatelevel=0, shuffle=false)
+    end
+
+    # Coords
+    lat = defVar(out_ds, "lat", Float32, ("lat",)); lat[:] = lat_cpu; lat.attrib["axis"] = "Y"
+    lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
+
+    # Store
+    store = NetCDFOutputStore(
+        out_ds,
+        def_fast_var("tsurf_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("tair_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("precipitation_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("total_et_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("surface_runoff_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("total_runoff_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("potential_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("net_radiation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("transpiration_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("canopy_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("Q12_output", ("lon", "lat", "time", "qlayers"); chunks=chunk_3d_qlayer),
+        def_fast_var("soil_evaporation_output", ("lon", "lat", "time", "top_layer"); chunks=chunk_3d_top),
+        def_fast_var("soil_temperature_output", ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer),
+        def_fast_var("soil_moisture_output", ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
+    )
+
+    return store, create_transfer_buffer(nx, ny, nlayers)
 end
 
 # ============================================================================
-# 4. ASYNC TRANSFER (Phase 1)
+# 4. DATA TRANSFER & WRITING (Dispatch based on Store Type)
 # ============================================================================
-# Moves data from GPU arrays to Pinned CPU Memory (Buffer)
-# Returns immediately.
-function async_transfer!(
-    processed_data, 
-    buf::TransferBuffer, 
-    stream::CuStream
-)
-    function async_copy(dest, src)
-        CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
-    end
 
-    # --- 2D Raw ---
+# Phase 1: Async Transfer (Common to both)
+function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
+    function async_copy(dest, src)
+        CUDA.stream!(stream) do
+            copyto!(dest, src)
+        end
+    end
+    # 2D
     async_copy(buf.tsurf,          processed_data.tsurf)
     async_copy(buf.tair,           processed_data.tair)
     async_copy(buf.prec,           processed_data.prec)
     async_copy(buf.total_et,       processed_data.total_et)
     async_copy(buf.surface_runoff, processed_data.surface_runoff)
     async_copy(buf.total_runoff,   processed_data.total_runoff)
-
-    # --- 2D Processed Sums ---
     async_copy(buf.pe_summed,      processed_data.pe_summed)
     async_copy(buf.nr_summed,      processed_data.nr_summed)
     async_copy(buf.tr_summed,      processed_data.tr_summed)
     async_copy(buf.ce_summed,      processed_data.ce_summed)
-
-    # --- 3D Layers ---
+    # 3D
     async_copy(buf.soil_evaporation, processed_data.soil_evaporation)
     async_copy(buf.soil_moisture,    processed_data.soil_moisture_new)
-    
     return nothing
 end
 
-# ============================================================================
-# 5. WRITE SLICE (Phase 2)
-# ============================================================================
-# Synchronizes stream and writes from Pinned Buffer to Zarr Store
-function write_zarr_slice!(
-    day,
-    buf::TransferBuffer,
-    stream::CuStream,
-    store::ZarrOutputStore
-)
-    # 1. Wait for GPU to finish copying to the buffer
+# Phase 2a: ZARR Parallel Write
+function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::ZarrOutputStore)
     synchronize(stream)
-
-
-    # 2. Parallel Write to Disk
-    # 'Threads.@sync' ensures we wait for ALL variables to finish writing 
-    # before we return. This prevents the buffer from being overwritten early.
     Threads.@sync begin
-        
-        # 2D Writes
         Threads.@spawn store.tsurf[:, :, day]          = buf.tsurf
         Threads.@spawn store.tair[:, :, day]           = buf.tair
         Threads.@spawn store.prec[:, :, day]           = buf.prec
@@ -194,21 +224,36 @@ function write_zarr_slice!(
         Threads.@spawn store.nr_summed[:, :, day]      = buf.nr_summed
         Threads.@spawn store.tr_summed[:, :, day]      = buf.tr_summed
         Threads.@spawn store.ce_summed[:, :, day]      = buf.ce_summed
-
-        # 4D Writes (Layered vars)
         Threads.@spawn store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
         Threads.@spawn store.soil_moisture[:, :, day, :]    = buf.soil_moisture
     end
+end
 
-    # NOTE: Q12 and SoilTemperature are in the store, but your original
-    # logic did not copy them to the buffer, so we leave them as NaN/Empty.
-    
-    return nothing
+# Phase 2b: NETCDF Serial Write
+function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::NetCDFOutputStore)
+    synchronize(stream)
+    # NetCDF writes are not thread-safe for the same dataset, so we do this serially
+    store.tsurf[:, :, day]          = buf.tsurf
+    store.tair[:, :, day]           = buf.tair
+    store.prec[:, :, day]           = buf.prec
+    store.total_et[:, :, day]       = buf.total_et
+    store.surface_runoff[:, :, day] = buf.surface_runoff
+    store.total_runoff[:, :, day]   = buf.total_runoff
+    store.pe_summed[:, :, day]      = buf.pe_summed
+    store.nr_summed[:, :, day]      = buf.nr_summed
+    store.tr_summed[:, :, day]      = buf.tr_summed
+    store.ce_summed[:, :, day]      = buf.ce_summed
+    store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
+    store.soil_moisture[:, :, day, :]    = buf.soil_moisture
 end
 
 # ============================================================================
-# HELPER: PRE-PROCESS DAILY OUTPUTS
+# 5. CLOSING
 # ============================================================================
+close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
+close_output(store::NetCDFOutputStore) = close(store.ds)
+
+# Copy the preprocess_daily_outputs function from the old file here...
 function preprocess_daily_outputs(
     day, tsurf, tair_gpu, prec_gpu, 
     total_et, surface_runoff, total_runoff,
@@ -216,55 +261,33 @@ function preprocess_daily_outputs(
     potential_evaporation, net_radiation, transpiration, canopy_evaporation,
     coverage_gpu, cv_gpu, fillvalue_threshold
 )
-    # --- Helper Functions ---
+    # ... (Keep the existing implementation)
+    # [Insert content from lines 104-123 of original netcdf_writer.jl here]
+    # For brevity, I assume you have this function available.
+    
     san_nan = A -> begin
         T = eltype(A)
         thr = T(fillvalue_threshold)
         rep = T(NaN)
         ifelse.(isnan.(A) .| (abs.(A) .> thr), rep, A)
     end
-    
-    # Helper to broadcast convert cv_gpu to match input array type
     convcv = A -> convert.(eltype(A), cv_gpu)
 
-    # --- Calculations ---
-    
-    # 1. Potential Evaporation
     pe_processed = san_nan(potential_evaporation)
     pe_summed    = sum_with_nan_handling(convcv(pe_processed) .* pe_processed, 4)
-
-    # 2. Net Radiation
     nr_processed = san_nan(net_radiation)
     nr_summed    = sum_with_nan_handling(convcv(nr_processed) .* nr_processed, 4)
-
-    # 3. Transpiration
     tr_processed = san_nan(transpiration)
     tr_gc        = tr_processed .* coverage_gpu
     tr_summed    = sum_with_nan_handling(tr_gc, 4)
-
-    # 4. Canopy Evaporation
     ce_processed = san_nan(canopy_evaporation)
     ce_gc        = convcv(ce_processed) .* ce_processed .* coverage_gpu
     ce_summed    = sum_with_nan_handling(ce_gc, 4)
 
-    # --- Packaging ---
     return (
-        # Direct 2D
-        tsurf          = tsurf,
-        tair           = tair_gpu,
-        prec           = prec_gpu,
-        total_et       = total_et,
-        surface_runoff = surface_runoff,
-        total_runoff   = total_runoff,
-        
-        # Direct 3D (Layers)
-        soil_evaporation  = soil_evaporation,
-        soil_moisture_new = soil_moisture_new,
-
-        # Calculated Sums
-        pe_summed = pe_summed,
-        nr_summed = nr_summed,
-        tr_summed = tr_summed,
-        ce_summed = ce_summed
+        tsurf = tsurf, tair = tair_gpu, prec = prec_gpu,
+        total_et = total_et, surface_runoff = surface_runoff, total_runoff = total_runoff,
+        soil_evaporation = soil_evaporation, soil_moisture_new = soil_moisture_new,
+        pe_summed = pe_summed, nr_summed = nr_summed, tr_summed = tr_summed, ce_summed = ce_summed
     )
 end

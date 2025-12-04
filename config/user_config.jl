@@ -1,20 +1,6 @@
 CASE, start_year_arg, end_year_arg = parse_case_args()
 check_and_set_gpu_usage()
 
-# Parse Output Format
-global OUTPUT_FORMAT = "zarr" # Default
-for arg in ARGS
-    if startswith(arg, "--output=")
-        val = split(arg, "=")[2]
-        if val in ["netcdf", "nc"]
-            global OUTPUT_FORMAT = "netcdf"
-        elseif val == "zarr"
-            global OUTPUT_FORMAT = "zarr"
-        end
-    end
-end
-println("Output format set to: $OUTPUT_FORMAT")
-
 # Choose Float64 or Float32 for operations and output
 global float_type = Float32
 

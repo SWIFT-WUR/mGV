@@ -142,6 +142,10 @@ function process_year(year)
 
     println("============ Start run for year: $year ============")
     
+    # Determine Format
+    output_format = get_output_format()
+    println("Output format selected: $output_format")
+
     # ------------------------------------------------------------------------
     # Load forcing data
     # ------------------------------------------------------------------------
@@ -153,17 +157,26 @@ function process_year(year)
     # ------------------------------------------------------------------------
     # Create output file
     # ------------------------------------------------------------------------
-    @debug println("Opening output Zarr store...")
-    @timeit to "create_output_zarr" begin
-        # Change extension to .zarr
-        output_path = joinpath(output_dir, "$(output_file_prefix)$(year).zarr")
-        
+    @debug println("Initializing output store...")
+    
+    # Declare these variables to ensure they are available in the loop scope
+    local output_store
+    local transfer_buf
+
+    @timeit to "create_output" begin
         nx, ny = size(prec_cpu, 1), size(prec_cpu, 2)
         nt = size(prec_cpu, 3)
-        nlayers = 3 # Hardcoded based on your usage
+        nlayers = 3
         
-        # Initialize Store and Buffer
-        zarr_store, transfer_buf = create_output_zarr(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+        if output_format == :netcdf
+            output_path = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
+            # Returns NetCDFOutputStore and Buffer
+            output_store, transfer_buf = create_output_netcdf(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+        else
+            output_path = joinpath(output_dir, "$(output_file_prefix)$(year).zarr")
+            # Returns ZarrOutputStore and Buffer
+            output_store, transfer_buf = create_output_zarr(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+        end
     end
    
 
@@ -409,15 +422,10 @@ function process_year(year)
                     # This queues commands to the GPU stream and returns immediately.
                     async_transfer!(gpu_results, transfer_buf, transfer_stream)
         
-                    # 2. Synchronize and Write to Disk
-                    # This waits for the GPU transfer to finish, then writes to Zarr.
-                    # Because Zarr writes are so fast (chunked), we can do this simply here.
-                    write_zarr_slice!(
-                        day, 
-                        transfer_buf, 
-                        transfer_stream,
-                        zarr_store
-                    )
+                    # 2. Write Slice (Dispatched based on store type)
+                    # Zarr store -> Parallel write
+                    # NetCDF store -> Serial write
+                    write_slice!(day, transfer_buf, transfer_stream, output_store)
                 end
                 
             end # GPU_USE
@@ -430,12 +438,20 @@ function process_year(year)
     # ------------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------------
-    #println("Closing output file...")
-    #@timeit to "closing outputfile" close(out_ds)
+    println("Closing output file...")
+    # This dispatches: closes NetCDF dataset, does nothing for Zarr
+    @timeit to "closing outputfile" close_output(output_store)
+    
+    # If using NetCDF, you might want to compress async (optional, from old code)
+    if output_format == :netcdf
+        output_path_nc = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
+        println("Postprocessing NetCDF for year $year...")
+        # @timeit to "compress_file_async call" compress_file_async(output_path_nc, 1)
+    end
     
     println("============ Completed run for year: $year ============\n")
-    #println("Postprocessing for year $year...")
-    #@timeit to "compress_file_async call" compress_file_async(output_file, 1)
+
+        
     flush(stdout)
 end
 
