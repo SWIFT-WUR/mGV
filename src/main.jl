@@ -29,7 +29,7 @@ end
 # ============================================================================
 # INITIALIZE GPU STATE ARRAYS
 # ============================================================================
-println("DEBUG: Julia has started with $(Threads.nthreads()) threads.")
+println("Julia has started with $(Threads.nthreads()) threads.")
 
 @timeit to "initialize_GPU_arrays" begin
 
