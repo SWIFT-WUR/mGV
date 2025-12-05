@@ -186,27 +186,47 @@ end
 # 4. DATA TRANSFER & WRITING (Dispatch based on Store Type)
 # ============================================================================
 
-# Phase 1: Async Transfer (Common to both)
+# Phase 1: Optimized Async Transfer (DMA with Fallback)
 function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
-    function async_copy(dest, src)
-        CUDA.stream!(stream) do
-            copyto!(dest, src)
+    
+    CUDA.synchronize()
+
+    # 1. Smart DMA Helper
+    function smart_copy!(dest, src)
+        # Case 1: Standard CuArray (Always contiguous) -> FAST DMA
+        if src isa CuArray
+            CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
+            
+        # Case 2: SubArray (View) -> Check stride, then FAST DMA
+        elseif src isa SubArray && Base.iscontiguous(src)
+            CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
+            
+        # Case 3: Complex/Strided View -> Safe (slower) Copy
+        else
+            CUDA.stream!(stream) do
+                copyto!(dest, src)
+            end
         end
     end
-    # 2D
-    async_copy(buf.tsurf,          processed_data.tsurf)
-    async_copy(buf.tair,           processed_data.tair)
-    async_copy(buf.prec,           processed_data.prec)
-    async_copy(buf.total_et,       processed_data.total_et)
-    async_copy(buf.surface_runoff, processed_data.surface_runoff)
-    async_copy(buf.total_runoff,   processed_data.total_runoff)
-    async_copy(buf.pe_summed,      processed_data.pe_summed)
-    async_copy(buf.nr_summed,      processed_data.nr_summed)
-    async_copy(buf.tr_summed,      processed_data.tr_summed)
-    async_copy(buf.ce_summed,      processed_data.ce_summed)
-    # 3D
-    async_copy(buf.soil_evaporation, processed_data.soil_evaporation)
-    async_copy(buf.soil_moisture,    processed_data.soil_moisture_new)
+
+    # 2. Execute Transfers
+    # 2D Variables
+    smart_copy!(buf.tsurf,          processed_data.tsurf)
+    smart_copy!(buf.tair,           processed_data.tair)
+    smart_copy!(buf.prec,           processed_data.prec)
+    smart_copy!(buf.total_et,       processed_data.total_et)
+    smart_copy!(buf.surface_runoff, processed_data.surface_runoff)
+    smart_copy!(buf.total_runoff,   processed_data.total_runoff)
+    
+    smart_copy!(buf.pe_summed,      processed_data.pe_summed)
+    smart_copy!(buf.nr_summed,      processed_data.nr_summed)
+    smart_copy!(buf.tr_summed,      processed_data.tr_summed)
+    smart_copy!(buf.ce_summed,      processed_data.ce_summed)
+    
+    # 3D Variables
+    smart_copy!(buf.soil_evaporation, processed_data.soil_evaporation)
+    smart_copy!(buf.soil_moisture,    processed_data.soil_moisture_new)
+    
     return nothing
 end
 
