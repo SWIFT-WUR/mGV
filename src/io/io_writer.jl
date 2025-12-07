@@ -189,58 +189,31 @@ end
 # Phase 1: Optimized Async Transfer (DMA with Fallback)
 function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
     
-    # --- FIX START ---
-    # Instead of stopping the world with CUDA.synchronize(), we use a lightweight Event.
-    
-    # 1. Create an event marker
+    # 1. Use events instead of global synchronization for speed
     evt = CuEvent()
-    
-    # 2. Record the event on the DEFAULT stream (where your calculations happened).
-    #    This puts a "marker" in the compute queue saying "Calc is done here".
     CUDA.record(evt) 
-    
-    # 3. Tell your specific TRANSFER `stream` to wait for that marker.
-    #    The transfer stream will pause *on the GPU* until calculations are done,
-    #    but the CPU continues immediately.
     CUDA.wait(evt, stream)
-    # --- FIX END ---
 
-    # 1. Smart DMA Helper
-    function smart_copy!(dest, src)
-        # Case 1: Standard CuArray (Always contiguous) -> FAST DMA
-        if src isa CuArray
-            CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
-            
-        # Case 2: SubArray (View) -> Check stride, then FAST DMA
-        elseif src isa SubArray && Base.iscontiguous(src)
-            CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
-            
-        # Case 3: Complex/Strided View -> Safe (slower) Copy
-        else
-            CUDA.stream!(stream) do
-                copyto!(dest, src)
-            end
-        end
-    end
+    # 2. Raw DMA Transfer (Case 1 Only)
+    # We define a tiny helper to keep the code readable
+    dma!(dest, src) = CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
 
-    # 2. Execute Transfers
-    # 2D Variables
-    smart_copy!(buf.tsurf,          processed_data.tsurf)
-    smart_copy!(buf.tair,           processed_data.tair)
-    smart_copy!(buf.prec,           processed_data.prec)
-    smart_copy!(buf.total_et,       processed_data.total_et)
-    smart_copy!(buf.surface_runoff, processed_data.surface_runoff)
-    smart_copy!(buf.total_runoff,   processed_data.total_runoff)
+    # 3. Execute Transfers
+    dma!(buf.tsurf,          processed_data.tsurf)
+    dma!(buf.tair,           processed_data.tair)
+    dma!(buf.prec,           processed_data.prec)
+    dma!(buf.total_et,       processed_data.total_et)
+    dma!(buf.surface_runoff, processed_data.surface_runoff)
+    dma!(buf.total_runoff,   processed_data.total_runoff)
     
-    smart_copy!(buf.pe_summed,      processed_data.pe_summed)
-    smart_copy!(buf.nr_summed,      processed_data.nr_summed)
-    smart_copy!(buf.tr_summed,      processed_data.tr_summed)
-    smart_copy!(buf.ce_summed,      processed_data.ce_summed)
+    dma!(buf.pe_summed,      processed_data.pe_summed)
+    dma!(buf.nr_summed,      processed_data.nr_summed)
+    dma!(buf.tr_summed,      processed_data.tr_summed)
+    dma!(buf.ce_summed,      processed_data.ce_summed)
     
-    # 3D Variables
-    smart_copy!(buf.soil_evaporation, processed_data.soil_evaporation)
-    smart_copy!(buf.soil_moisture,    processed_data.soil_moisture_new)
-    
+    dma!(buf.soil_evaporation, processed_data.soil_evaporation)
+    dma!(buf.soil_moisture,    processed_data.soil_moisture_new)
+
     return nothing
 end
 
