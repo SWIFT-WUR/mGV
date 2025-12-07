@@ -189,7 +189,21 @@ end
 # Phase 1: Optimized Async Transfer (DMA with Fallback)
 function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
     
-    CUDA.synchronize()
+    # --- FIX START ---
+    # Instead of stopping the world with CUDA.synchronize(), we use a lightweight Event.
+    
+    # 1. Create an event marker
+    evt = CuEvent()
+    
+    # 2. Record the event on the DEFAULT stream (where your calculations happened).
+    #    This puts a "marker" in the compute queue saying "Calc is done here".
+    CUDA.record(evt) 
+    
+    # 3. Tell your specific TRANSFER `stream` to wait for that marker.
+    #    The transfer stream will pause *on the GPU* until calculations are done,
+    #    but the CPU continues immediately.
+    CUDA.wait(evt, stream)
+    # --- FIX END ---
 
     # 1. Smart DMA Helper
     function smart_copy!(dest, src)
