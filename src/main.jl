@@ -34,28 +34,28 @@ println("Julia has started with $(Threads.nthreads()) threads.")
 @timeit to "initialize_GPU_arrays" begin
 
 # Canopy and surface states
-global water_storage = CUDA.zeros(float_type, size(coverage_gpu))
-global max_water_storage = CUDA.zeros(float_type, size(coverage_gpu))
-global throughfall = CUDA.zeros(float_type, size(coverage_gpu))
-global canopy_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
-global f_n = CUDA.zeros(float_type, size(coverage_gpu)) 
+const water_storage = CUDA.zeros(float_type, size(coverage_gpu))
+const max_water_storage = CUDA.zeros(float_type, size(coverage_gpu))
+const throughfall = CUDA.zeros(float_type, size(coverage_gpu))
+const canopy_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
+const f_n = CUDA.zeros(float_type, size(coverage_gpu)) 
 
-global net_radiation = CUDA.zeros(float_type, size(coverage_gpu))
-global Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
-global potential_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
-global aerodynamic_resistance = CUDA.zeros(float_type, size(coverage_gpu))
-global tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
+const net_radiation = CUDA.zeros(float_type, size(coverage_gpu))
+const Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
+const potential_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
+const aerodynamic_resistance = CUDA.zeros(float_type, size(coverage_gpu))
+const tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
 
 
-global soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
-global total_et = CUDA.zeros(float_type, size(Tavg_gpu))
-global infiltration = CUDA.zeros(float_type, size(Tavg_gpu))
+const soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
+const total_et = CUDA.zeros(float_type, size(Tavg_gpu))
+const infiltration = CUDA.zeros(float_type, size(Tavg_gpu))
 
 # Soil property arrays
-global bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
-global soil_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
-global porosity = CUDA.zeros(float_type, size(bulk_dens_gpu))
-global Lsum = CUDA.zeros(float_type, size(soil_dens_gpu))
+const bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
+const soil_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
+const porosity = CUDA.zeros(float_type, size(bulk_dens_gpu))
+const Lsum = CUDA.zeros(float_type, size(soil_dens_gpu))
 
 # Soil temperature initialization
 global soil_temperature = CUDA.zeros(float_type, size(soil_dens_gpu))
@@ -69,12 +69,13 @@ global soil_moisture_old = CUDA.zeros(float_type, soil_dims...)
 global soil_moisture_new = CUDA.zeros(float_type, soil_dims...)
 global soil_moisture_max = CUDA.zeros(float_type, soil_dims...)
 global soil_moisture_critical = CUDA.zeros(float_type, soil_dims...)
-global field_capacity = CUDA.zeros(float_type, soil_dims...)
-global wilting_point = CUDA.zeros(float_type, soil_dims...)
-global residual_moisture = CUDA.zeros(float_type, soil_dims...)
 
-global ice_frac = CUDA.zeros(float_type, size(soil_moisture_old))
-global organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_old))
+const field_capacity = CUDA.zeros(float_type, soil_dims...)
+const wilting_point = CUDA.zeros(float_type, soil_dims...)
+const residual_moisture = CUDA.zeros(float_type, soil_dims...)
+
+const ice_frac = CUDA.zeros(float_type, size(soil_moisture_old))
+const organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_old))
 end
 
 # ============================================================================
@@ -128,15 +129,16 @@ function process_year(year)
     # Ensure we're modifying global variables
     @timeit to "take_in_global_arrays" begin
 
-    global water_storage, throughfall, canopy_evaporation, bulk_dens_min, soil_dens_min
-    global porosity, soil_moisture_old, Q_12, soil_moisture_new, soil_moisture_max
-    global soil_moisture_critical, field_capacity, wilting_point, residual_moisture
-    global soil_temperature, Lsum, tsurf
-    global net_radiation
-    global potential_evaporation, aerodynamic_resistance
-    global max_water_storage
-    global ice_frac, organic_frac_gpu
-    global total_et
+    global soil_moisture_old, soil_moisture_new, soil_moisture_max, soil_moisture_critical, soil_temperature       
+
+#    global water_storage, throughfall, canopy_evaporation, bulk_dens_min, soil_dens_min, porosity
+#    global field_capacity, wilting_point, residual_moisture, Q_12
+#    global Lsum, tsurf
+#    global net_radiation
+#    global potential_evaporation, aerodynamic_resistance
+#    global max_water_storage
+#    global ice_frac, organic_frac_gpu
+#    global total_et
     
     end
 
