@@ -157,130 +157,123 @@ function calculate_infiltration!(infiltration, throughfall, surface_runoff)
     return nothing
 end
 
-function solve_runoff_and_drainage(
-    surface_inflow,      # (ny,nx)  [mm]
-    soil_evaporation,    # (ny,nx,nlayer,nveg)  [mm]
-    transpiration,       # (ny,nx,nlayer,nveg)  [mm]
-    soil_moisture_old,   # (ny,nx,nlayer)       [mm]
-    soil_moisture_max,   # (ny,nx,nlayer)       [mm]
-    ksat_gpu,            # (ny,nx,nlayer)
-    residual_moisture,   # (ny,nx,nlayer)
-    expt_gpu,            # (ny,nx,nlayer)
-    Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu       # (ny,nx)
+function solve_runoff_and_drainage!(
+    soil_moisture_new,   # (ny,nx,nlayer) [Mutated Output]
+    subsurface_runoff,   # (ny,nx)        [Mutated Output]
+    interlayer_drainage, # (ny,nx,2)      [Mutated Output]
+    surface_inflow,      # (ny,nx)
+    soil_evaporation,    # (ny,nx)
+    transpiration,       # (ny,nx,nlayer, ...) OR (ny,nx,1, ...)
+    soil_moisture_old,   # (ny,nx,nlayer)
+    soil_moisture_max,   
+    ksat,           
+    residual_moisture,
+    expt,           
+    Dsmax, Ds, Ws, c_expt
 )
+    # 1. Initialize New State
+    copyto!(soil_moisture_new, soil_moisture_old)
 
-    # Constants (match Float32 if needed)
-    zero_val = zero(eltype(soil_moisture_old))
-    one_val = one(eltype(soil_moisture_old))
-    epsilon = convert(eltype(soil_moisture_old), 1e-9)
+    # Constants
+    zero_val = 0.0f0
+    one_val  = 1.0f0
+    epsilon  = 1.0f-9
 
-    # Input arrays (GPU-safe copy)
-    soil_moisture = copy(soil_moisture_old)
-    soil_moisture_max = soil_moisture_max
-    residual_moisture = residual_moisture
-    ksat = ksat_gpu
-    expt = expt_gpu
-    Dsmax = Dsmax_gpu
-    Ds = Ds_gpu
-    Ws = Ws_gpu
-    c_expt = c_expt_gpu
+    # --- HANDLE TRANSPIRATION INPUT DIMS ---
+    # Check if we have 3 layers of transpiration or just 1 (total)
+    has_layers = size(transpiration, 3) >= 3
 
-    inflow = surface_inflow
+    # Define views for T (Transpiration)
+    # If 1 layer provided, all T is removed from Layer 1. L2 and L3 get 0.
+    trans_L1 = @view(transpiration[:, :, 1])
+    
+    # We use a scalar 0.0f0 for L2/L3 if data is missing; broadcasting handles this efficiently.
+    trans_L2 = has_layers ? @view(transpiration[:, :, 2]) : zero_val
+    trans_L3 = has_layers ? @view(transpiration[:, :, 3]) : zero_val
 
-    # Aggregate ET per layer (sum over veg; soil evap only on layer 1; GPU-safe with dropdims)
-    layer_soil_evap = dropdims(sum(soil_evaporation[:, :, 1, :], dims=3), dims=3)  # (ny,nx)
-    layer_transp = CUDA.zeros(eltype(soil_moisture), size(soil_moisture))  # (ny,nx,nlayer)
-    for l in 1:1#1:3
-        layer_transp[:, :, l] .= dropdims(sum(transpiration[:, :, l, :], dims=3), dims=3)
-    end
+    # ========================================================================
+    # LAYER 1: Inflow + ET + Drainage to Layer 2
+    # ========================================================================
+    
+    sm_L1    = @view(soil_moisture_new[:, :, 1])
+    resid_L1 = @view(residual_moisture[:, :, 1])
+    max_L1   = @view(soil_moisture_max[:, :, 1])
+    drain_L1 = @view(interlayer_drainage[:, :, 1]) 
 
-    # Effective ET outputs (unused in return but kept for consistency; GPU-safe)
-    effective_soil_evap = CUDA.zeros(eltype(inflow), size(inflow))
-    effective_transp = CUDA.zeros(eltype(layer_transp), size(layer_transp))
+    # 1.1 Inflow
+    @. sm_L1 += surface_inflow
 
-    # Interlayer drainage (2 fluxes for 3 layers; GPU-safe)
-    interlayer_drainage = CUDA.zeros(eltype(soil_moisture), size(soil_moisture)[1:2]..., 2)
+    # 1.2 Evapotranspiration Removal
+    # We use trans_L1 here
+    @. sm_L1 -= (soil_evaporation + trans_L1) * min(one_val, max(sm_L1 - resid_L1, zero_val) / max(soil_evaporation + trans_L1, epsilon))
 
-    # -------- Layer 1: Inflow + ET + Drainage to Layer 2 --------
-    soil_moisture[:, :, 1] .+= inflow
-
-    available = max.(soil_moisture[:, :, 1] .- residual_moisture[:, :, 1], zero_val)
-    potential_loss = layer_soil_evap .+ layer_transp[:, :, 1]
-    scale_factor = min.(one_val, available ./ max.(potential_loss, epsilon))
-    actual_soil_evap = layer_soil_evap .* scale_factor
-    actual_transp = layer_transp[:, :, 1] .* scale_factor
-    soil_moisture[:, :, 1] .-= (actual_soil_evap .+ actual_transp)
-
-    effective_soil_evap .= actual_soil_evap
-    effective_transp[:, :, 1] .= actual_transp
-
-    # Drainage from layer 1
-    drainage_1 = calculate_interlayer_drainage(
-        ksat[:, :, 1], soil_moisture[:, :, 1], soil_moisture_max[:, :, 1],
-        residual_moisture[:, :, 1], expt[:, :, 1]
+    # 1.3 Drainage (L1 -> L2)
+    drain_pot = calculate_interlayer_drainage(
+        @view(ksat[:,:,1]), sm_L1, max_L1, resid_L1, @view(expt[:,:,1])
     )
-    available = max.(soil_moisture[:, :, 1] .- residual_moisture[:, :, 1], zero_val)
-    drainage_1 = min.(drainage_1, available)
-    soil_moisture[:, :, 1] .-= drainage_1
+    
+    @. drain_L1 = min(drain_pot, max(sm_L1 - resid_L1, zero_val))
+    @. sm_L1 -= drain_L1
+    
+    spill = max.(sm_L1 .- max_L1, zero_val)
+    @. sm_L1 -= spill
+    @. drain_L1 += spill 
 
-    # Spillover (saturation excess, added to drainage)
-    spillover_1 = max.(soil_moisture[:, :, 1] .- soil_moisture_max[:, :, 1], zero_val)
-    soil_moisture[:, :, 1] .-= spillover_1
-    interlayer_drainage[:, :, 1] .= drainage_1 .+ spillover_1
+    # ========================================================================
+    # LAYER 2: Inflow from L1 + ET + Drainage to Layer 3
+    # ========================================================================
+    
+    sm_L2    = @view(soil_moisture_new[:, :, 2])
+    resid_L2 = @view(residual_moisture[:, :, 2])
+    max_L2   = @view(soil_moisture_max[:, :, 2])
+    drain_L2 = @view(interlayer_drainage[:, :, 2]) 
 
-    # -------- Layer 2: Drainage In + ET + Drainage to Layer 3 --------
-    inflow_to_2 = interlayer_drainage[:, :, 1]
-    soil_moisture[:, :, 2] .+= inflow_to_2
+    # 2.1 Inflow from Layer 1
+    @. sm_L2 += drain_L1
 
-    available = max.(soil_moisture[:, :, 2] .- residual_moisture[:, :, 2], zero_val)
-    potential_loss = layer_transp[:, :, 2]
-    scale_factor = min.(one_val, available ./ max.(potential_loss, epsilon))
-    actual_transp = layer_transp[:, :, 2] .* scale_factor
-    soil_moisture[:, :, 2] .-= actual_transp
+    # 2.2 Transpiration Removal
+    # Uses trans_L2 (which is either a view or 0.0f0)
+    @. sm_L2 -= trans_L2 * min(one_val, max(sm_L2 - resid_L2, zero_val) / max(trans_L2, epsilon))
 
-    effective_transp[:, :, 2] .= actual_transp
-
-    # Drainage from layer 2
-    drainage_2 = calculate_interlayer_drainage(
-        ksat[:, :, 2], soil_moisture[:, :, 2], soil_moisture_max[:, :, 2],
-        residual_moisture[:, :, 2], expt[:, :, 2]
+    # 2.3 Drainage (L2 -> L3)
+    drain_pot_2 = calculate_interlayer_drainage(
+        @view(ksat[:,:,2]), sm_L2, max_L2, resid_L2, @view(expt[:,:,2])
     )
-    available = max.(soil_moisture[:, :, 2] .- residual_moisture[:, :, 2], zero_val)
-    drainage_2 = min.(drainage_2, available)
-    soil_moisture[:, :, 2] .-= drainage_2
+    
+    @. drain_L2 = min(drain_pot_2, max(sm_L2 - resid_L2, zero_val))
+    @. sm_L2 -= drain_L2
+    
+    spill_2 = max.(sm_L2 .- max_L2, zero_val)
+    @. sm_L2 -= spill_2
+    @. drain_L2 += spill_2
 
-    # Spillover (added to drainage)
-    spillover_2 = max.(soil_moisture[:, :, 2] .- soil_moisture_max[:, :, 2], zero_val)
-    soil_moisture[:, :, 2] .-= spillover_2
-    interlayer_drainage[:, :, 2] .= drainage_2 .+ spillover_2
+    # ========================================================================
+    # LAYER 3: Inflow from L2 + ET + Baseflow
+    # ========================================================================
+    
+    sm_L3    = @view(soil_moisture_new[:, :, 3])
+    resid_L3 = @view(residual_moisture[:, :, 3])
+    max_L3   = @view(soil_moisture_max[:, :, 3])
 
-    # -------- Layer 3: Drainage In + ET + Baseflow + Deep Drainage --------
-    inflow_to_3 = interlayer_drainage[:, :, 2]
-    soil_moisture[:, :, 3] .+= inflow_to_3
+    # 3.1 Inflow from Layer 2
+    @. sm_L3 += drain_L2
 
-    available = max.(soil_moisture[:, :, 3] .- residual_moisture[:, :, 3], zero_val)
-    potential_loss = layer_transp[:, :, 3]
-    scale_factor = min.(one_val, available ./ max.(potential_loss, epsilon))
-    actual_transp = layer_transp[:, :, 3] .* scale_factor
-    soil_moisture[:, :, 3] .-= actual_transp
+    # 3.2 Transpiration Removal
+    # Uses trans_L3 (which is either a view or 0.0f0)
+    @. sm_L3 -= trans_L3 * min(one_val, max(sm_L3 - resid_L3, zero_val) / max(trans_L3, epsilon))
 
-    effective_transp[:, :, 3] .= actual_transp
-
-    # Baseflow
-    potential_baseflow = calculate_baseflow(
-        soil_moisture[:, :, 3], residual_moisture[:, :, 3], soil_moisture_max[:, :, 3],
-        Dsmax, Ds, Ws, c_expt
+    # 3.3 Baseflow
+    baseflow_pot = calculate_baseflow(
+        sm_L3, resid_L3, max_L3, Dsmax, Ds, Ws, c_expt
     )
-    available = max.(soil_moisture[:, :, 3] .- residual_moisture[:, :, 3], zero_val)
-    actual_baseflow = min.(potential_baseflow, available)
-    soil_moisture[:, :, 3] .-= actual_baseflow
+    
+    @. subsurface_runoff = min(baseflow_pot, max(sm_L3 - resid_L3, zero_val))
+    @. sm_L3 -= subsurface_runoff
 
-    # Deep drainage (spillover to groundwater)
-    deep_drainage = max.(soil_moisture[:, :, 3] .- soil_moisture_max[:, :, 3], zero_val)
-    soil_moisture[:, :, 3] .-= deep_drainage
+    # 3.4 Deep Drainage
+    deep_drain = max.(sm_L3 .- max_L3, zero_val)
+    @. sm_L3 -= deep_drain
+    @. subsurface_runoff += deep_drain
 
-    # Total baseflow (includes deep)
-    total_baseflow = actual_baseflow .+ deep_drainage
-
-    return soil_moisture, total_baseflow, interlayer_drainage
+    return nothing
 end

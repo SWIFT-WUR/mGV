@@ -51,6 +51,12 @@ const soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
 const total_et = CUDA.zeros(float_type, size(Tavg_gpu))
 const infiltration = CUDA.zeros(float_type, size(Tavg_gpu))
 
+const surface_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
+const asat = CUDA.zeros(float_type, size(Tavg_gpu))
+
+const subsurface_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
+const interlayer_drainage = CUDA.zeros(float_type, size(Tavg_gpu,1), size(Tavg_gpu,2), 2)
+
 # Soil property arrays
 const bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
 const soil_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -284,7 +290,6 @@ function process_year(year)
                 # Water balance: throughfall and runoff
                 # ============================================================
                 @timeit to "update_water_canopy_storage" begin
-                    # Mutating call: updates water_storage and throughfall in-place
                     update_water_canopy_storage!(
                         water_storage, throughfall, 
                         prec_gpu, cv_gpu, canopy_evaporation, 
@@ -292,11 +297,13 @@ function process_year(year)
                     )
                 end
 
-                # Calculate surface runoff
-                surface_runoff, asat = calculate_surface_runoff(
-                    prec_gpu, throughfall, soil_moisture_old, 
-                    soil_moisture_max, b_infilt_gpu, cv_gpu
-                )
+                @timeit to "calculate_surface_runoff" begin
+                    calculate_surface_runoff!(
+                        surface_runoff, asat,
+                        prec_gpu, throughfall, soil_moisture_old, 
+                        soil_moisture_max, b_infilt_gpu, cv_gpu
+                    )
+                end
 
                 # Calculate infiltration
                 calculate_infiltration!(infiltration, throughfall, surface_runoff)
@@ -308,13 +315,15 @@ function process_year(year)
                 # Weight for soil water removal
                 transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
                 #transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
-
-                soil_moisture_new, subsurface_runoff, Q12 = solve_runoff_and_drainage(
-                    infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
-                    soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
-                    Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
-                )
-
+                
+                @timeit to "solve_runoff_and_drainage" begin
+                    solve_runoff_and_drainage!(
+                        soil_moisture_new, subsurface_runoff, interlayer_drainage,
+                        infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
+                        soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
+                        Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
+                    )
+                end
                 soil_moisture_old = soil_moisture_new
 
                 # ============================================================

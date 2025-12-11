@@ -1,56 +1,60 @@
-function calculate_surface_runoff(prec_gpu, throughfall, soil_moisture_old, soil_moisture_max, b_i, cv_gpu)
-    T   = eltype(soil_moisture_old)
-    EPS = T(1e-9)
+function calculate_surface_runoff!(surface_runoff, A_sat, prec_gpu, throughfall, soil_moisture_old, soil_moisture_max, b_i, cv_gpu)
+    # Define epsilon as Float32
+    EPS = 1f-9
     
-    # Sum top soil layers (equivalent to C code's loop over Nlayer-1)
-    topsoil_moisture     = sum(soil_moisture_old[:, :, 1:2], dims=3)[:, :, 1]
-    topsoil_moisture_max = sum(soil_moisture_max[:, :, 1:2], dims=3)[:, :, 1]
+    # --- 1. Calculate Topsoil Moisture ---
+    # Optimization: Use views to sum layers 1 & 2 without creating a slice copy.
+    topsoil_moisture = @view(soil_moisture_old[:, :, 1]) .+ @view(soil_moisture_old[:, :, 2])
+    topsoil_moisture_max = @view(soil_moisture_max[:, :, 1]) .+ @view(soil_moisture_max[:, :, 2])
     
-    # Clamp topsoil_moisture to not exceed max (as in C code)
-    topsoil_moisture = min.(topsoil_moisture, topsoil_moisture_max)
+    # Clamp topsoil_moisture (in-place update of the temporary array)
+    topsoil_moisture .= min.(topsoil_moisture, topsoil_moisture_max)
     
-    # Calculate ratio (add small epsilon to denominator to avoid division by zero)
+    # --- 2. Calculate Saturation Area (A_sat) ---
+    # Calculate ratio
     ratio = topsoil_moisture ./ (topsoil_moisture_max .+ EPS)
-    ratio = clamp.(ratio, T(0), T(1))
+    clamp!(ratio, 0.0f0, 1.0f0) 
     
-    # Calculate A (saturated area) - USE CORRECT EXPONENT!
-    # C code: ex = b_infilt / (1.0 + b_infilt)
-    ex = b_i ./ (T(1) .+ b_i)
-    A_sat = T(1) .- ((T(1) .- ratio) .^ ex)
+    # Calculate ex parameter
+    ex = b_i ./ (1.0f0 .+ b_i)
     
+    # Update A_sat IN-PLACE
+    @. A_sat = 1.0f0 - ((1.0f0 - ratio) ^ ex)
+    
+    # --- 3. Calculate Infiltration Parameters ---
     # Maximum infiltration capacity
-    max_infil = (T(1) .+ b_i) .* topsoil_moisture_max
+    max_infil = (1.0f0 .+ b_i) .* topsoil_moisture_max
     
     # Initial infiltration
-    i_0 = max_infil .* (T(1) .- ((T(1) .- A_sat) .^ (T(1) ./ b_i)))
+    i_0 = max_infil .* (1.0f0 .- ((1.0f0 .- A_sat) .^ (1.0f0 ./ b_i)))
     
-    # Total water input (inflow in C code) - CONVERT TO CORRECT TYPE
-    inflow = T.(sum_with_nan_handling(throughfall, 4))
+    # Total water input (inflow)
+    # Assumes sum_with_nan_handling returns a compatible type (likely Float32 if inputs are GPU)
+    inflow = sum_with_nan_handling(throughfall, 4)
     
-    # Calculate runoff following C code logic exactly
-    # Equation 3a: runoff = inflow - top_max_moist + top_moist
-    runoff_3a = inflow .- topsoil_moisture_max .+ topsoil_moisture
+    # --- 4. Calculate Runoff ---
     
-    # Equation 3b: runoff = inflow - top_max_moist + top_moist + 
-    #                       top_max_moist * (1 - (i_0 + inflow)/max_infil)^(1 + b_infilt)
     max_infil_safe = max.(max_infil, EPS)
-    basis = T(1) .- (i_0 .+ inflow) ./ max_infil_safe
-    runoff_3b = inflow .- topsoil_moisture_max .+ topsoil_moisture .+ 
-                topsoil_moisture_max .* (basis .^ (T(1) .+ b_i))
+    basis = 1.0f0 .- (i_0 .+ inflow) ./ max_infil_safe
     
-    # Apply conditional logic matching C code
-    runoff = ifelse.(inflow .<= EPS,
-                     T(0),                                    # inflow == 0
-                     ifelse.(max_infil .<= EPS,
-                            inflow,                           # max_infil == 0
-                            ifelse.((i_0 .+ inflow) .> max_infil,
-                                   runoff_3a,                 # Eq. 3a
-                                   runoff_3b)))               # Eq. 3b
+    # [cite_start]Update surface_runoff IN-PLACE using the conditional logic [cite: 61, 65, 66]
+    @. surface_runoff = ifelse(inflow <= EPS,
+            0.0f0,                                    # inflow == 0
+            ifelse(max_infil <= EPS,
+                inflow,                               # max_infil == 0
+                ifelse((i_0 + inflow) > max_infil,
+                        inflow - topsoil_moisture_max + topsoil_moisture, # Eq 3a
+                        inflow - topsoil_moisture_max + topsoil_moisture + 
+                        topsoil_moisture_max * (basis ^ (1.0f0 + b_i))    # Eq 3b
+                )
+            )
+    )
     
-    # Clamp to non-negative and not exceed input
-    runoff = clamp.(runoff, T(0), inflow)
-    
-    return runoff, A_sat
+    # Final Clamp IN-PLACE
+    clamp!(surface_runoff, 0.0f0, Inf32)  # Ensure non-negative
+    @. surface_runoff = min(surface_runoff, inflow) # Ensure <= inflow
+
+    return nothing
 end
 
 
