@@ -56,6 +56,7 @@ const asat = CUDA.zeros(float_type, size(Tavg_gpu))
 
 const subsurface_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
 const interlayer_drainage = CUDA.zeros(float_type, size(Tavg_gpu,1), size(Tavg_gpu,2), 2)
+const total_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
 
 # Soil property arrays
 const bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
@@ -64,7 +65,7 @@ const porosity = CUDA.zeros(float_type, size(bulk_dens_gpu))
 const Lsum = CUDA.zeros(float_type, size(soil_dens_gpu))
 
 # Soil temperature initialization
-global soil_temperature = CUDA.zeros(float_type, size(soil_dens_gpu))
+const soil_temperature = CUDA.zeros(float_type, size(soil_dens_gpu))
 soil_temperature[:, :, 1:1] = Tavg_gpu
 soil_temperature[:, :, 2:2] = Tavg_gpu
 soil_temperature[:, :, 3:3] = Tavg_gpu
@@ -73,8 +74,11 @@ soil_temperature[:, :, 3:3] = Tavg_gpu
 soil_dims = (size(soil_dens_gpu, 1), size(soil_dens_gpu, 2), size(soil_dens_gpu, 3))
 global soil_moisture_old = CUDA.zeros(float_type, soil_dims...)
 global soil_moisture_new = CUDA.zeros(float_type, soil_dims...)
-global soil_moisture_max = CUDA.zeros(float_type, soil_dims...)
-global soil_moisture_critical = CUDA.zeros(float_type, soil_dims...)
+const soil_moisture_max = CUDA.zeros(float_type, soil_dims...)
+const soil_moisture_critical = CUDA.zeros(float_type, soil_dims...)
+
+const kappa_array = CUDA.zeros(float_type, soil_dims...)
+const cs_array = CUDA.zeros(float_type, soil_dims...)
 
 const field_capacity = CUDA.zeros(float_type, soil_dims...)
 const wilting_point = CUDA.zeros(float_type, soil_dims...)
@@ -102,7 +106,7 @@ end
 
 @timeit to "copy_soil_properties" begin
 
-# Copy calculated values into global GPU arrays
+# Copy calculated values into constant/global GPU arrays
 bulk_dens_min .= _bulk_dens_min
 soil_dens_min .= _soil_dens_min
 porosity .= _porosity
@@ -135,7 +139,7 @@ function process_year(year)
     # Ensure we're modifying global variables
     @timeit to "take_in_global_arrays" begin
 
-    global soil_moisture_old, soil_moisture_new, soil_moisture_max, soil_moisture_critical, soil_temperature       
+    global soil_moisture_old, soil_moisture_new       
 
 #    global water_storage, throughfall, canopy_evaporation, bulk_dens_min, soil_dens_min, porosity
 #    global field_capacity, wilting_point, residual_moisture, Q_12
@@ -335,8 +339,11 @@ function process_year(year)
                         canopy_evaporation, transpiration, soil_evaporation, 
                         cv_gpu, coverage_gpu
                     )
-                    total_runoff = calculate_total_runoff(
-                        surface_runoff, subsurface_runoff, cv_gpu
+                    calculate_total_runoff!(
+                        total_runoff,       
+                        surface_runoff,     
+                        subsurface_runoff,  
+                        fillvalue_threshold
                     )
                 end
 
@@ -344,22 +351,37 @@ function process_year(year)
                 # Soil thermal properties
                 # ============================================================
                 @timeit to "soil_conductivity" begin
-                    kappa_array = soil_conductivity(
-                        soil_moisture_new, ice_frac, soil_dens_min, bulk_dens_min, 
-                        quartz_gpu, organic_frac_gpu, porosity
+                    soil_conductivity!(
+                        kappa_array,       
+                        soil_moisture_new, 
+                        ice_frac,          
+                        soil_dens_min,     
+                        bulk_dens_min,     
+                        quartz_gpu,        
+                        organic_frac_gpu,  
+                        porosity           
                     )
                 end
 
                 @timeit to "volumetric_heat_capacity" begin
-                    cs_array = volumetric_heat_capacity(
-                        bulk_dens_gpu ./ soil_dens_gpu, 
-                        soil_moisture_new ./ rho_w, ice_frac, organic_frac
+                    volumetric_heat_capacity!(
+                        cs_array,          
+                        bulk_dens_gpu,      
+                        soil_dens_gpu,      
+                        soil_moisture_new, 
+                        rho_w,             
+                        ice_frac,          
+                        organic_frac       
                     )
                 end
 
                 @timeit to "estimate_layer_temperature" begin
-                    soil_temperature = estimate_layer_temperature(
-                        depth_gpu, dp_gpu, tsurf, soil_temperature, Tavg_gpu
+                    estimate_layer_temperature!(
+                        soil_temperature,  
+                        depth_gpu, 
+                        dp_gpu, 
+                        tsurf, 
+                        Tavg_gpu
                     )
                 end
 
@@ -385,15 +407,11 @@ function process_year(year)
                     end
                 end
 
-                # Calculate effective aerodynamic resistance
-                ra_eff_inv = sum(cv_gpu ./ aerodynamic_resistance, dims=4)
-                ra_eff = 1.0 ./ max.(ra_eff_inv, eps(eltype(ra_eff_inv)))
-
                 @timeit to "solve_surface_temperature" begin
                     solve_surface_temperature!(
                         tsurf,
                         soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
-                        ra_eff, 
+                        aerodynamic_resistance,  # <-- Pass the 4D array directly
                         kappa_array, depth_gpu, day_sec, cs_array, total_et, 
                         tair_gpu, cv_gpu, psurf_gpu
                     )

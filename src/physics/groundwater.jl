@@ -1,53 +1,77 @@
-function soil_conductivity(moist, ice_frac, soil_dens_min, bulk_dens_min, quartz, organic_frac, porosity)
-    # Get the element type from the input arrays
-    T = eltype(moist)
+# Pure scalar function (compiles to a GPU device function)
+function soil_conductivity_kernel(moist, ice_frac, soil_dens_min, bulk_dens_min, quartz, organic_frac, porosity)
+
+    # 1. Unfrozen water content
+    Wu = moist - ice_frac
+
+    # 2. Dry conductivity (Kdry)
+    # Formula: (0.135*bulk + 64.7) / (soil_dens - 0.947*bulk)
+    Kdry_min = (0.135f0 * bulk_dens_min + 64.7f0) / (soil_dens_min - 0.947f0 * bulk_dens_min)
+    Kdry     = (1.0f0 - organic_frac) * Kdry_min + organic_frac * Kdry_org
+
+    # 3. Fractional degree of saturation (Sr)
+    Sr = ifelse(porosity > 0.0f0, moist / porosity, 0.0f0)
+
+    # 4. Mineral soil conductivity (Ks_min)
+    Ks_min = ifelse(quartz < 0.2f0,
+                    7.7f0 ^ quartz * 3.0f0 ^ (1.0f0 - quartz),
+                    ifelse(quartz <= 1.0f0,
+                           7.7f0 ^ quartz * 2.2f0 ^ (1.0f0 - quartz),
+                           0.0f0))
     
-    # Unfrozen water content
-    Wu = moist .- ice_frac
+    Ks = (1.0f0 - organic_frac) * Ks_min + organic_frac * Ks_org
 
-    # Calculate dry conductivity as a weighted average of mineral and organic fractions, constants Reference: Farouki, O.T., "Thermal Properties of Soils" 1986
-    Kdry_min = (T(0.135) .* bulk_dens_min .+ T(64.7)) ./ (soil_dens_min .- T(0.947) .* bulk_dens_min)
-    Kdry = (T(1.0) .- organic_frac) .* Kdry_min .+ organic_frac .* T(Kdry_org)
+    # 5. Saturated conductivity (Ksat)
+    Ksat = ifelse(Wu == moist,
+                  Ks ^ (1.0f0 - porosity) * Kw ^ porosity,
+                  Ks ^ (1.0f0 - porosity) * Ki ^ (porosity - Wu) * Kw ^ Wu)
 
-    # Fractional degree of saturation
-    Sr = ifelse.(porosity .> T(0.0), moist ./ porosity, T(0.0))
-
-    # Compute Ks of mineral soil based on quartz content
-    Ks_min = ifelse.((quartz .< T(0.2)) .& (quartz .<= T(1.0)),
-                    T(7.7) .^ quartz .* T(3.0) .^ (T(1.0) .- quartz),
-                    ifelse.(quartz .<= T(1.0),
-                            T(7.7) .^ quartz .* T(2.2) .^ (T(1.0) .- quartz),
-                            T(0.0)))
-
-    Ks = (T(1.0) .- organic_frac) .* Ks_min .+ organic_frac .* T(Ks_org)
-
-    # Calculate Ksat depending on whether the soil is unfrozen (Wu == moist) or partially frozen
-    Ksat = ifelse.(Wu .== moist,
-                  Ks .^ (T(1.0) .- porosity) .* T(Kw) .^ porosity,
-                  Ks .^ (T(1.0) .- porosity) .* T(Ki) .^ (porosity .- Wu) .* T(Kw) .^ Wu)
-
-    # Compute the effective saturation parameter, Ke
-    Ke = ifelse.(Wu .== moist,
-                T(0.7) .* log10.(max.(Sr, T(1e-10))) .+ T(1.0),
+    # 6. Effective saturation parameter (Ke)
+    Ke = ifelse(Wu == moist,
+                0.7f0 * log10(max(Sr, 1f-10)) + 1.0f0,
                 Sr)
 
-    # Final Kappa calculation using ifelse to handle moist > 0 condition
-    Kappa = ifelse.(moist .> T(0.0),
-                   max.((Ksat .- Kdry) .* Ke .+ Kdry, Kdry),
+    # 7. Final Kappa Calculation
+    # If moist > 0, interpolate. Else Kdry.
+    term_moist = (Ksat - Kdry) * Ke + Kdry
+    kappa = ifelse(moist > 0.0f0,
+                   max(term_moist, Kdry),
                    Kdry)
-
-    return Kappa
+                   
+    return kappa
 end
 
-function volumetric_heat_capacity(soil_fract, water_fract, ice_fract, organic_frac)
-    # Constant values are volumetric heat capacities in J/m^3/K
-    Cs = 2.0e6 .* soil_fract .* (1 .- organic_frac) .+
-         2.7e6 .* soil_fract .* organic_frac .+
-         4.2e6 .* water_fract .+
-         1.9e6 .* ice_fract .+
-         1.3e3 .* (1.0 .- (soil_fract .+ water_fract .+ ice_fract))  # Air component
+function soil_conductivity!(kappa_array, moist, ice_frac, soil_dens_min, bulk_dens_min, quartz, organic_frac, porosity)
+    # Broadcast the kernel function over the arrays.
+    # Julia will fuse this into a single GPU kernel.
+    @. kappa_array = soil_conductivity_kernel(
+        moist, 
+        ice_frac, 
+        soil_dens_min, 
+        bulk_dens_min, 
+        quartz, 
+        organic_frac, 
+        porosity
+    )
+    return nothing
+end
 
-    return Cs
+
+function volumetric_heat_capacity!(cs_array, bulk_dens, soil_dens, soil_moisture, rho_w, ice_frac, organic_frac)
+
+    @. begin
+        # Calculate Cs
+        # (1.0 - organic_frac) splits the soil_fract into mineral/organic components
+        # Constant values are volumetric heat capacities in J/m^3/K
+
+        cs_array = 2.0f6 * (bulk_dens / soil_dens) * (1.0f0 - organic_frac) +
+                   2.7f6 * (bulk_dens / soil_dens) * organic_frac +
+                   4.2f6 * (soil_moisture / rho_w) +
+                   1.9f6 * ice_frac +
+                   1.3f3 * (1.0f0 - ((bulk_dens / soil_dens) + (soil_moisture / rho_w) + ice_frac))
+    end
+
+    return nothing
 end
 
 function calculate_gsm_inv(soil_moisture, soil_moisture_critical, wilting_point)

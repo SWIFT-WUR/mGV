@@ -83,16 +83,18 @@ function calculate_subsurface_runoff(soil_moisture_old, soil_moisture_max, Ds_gp
 end
 
 # Eq. (24): Total runoff
-function calculate_total_runoff(surface_runoff, subsurface_runoff, cv_gpu)
+function calculate_total_runoff!(total_runoff, surface_runoff, subsurface_runoff, fillvalue_threshold)
+    
+    # 1. Clean Surface Runoff (Mutates input directly, matching original logic)
+    # We use Float32 literals (0.0f0)
+    @. surface_runoff = ifelse(isnan(surface_runoff) | (abs(surface_runoff) > fillvalue_threshold), 0.0f0, surface_runoff)
 
-    surface_runoff .= ifelse.(isnan.(surface_runoff) .| (abs.(surface_runoff) .> fillvalue_threshold), 0.0, surface_runoff) # Q_d[n]
-    subsurface_runoff .= ifelse.(isnan.(subsurface_runoff) .| (abs.(subsurface_runoff) .> fillvalue_threshold), 0.0, subsurface_runoff) # Q_b[n]
+    # 2. Clean Subsurface Runoff (Mutates input directly)
+    @. subsurface_runoff = ifelse(isnan(subsurface_runoff) | (abs(subsurface_runoff) > fillvalue_threshold), 0.0f0, subsurface_runoff)
 
+    # 3. Compute Total Runoff (Writes to total_runoff)
+    # Simple addition: total = surface + subsurface
+    @. total_runoff = surface_runoff + subsurface_runoff
 
-    # Sum surface and subsurface runoff, weighted by coverage
- #   total_runoff = sum_with_nan_handling(cv_gpu .* (surface_runoff .+ subsurface_runoff), 4) #./ 14. # C_v[n]
-    total_runoff = (surface_runoff .+ subsurface_runoff) # TODO: with or without cv_gpu?
-
-    return total_runoff
+    return nothing
 end
-
