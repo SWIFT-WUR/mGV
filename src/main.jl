@@ -72,8 +72,7 @@ soil_temperature[:, :, 3:3] = Tavg_gpu
 
 # Soil moisture arrays (3D: lon, lat, layer)
 soil_dims = (size(soil_dens_gpu, 1), size(soil_dens_gpu, 2), size(soil_dens_gpu, 3))
-global soil_moisture_old = CUDA.zeros(float_type, soil_dims...)
-global soil_moisture_new = CUDA.zeros(float_type, soil_dims...)
+const soil_moisture = CUDA.zeros(float_type, soil_dims...)
 const soil_moisture_max = CUDA.zeros(float_type, soil_dims...)
 const soil_moisture_critical = CUDA.zeros(float_type, soil_dims...)
 
@@ -84,8 +83,8 @@ const field_capacity = CUDA.zeros(float_type, soil_dims...)
 const wilting_point = CUDA.zeros(float_type, soil_dims...)
 const residual_moisture = CUDA.zeros(float_type, soil_dims...)
 
-const ice_frac = CUDA.zeros(float_type, size(soil_moisture_old))
-const organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture_old))
+const ice_frac = CUDA.zeros(float_type, size(soil_moisture))
+const organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture))
 end
 
 # ============================================================================
@@ -117,9 +116,8 @@ wilting_point .= _wilting_point
 residual_moisture .= _residual_moisture
 
 # Initialize soil moisture within physical bounds
-soil_moisture_old .= min.(init_moist_gpu, soil_moisture_max)
-soil_moisture_old .= max.(soil_moisture_old, residual_moisture)
-soil_moisture_new .= copy(soil_moisture_old)
+soil_moisture .= min.(init_moist_gpu, soil_moisture_max)
+soil_moisture .= max.(soil_moisture, residual_moisture)
 
 end
 
@@ -139,7 +137,7 @@ function process_year(year)
     # Ensure we're modifying global variables
     @timeit to "take_in_global_arrays" begin
 
-    global soil_moisture_old, soil_moisture_new       
+ #   global soil_moisture       
 
 #    global water_storage, throughfall, canopy_evaporation, bulk_dens_min, soil_dens_min, porosity
 #    global field_capacity, wilting_point, residual_moisture, Q_12
@@ -273,7 +271,7 @@ function process_year(year)
                     transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw, dry_time_factor = 
                         calculate_transpiration(
                             potential_evaporation, aerodynamic_resistance, rarc_gpu, 
-                            water_storage, max_water_storage, soil_moisture_old, 
+                            water_storage, max_water_storage, soil_moisture, 
                             soil_moisture_critical, wilting_point, root_gpu, 
                             rmin_gpu, LAI_gpu, cv_gpu, f_n
                         )
@@ -285,7 +283,7 @@ function process_year(year)
                 @timeit to "calculate_soil_evaporation" begin
                     calculate_soil_evaporation!(
                         soil_evaporation, 
-                        soil_moisture_old, soil_moisture_max, potential_evaporation, 
+                        soil_moisture, soil_moisture_max, potential_evaporation, 
                         b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
                     )
                 end
@@ -304,7 +302,7 @@ function process_year(year)
                 @timeit to "calculate_surface_runoff" begin
                     calculate_surface_runoff!(
                         surface_runoff, asat,
-                        prec_gpu, throughfall, soil_moisture_old, 
+                        prec_gpu, throughfall, soil_moisture, 
                         soil_moisture_max, b_infilt_gpu, cv_gpu
                     )
                 end
@@ -322,13 +320,12 @@ function process_year(year)
                 
                 @timeit to "solve_runoff_and_drainage" begin
                     solve_runoff_and_drainage!(
-                        soil_moisture_new, subsurface_runoff, interlayer_drainage,
-                        infiltration, soil_evaporation, transpiration_grid, soil_moisture_old,
+                        soil_moisture, subsurface_runoff, interlayer_drainage,
+                        infiltration, soil_evaporation, transpiration_grid,
                         soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
                         Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
                     )
                 end
-                soil_moisture_old = soil_moisture_new
 
                 # ============================================================
                 # Total fluxes
@@ -353,7 +350,7 @@ function process_year(year)
                 @timeit to "soil_conductivity" begin
                     soil_conductivity!(
                         kappa_array,       
-                        soil_moisture_new, 
+                        soil_moisture, 
                         ice_frac,          
                         soil_dens_min,     
                         bulk_dens_min,     
@@ -368,7 +365,7 @@ function process_year(year)
                         cs_array,          
                         bulk_dens_gpu,      
                         soil_dens_gpu,      
-                        soil_moisture_new, 
+                        soil_moisture, 
                         rho_w,             
                         ice_frac,          
                         organic_frac       
@@ -417,25 +414,10 @@ function process_year(year)
                     )
                 end
 
-                # ============================================================
-                # Spike diagnostics (selected days)
-                # ============================================================
-                #if day in [20, 120, 200, 320]
-                #    @debug run_spike_diagnostics(day, transpiration, soil_moisture_old, 
-                #                        soil_moisture_critical, wilting_point, root_gpu, 
-                #                        cv_gpu, water_storage, max_water_storage, f_n, 
-                #                        potential_evaporation)
-                #end
-
-                # External debug for day 120
-                #if day == 120
-                #    @debug run_external_debug(day, g_sw_1, g_sw_2, root_gpu, transpiration)
-                #end
-
                 @timeit to "preprocess_daily_data" begin gpu_results = preprocess_daily_outputs(
                         day, tsurf, tair_gpu, prec_gpu, 
                         total_et, surface_runoff, total_runoff,
-                        soil_evaporation, soil_moisture_new,
+                        soil_evaporation, soil_moisture,
                         potential_evaporation, net_radiation, transpiration, canopy_evaporation,
                         coverage_gpu, cv_gpu, fillvalue_threshold
                     )

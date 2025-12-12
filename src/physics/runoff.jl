@@ -1,10 +1,10 @@
-function calculate_surface_runoff!(surface_runoff, A_sat, prec_gpu, throughfall, soil_moisture_old, soil_moisture_max, b_i, cv_gpu)
+function calculate_surface_runoff!(surface_runoff, A_sat, prec_gpu, throughfall, soil_moisture, soil_moisture_max, b_i, cv_gpu)
     # Define epsilon as Float32
     EPS = 1f-9
     
     # --- 1. Calculate Topsoil Moisture ---
     # Optimization: Use views to sum layers 1 & 2 without creating a slice copy.
-    topsoil_moisture = @view(soil_moisture_old[:, :, 1]) .+ @view(soil_moisture_old[:, :, 2])
+    topsoil_moisture = @view(soil_moisture[:, :, 1]) .+ @view(soil_moisture[:, :, 2])
     topsoil_moisture_max = @view(soil_moisture_max[:, :, 1]) .+ @view(soil_moisture_max[:, :, 2])
     
     # Clamp topsoil_moisture (in-place update of the temporary array)
@@ -58,8 +58,8 @@ function calculate_surface_runoff!(surface_runoff, A_sat, prec_gpu, throughfall,
 end
 
 
-function calculate_subsurface_runoff(soil_moisture_old, soil_moisture_max, Ds_gpu, Dsmax_gpu, Ws_gpu)
-    bottomsoil_moisture = soil_moisture_old[:, :, 3:3]  # W_2^-[N+1], shape (204, 180, 1)
+function calculate_subsurface_runoff(soil_moisture, soil_moisture_max, Ds_gpu, Dsmax_gpu, Ws_gpu)
+    bottomsoil_moisture = soil_moisture[:, :, 3:3]  # W_2^-[N+1], shape (204, 180, 1)
     bottomsoil_moisture_max = soil_moisture_max[:, :, 3:3]   # W_2^c, 
     Ws_fraction = Ws_gpu .* bottomsoil_moisture_max         # W_s * W_2^c, shape (204, 180, 1)
 

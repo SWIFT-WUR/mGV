@@ -212,7 +212,7 @@ function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
     dma!(buf.ce_summed,      processed_data.ce_summed)
     
     dma!(buf.soil_evaporation, processed_data.soil_evaporation)
-    dma!(buf.soil_moisture,    processed_data.soil_moisture_new)
+    dma!(buf.soil_moisture,    processed_data.soil_moisture)
 
     return nothing
 end
@@ -263,7 +263,7 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
 function preprocess_daily_outputs(
     day, tsurf, tair_gpu, prec_gpu, 
     total_et, surface_runoff, total_runoff,
-    soil_evaporation, soil_moisture_new,
+    soil_evaporation, soil_moisture,
     potential_evaporation, net_radiation, transpiration, canopy_evaporation,
     coverage_gpu, cv_gpu, fillvalue_threshold
 )
@@ -312,7 +312,7 @@ function preprocess_daily_outputs(
         
         # Direct 3D (Layers)
         soil_evaporation  = soil_evaporation,
-        soil_moisture_new = soil_moisture_new,
+        soil_moisture = soil_moisture,
 
         # Calculated Sums (2D results from 3D inputs)
         pe_summed = pe_summed,

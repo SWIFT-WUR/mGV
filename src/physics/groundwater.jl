@@ -182,21 +182,18 @@ function calculate_infiltration!(infiltration, throughfall, surface_runoff)
 end
 
 function solve_runoff_and_drainage!(
-    soil_moisture_new,   # (ny,nx,nlayer) [Mutated Output]
+    soil_moisture,   # (ny,nx,nlayer) [Mutated Output]
     subsurface_runoff,   # (ny,nx)        [Mutated Output]
     interlayer_drainage, # (ny,nx,2)      [Mutated Output]
     surface_inflow,      # (ny,nx)
     soil_evaporation,    # (ny,nx)
     transpiration,       # (ny,nx,nlayer, ...) OR (ny,nx,1, ...)
-    soil_moisture_old,   # (ny,nx,nlayer)
     soil_moisture_max,   
     ksat,           
     residual_moisture,
     expt,           
     Dsmax, Ds, Ws, c_expt
 )
-    # 1. Initialize New State
-    copyto!(soil_moisture_new, soil_moisture_old)
 
     # Constants
     zero_val = 0.0f0
@@ -219,7 +216,7 @@ function solve_runoff_and_drainage!(
     # LAYER 1: Inflow + ET + Drainage to Layer 2
     # ========================================================================
     
-    sm_L1    = @view(soil_moisture_new[:, :, 1])
+    sm_L1    = @view(soil_moisture[:, :, 1])
     resid_L1 = @view(residual_moisture[:, :, 1])
     max_L1   = @view(soil_moisture_max[:, :, 1])
     drain_L1 = @view(interlayer_drainage[:, :, 1]) 
@@ -247,7 +244,7 @@ function solve_runoff_and_drainage!(
     # LAYER 2: Inflow from L1 + ET + Drainage to Layer 3
     # ========================================================================
     
-    sm_L2    = @view(soil_moisture_new[:, :, 2])
+    sm_L2    = @view(soil_moisture[:, :, 2])
     resid_L2 = @view(residual_moisture[:, :, 2])
     max_L2   = @view(soil_moisture_max[:, :, 2])
     drain_L2 = @view(interlayer_drainage[:, :, 2]) 
@@ -275,7 +272,7 @@ function solve_runoff_and_drainage!(
     # LAYER 3: Inflow from L2 + ET + Baseflow
     # ========================================================================
     
-    sm_L3    = @view(soil_moisture_new[:, :, 3])
+    sm_L3    = @view(soil_moisture[:, :, 3])
     resid_L3 = @view(residual_moisture[:, :, 3])
     max_L3   = @view(soil_moisture_max[:, :, 3])
 
