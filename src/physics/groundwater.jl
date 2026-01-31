@@ -142,16 +142,15 @@ end
 #end
 
 function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
-    T = eltype(W)
-    EPS = T(1e-9)
-    frac = clamp.((W .- Wres) ./ max.(Wmax .- Wres, EPS), T(0), T(1))
+    EPS = 1f-9
+    frac = clamp.((W .- Wres) ./ max.(Wmax .- Wres, EPS), 0f0, 1f0)
     Ws_eff = Ws  # Ws is fraction of effective capacity, but VIC uses it directly on effective frac
 
     bf = ifelse.(frac .<= Ws_eff,
         Dsmax .* (Ds ./ Ws_eff) .* frac,  # Linear: add / Ws for correct slope
-        Dsmax .* Ds + Dsmax .* (T(1) .- Ds) .* ((frac .- Ws_eff) ./ (T(1) .- Ws_eff)) .^ cexp  # Nonlinear: remove * Ws, as it's Dsmax * Ds start point
+        Dsmax .* Ds + Dsmax .* (1f0 .- Ds) .* ((frac .- Ws_eff) ./ (1f0 .- Ws_eff)) .^ cexp  # Nonlinear: remove * Ws, as it's Dsmax * Ds start point
     )
-    return max.(bf, T(0))
+    return max.(bf, 0f0)
 end
 
 

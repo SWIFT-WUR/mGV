@@ -36,38 +36,44 @@ function compute_aerodynamic_resistance!(
     ra, 
     z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
 )
-    T = eltype(ra)
+    # --- 1. Hard Validation (Debugging/Safety) ---
+    # This costs zero time if types are correct but saves you from Float64 lag.
+    @assert eltype(ra)       == Float32 "Output 'ra' must be Float32"
+    @assert eltype(tsurf)    == Float32 "Input 'tsurf' must be Float32"
+    @assert K                isa Float32 "Constant 'K' in SimConstants must be Float32 (use f0)"
+    @assert g                isa Float32 "Constant 'g' in SimConstants must be Float32 (use f0)"
 
-    # --- Constants (Float32) ---
-    # We pass these into the kernel to ensure type stability
-    Kt      = T(K)
-    gt      = T(g)
-    Tf      = T(t_freeze)
-    Ric     = T(Ri_cr)
-    z_floor = T(1e-3)
-    d_floor = T(1e-2)
-    w_floor = T(0.1)
-    L2_min  = T(log(1.01)^2)
-    ra_min  = T(1.0)
-    ra_max  = T(1e5)
-    z2T     = T(z2)
+    # --- 2. Local Constants (Using f0 Literals) ---
+    # Defining these with f0 ensures no promotion occurs in the broadcast.
+    z_floor = 1f-3
+    d_floor = 1f-2
+    w_floor = 0.1f0
+    ra_min  = 1.0f0
+    ra_max  = 1f5
     
+    # Pre-calculate log expression as Float32
+    L2_min  = Float32(log(1.01)^2)
+    
+    # Cast scalar z2 once if it isn't already
+    z2T = Float32(z2)
+
+    # --- 3. Grid Dimensions ---
     N_all   = size(ra, 4)
     veg_dim = max(N_all - 1, 0)
 
     # ========================================================================
     # 1. SOIL TILES (Last Index)
     # ========================================================================
-    # We broadcast the kernel. 
-    # Note: tsurf, tair_gpu, wind_gpu are 2D. ra is 4D slice. 
-    # Julia broadcasts (36,36) -> (36,36,1) automatically.
+    # We pass the global constants (K, g, t_freeze, Ri_cr) directly.
+    # Since they are asserted as Float32 above, no promotion will happen.
     @views @. ra[:, :, :, N_all:N_all] = aerodynamic_kernel(
-        T(z0soil_gpu),          # z0 input (Soil specific)
-        d0_gpu[:,:,:,N_all:N_all], # d0 input
-        tsurf,                  # tsurf (2D)
-        tair_gpu,               # tair (2D)
-        wind_gpu,               # wind (2D)
-        z2T, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
+        z0soil_gpu,                # Already CuArray{Float32}
+        d0_gpu[:,:,:,N_all:N_all], 
+        tsurf,                     
+        tair_gpu,                  
+        wind_gpu,                  
+        z2T, K, g, t_freeze, Ri_cr, 
+        z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
     )
 
     # ========================================================================
@@ -75,12 +81,13 @@ function compute_aerodynamic_resistance!(
     # ========================================================================
     if veg_dim > 0
         @views @. ra[:, :, :, 1:veg_dim] = aerodynamic_kernel(
-            z0_gpu[:,:,:,1:veg_dim],   # z0 input (Veg specific)
-            d0_gpu[:,:,:,1:veg_dim],   # d0 input
+            z0_gpu[:,:,:,1:veg_dim],   
+            d0_gpu[:,:,:,1:veg_dim],   
             tsurf,
             tair_gpu,
             wind_gpu,
-            z2T, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
+            z2T, K, g, t_freeze, Ri_cr, 
+            z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
         )
     end
 
@@ -187,17 +194,17 @@ function calculate_potential_evaporation!(
     @views @. pe[:, :, :, veg_indices] = max(
         (slope * (net_radiation[:, :, :, veg_indices] * day_sec) + 
          (air_dens_term / aerodynamic_resistance[:, :, :, veg_indices])) / 
-        (latent_heat * (slope + gamma_ * (T(1) + 
+        (latent_heat * (slope + gamma_ * (1f0 + 
          ((rmin_gpu[:, :, :, veg_indices] / max(LAI_gpu[:, :, :, veg_indices], EPS)) + 
           rarc_gpu[:, :, :, veg_indices]) / aerodynamic_resistance[:, :, :, veg_indices]))),
-        T(0)
+        0f0
     )
 
     # --- Bare Soil Tile (Index 14) ---
     @views @. pe[:, :, :, nveg] = max(
         (slope * (net_radiation[:, :, :, nveg] * day_sec) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
-        (latent_heat * (slope + gamma_ * (T(1) + SOIL_RC / aerodynamic_resistance[:, :, :, nveg]))),
-        T(0)
+        (latent_heat * (slope + gamma_ * (1f0 + SOIL_RC / aerodynamic_resistance[:, :, :, nveg]))),
+        0f0
     )
 
     return nothing
@@ -290,92 +297,80 @@ function calculate_canopy_evaporation!(
 end
 
 
-function calculate_transpiration(
-    potential_evaporation::CuArray, aerodynamic_resistance::CuArray, rarc_gpu::CuArray,
-    water_storage::CuArray, max_water_storage::CuArray, soil_moisture_old::CuArray,
-    soil_moisture_critical::CuArray, wilting_point::CuArray, root_gpu::CuArray,
-    rmin_gpu::CuArray, LAI_gpu::CuArray, cv_gpu, f_n
+function calculate_transpiration!(
+    # --- OUTPUTS (Mutated in-place) ---
+    transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, 
+    g1, g2, g_sw_veg, dry_time_factor,
+    # --- INPUTS ---
+    potential_evaporation, aerodynamic_resistance, rarc_gpu,
+    water_storage, max_water_storage, soil_moisture_old,
+    soil_moisture_critical, wilting_point, root_gpu,
+    rmin_gpu, LAI_gpu, cv_gpu, f_n
 )
-    # -------- One dtype everywhere --------
-    T   = eltype(potential_evaporation)
-    F0  = T(0); F1 = T(1); EPS = T(1e-9)
+    # Constants
+    EPS = 1f-9
+    ny, nx = size(potential_evaporation, 1), size(potential_evaporation, 2)
+    veg_dim = size(root_gpu, 4)
+    nveg    = size(cv_gpu, 4)
 
-    # Cast only the arrays used below that may be Float64
-    Wcr_T  = T.(soil_moisture_critical)      # (ny,nx,layer)
-    Wwp_T  = T.(wilting_point)               # (ny,nx,layer)
-    Wmax_T = T.(max_water_storage)           # (ny,nx,1,nveg)
-    W_T    = T.(water_storage)               # (ny,nx,1,nveg)
-    cv_T   = T.(cv_gpu)                      # (ny,nx,1,nveg)
-    PE_T   = T.(potential_evaporation)       # (ny,nx,1,nveg)
+    # 1. Stress Factors (In-place)
+    # Using original names directly since they are confirmed Float32
+    @views begin
+        W1 = soil_moisture_old[:, :, 1]
+        W2 = soil_moisture_old[:, :, 2]
+        Wcr1 = soil_moisture_critical[:, :, 1]
+        Wcr2 = soil_moisture_critical[:, :, 2]
+        Wwp1 = wilting_point[:, :, 1]
+        Wwp2 = wilting_point[:, :, 2]
+    end
 
-    # -------- soil-moisture stress per layer (assume L=2) --------
-    W1   = @view soil_moisture_old[:, :, 1]
-    W2   = @view soil_moisture_old[:, :, 2]
-    Wcr1 = @view Wcr_T[:, :, 1]
-    Wcr2 = @view Wcr_T[:, :, 2]
-    Wwp1 = @view Wwp_T[:, :, 1]
-    Wwp2 = @view Wwp_T[:, :, 2]
+    @. g1 = clamp((W1 - Wwp1) / (Wcr1 - Wwp1 + EPS), 0f0, 1f0)
+    @. g2 = clamp((W2 - Wwp2) / (Wcr2 - Wwp2 + EPS), 0f0, 1f0)
 
-    g1 = clamp.((W1 .- Wwp1) ./ (Wcr1 .- Wwp1 .+ EPS), F0, F1)
-    g2 = clamp.((W2 .- Wwp2) ./ (Wcr2 .- Wwp2 .+ EPS), F0, F1)
-
-    ny, nx = size(g1)
-    veg_dim = size(root_gpu, 4)   # vegetation tiles (exclude bare)
-    nveg    = size(cv_T, 4)       # vegetation + bare
-
-    f1  = reshape(@view(root_gpu[:, :, 1, :]), ny, nx, 1, veg_dim)
-    f2  = reshape(@view(root_gpu[:, :, 2, :]), ny, nx, 1, veg_dim)
+    # 2. Vegetation Conductance
+    @views begin
+        f1 = reshape(root_gpu[:, :, 1, :], ny, nx, 1, veg_dim)
+        f2 = reshape(root_gpu[:, :, 2, :], ny, nx, 1, veg_dim)
+    end
+    # Reshaping views for broadcasting
     g1b = reshape(g1, ny, nx, 1, 1)
     g2b = reshape(g2, ny, nx, 1, 1)
 
-#    sumf     = sum(root_gpu, dims=3)                          # (ny,nx,1,veg_dim)
-#    g_sw_veg = clamp.((f1 .* g1b .+ f2 .* g2b) ./ (sumf .+ EPS), F0, F1)
+    @. g_sw_veg = clamp((f1 * g1b) / (f1 + EPS), 0f0, 1f0)
 
-    g_sw_veg = clamp.((f1 .* g1b ) ./ (f1 .+ EPS), F0, F1)
+    # 3. Canopy Wetness and Dry Time Factor
+    # Fused broadcast: no intermediate allocations
+    @. dry_time_factor = clamp(1f0 - f_n * (clamp((water_storage / max(cv_gpu, EPS)) / max(max_water_storage, EPS), 0f0, 1f0) ^ (2f0/3f0)), 0f0, 1f0)
+    dry_time_factor[:, :, :, end:end] .= 1f0
 
+    # 4. Transpiration (Vegetation Tiles)
+    # Define views of pre-allocated output arrays
+    trans_veg_slice = @view transpiration_full[:, :, :, 1:veg_dim]
+    e1_veg_slice    = @view E_1_t_full[:, :, :, 1:veg_dim]
+    e2_veg_slice    = @view E_2_t_full[:, :, :, 1:veg_dim]
 
-    # -------- canopy wetness (per canopy) --------
-    cv_safe = max.(cv_T, EPS)
-    W_can   = W_T ./ cv_safe                                   # canopy-area basis
-    Wratio  = clamp.(W_can ./ max.(Wmax_T, EPS), F0, F1)
-    wetFrac = Wratio .^ (T(2)/T(3))
-    dry_time_factor = clamp.(F1 .- T.(f_n) .* wetFrac, F0, F1)
-    dry_time_factor[:, :, :, end:end] .= F1                             # bare soil unaffected
+    @. trans_veg_slice = clamp(cv_gpu[:, :, :, 1:veg_dim] * dry_time_factor[:, :, :, 1:veg_dim] * potential_evaporation[:, :, :, 1:veg_dim] * g_sw_veg, 0f0, Inf32)
 
-    # -------- transpiration for vegetation tiles only --------
-    transpiration_veg =
-    cv_T[:, :, :, 1:veg_dim] .*
-    dry_time_factor[:, :, :, 1:veg_dim] .*
-    PE_T[:, :, :, 1:veg_dim] .*
-    g_sw_veg
+    # 5. Layer Weighting & Assembly
+    # Fusing the layer split math
+    @. e1_veg_slice = trans_veg_slice * (f1 * g1b) / (f1 * g1b + f2 * g2b + EPS)
+    @. e2_veg_slice = trans_veg_slice * (f2 * g2b) / (f1 * g1b + f2 * g2b + EPS)
 
-    transpiration_veg = clamp.(transpiration_veg, F0, T(Inf))
+    # 6. Ensure Bare Soil (last tile) is zeroed if it exists
+    if nveg > veg_dim
+        transpiration_full[:, :, :, end:end] .= 0f0
+        E_1_t_full[:, :, :, end:end]         .= 0f0
+        E_2_t_full[:, :, :, end:end]         .= 0f0
+    end
 
-    # split to layers (weights)
-    denom_veg = f1 .* g1b .+ f2 .* g2b .+ EPS
-    E_1_t_veg = transpiration_veg .* (f1 .* g1b) ./ denom_veg
-    E_2_t_veg = transpiration_veg .* (f2 .* g2b) ./ denom_veg
+    # 7. Update 3D Transpiration Layers Array (In-place copy)
+    @views begin
+        transpiration_layers[:, :, 1, :] .= E_1_t_full[:, :, 1, :]
+        transpiration_layers[:, :, 2, :] .= E_2_t_full[:, :, 1, :]
+        transpiration_layers[:, :, 3, :] .= 0f0 
+    end
 
-    # GPU-safe NaN guards
-    E_1_t_veg = ifelse.(isnan.(E_1_t_veg), F0, E_1_t_veg)
-    E_2_t_veg = ifelse.(isnan.(E_2_t_veg), F0, E_2_t_veg)
-
-    # -------- assemble full-tile arrays with bare slice = 0 --------
-    transpiration_full = CUDA.zeros(T, ny, nx, 1, nveg)
-    E_1_t_full         = CUDA.zeros(T, ny, nx, 1, nveg)
-    E_2_t_full         = CUDA.zeros(T, ny, nx, 1, nveg)
-
-    transpiration_full[:, :, :, 1:veg_dim] .= transpiration_veg
-    E_1_t_full[:, :, :, 1:veg_dim]        .= E_1_t_veg
-    E_2_t_full[:, :, :, 1:veg_dim]        .= E_2_t_veg
-
-    # -------- ADDED: Create transpiration_layers array (e1t, e2t, 0) --------
-    # This array will have dimensions (ny, nx, 3, nveg)
-    E_0_t_full = CUDA.zeros(T, ny, nx, 1, nveg) # Create zero layer
-    transpiration_layers = cat(E_1_t_full, E_2_t_full, E_0_t_full; dims=3)
-
-
-    return transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, g1, g2, g_sw_veg, dry_time_factor
+    return nothing
 end
 
 function calculate_soil_evaporation!(

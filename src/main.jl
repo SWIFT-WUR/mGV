@@ -1,5 +1,8 @@
 using .SimConstants
 
+CUDA.allowscalar(false)
+#CUDA.math_mode!(CUDA.FAST_MATH)
+
 const to = TimerOutputs.TimerOutput()
 
 # ============================================================================
@@ -85,6 +88,31 @@ const residual_moisture = CUDA.zeros(float_type, soil_dims...)
 
 const ice_frac = CUDA.zeros(float_type, size(soil_moisture))
 const organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture))
+
+# --- Pre allocation for transpiration ---
+    # transpiration_full: (ny, nx, 1, nveg)
+    const transpiration = CUDA.zeros(float_type, size(coverage_gpu)) 
+    
+    # transpiration_layers: (ny, nx, 3, nveg)
+    const transpiration_layers = CUDA.zeros(float_type, size(coverage_gpu,1), size(coverage_gpu,2), 3, size(coverage_gpu,4))
+    
+    # Layer splits: (ny, nx, 1, nveg)
+    const E_1_t = CUDA.zeros(float_type, size(coverage_gpu))
+    const E_2_t = CUDA.zeros(float_type, size(coverage_gpu))
+    
+    # Intermediate buffers for stress and conductance
+    # g1, g2: (ny, nx)
+    const g1_buf = CUDA.zeros(float_type, size(Tavg_gpu))
+    const g2_buf = CUDA.zeros(float_type, size(Tavg_gpu))
+    
+    # g_sw_veg: (ny, nx, 1, nveg-1) -> only for veg tiles
+    veg_dim = size(root_gpu, 4) 
+    const g_sw_veg_buf = CUDA.zeros(float_type, size(coverage_gpu,1), size(coverage_gpu,2), 1, veg_dim)
+    
+    # dry_time_factor: (ny, nx, 1, nveg)
+    const dry_time_factor = CUDA.zeros(float_type, size(coverage_gpu))
+# ---
+
 end
 
 # ============================================================================
@@ -268,13 +296,16 @@ function process_year(year)
                 # Transpiration
                 # ============================================================
                 @timeit to "calculate_transpiration" begin
-                    transpiration, transpiration_layers, E_1_t, E_2_t, g_sw_1, g_sw_2, g_sw, dry_time_factor = 
-                        calculate_transpiration(
-                            potential_evaporation, aerodynamic_resistance, rarc_gpu, 
-                            water_storage, max_water_storage, soil_moisture, 
-                            soil_moisture_critical, wilting_point, root_gpu, 
-                            rmin_gpu, LAI_gpu, cv_gpu, f_n
-                        )
+                    calculate_transpiration!(
+                        # --- OUTPUTS (Mutated in-place) ---
+                        transpiration, transpiration_layers, E_1_t, E_2_t, 
+                        g1_buf, g2_buf, g_sw_veg_buf, dry_time_factor,
+                        # Inputs
+                        potential_evaporation, aerodynamic_resistance, rarc_gpu,
+                        water_storage, max_water_storage, soil_moisture, 
+                        soil_moisture_critical, wilting_point, root_gpu,
+                        rmin_gpu, LAI_gpu, cv_gpu, f_n
+                    )
                 end
 
                 # ============================================================
