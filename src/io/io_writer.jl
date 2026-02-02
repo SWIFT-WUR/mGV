@@ -13,6 +13,8 @@ struct TransferBuffer
     total_et::Matrix{Float32}
     surface_runoff::Matrix{Float32}
     total_runoff::Matrix{Float32}
+    discharge::Matrix{Float32}
+    travel_time::Matrix{Float32}
     pe_summed::Matrix{Float32}
     nr_summed::Matrix{Float32}
     tr_summed::Matrix{Float32}
@@ -35,6 +37,8 @@ function create_transfer_buffer(nx, ny, nlayers)
         make_pinned(nx, ny),       # total_et
         make_pinned(nx, ny),       # surface_runoff
         make_pinned(nx, ny),       # total_runoff
+        make_pinned(nx, ny),       # discharge 
+        make_pinned(nx, ny),       # travel_time
         make_pinned(nx, ny),       # pe_summed
         make_pinned(nx, ny),       # nr_summed
         make_pinned(nx, ny),       # tr_summed
@@ -56,6 +60,8 @@ struct ZarrOutputStore{A3, A4}
     total_et::A3
     surface_runoff::A3
     total_runoff::A3
+    discharge::A3
+    travel_time::A3
     pe_summed::A3
     nr_summed::A3
     tr_summed::A3
@@ -76,6 +82,8 @@ struct NetCDFOutputStore
     total_et::Any
     surface_runoff::Any
     total_runoff::Any
+    discharge::Any
+    travel_time::Any
     pe_summed::Any
     nr_summed::Any
     tr_summed::Any
@@ -117,6 +125,22 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
     z_lon[:] = lon_cpu
 
+    # --- ADD STATIC ACCUMULATION VARIABLE ---
+    chunk_2d_static = (nx, ny)
+    path = joinpath(output_path, "accumulation_area")
+    
+    # Note: 'compressor' is defined earlier in this function (line 119), so it is safe to use here.
+    acc_arr = zcreate(Float32, nx, ny; path=path, chunks=chunk_2d_static, compressor=compressor)
+    acc_arr.attrs["_ARRAY_DIMENSIONS"] = ["lon", "lat"]
+    acc_arr.attrs["long_name"] = "Upstream Drainage Area"
+    
+    if isdefined(Main, :routing_state)
+        acc_gpu_flat = Main.routing_state.accumulation_gpu
+        acc_2d = Array(reshape(acc_gpu_flat, nx, ny))
+        acc_arr[:, :] = acc_2d
+    end
+
+
     store = ZarrOutputStore(
         make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
@@ -124,6 +148,8 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
         make_zarr("total_et_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("discharge_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
+        make_zarr("travel_time_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"s", "long_name"=>"River Travel Time")),
         make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
@@ -160,6 +186,20 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     lat = defVar(out_ds, "lat", Float32, ("lat",)); lat[:] = lat_cpu; lat.attrib["axis"] = "Y"
     lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
 
+    acc_var = defVar(out_ds, "accumulation_area", Float32, ("lon", "lat"); 
+                     chunksizes=(nx, ny), deflatelevel=1)
+    acc_var.attrib["long_name"] = "Upstream Drainage Area"
+    acc_var.attrib["units"] = "m2"
+    
+    # Check if routing state exists in global scope and write data
+    if isdefined(Main, :routing_state)
+        acc_gpu_flat = Main.routing_state.accumulation_gpu
+        acc_2d = Array(reshape(acc_gpu_flat, nx, ny))
+        acc_var[:, :] = acc_2d
+    else
+        println("⚠️ Warning: routing_state not found. Accumulation map output skipped.")
+    end
+
     # Store
     store = NetCDFOutputStore(
         out_ds,
@@ -169,6 +209,8 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
         def_fast_var("total_et_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("surface_runoff_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("total_runoff_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("discharge_output", ("lon", "lat", "time"); chunks=chunk_2d), 
+        def_fast_var("travel_time_output", ("lon", "lat", "time"); chunks=chunk_2d), 
         def_fast_var("potential_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("net_radiation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("transpiration_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
@@ -205,7 +247,9 @@ function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
     dma!(buf.total_et,       processed_data.total_et)
     dma!(buf.surface_runoff, processed_data.surface_runoff)
     dma!(buf.total_runoff,   processed_data.total_runoff)
-    
+    dma!(buf.discharge,      processed_data.discharge)
+    dma!(buf.travel_time,    processed_data.travel_time)
+
     dma!(buf.pe_summed,      processed_data.pe_summed)
     dma!(buf.nr_summed,      processed_data.nr_summed)
     dma!(buf.tr_summed,      processed_data.tr_summed)
@@ -227,6 +271,8 @@ function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::ZarrOut
         Threads.@spawn store.total_et[:, :, day]       = buf.total_et
         Threads.@spawn store.surface_runoff[:, :, day] = buf.surface_runoff
         Threads.@spawn store.total_runoff[:, :, day]   = buf.total_runoff
+        Threads.@spawn store.discharge[:, :, day]      = buf.discharge
+        Threads.@spawn store.travel_time[:, :, day]    = buf.travel_time
         Threads.@spawn store.pe_summed[:, :, day]      = buf.pe_summed
         Threads.@spawn store.nr_summed[:, :, day]      = buf.nr_summed
         Threads.@spawn store.tr_summed[:, :, day]      = buf.tr_summed
@@ -246,6 +292,8 @@ function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::NetCDFO
     store.total_et[:, :, day]       = buf.total_et
     store.surface_runoff[:, :, day] = buf.surface_runoff
     store.total_runoff[:, :, day]   = buf.total_runoff
+    store.discharge[:, :, day]      = buf.discharge
+    store.travel_time[:, :, day] = buf.travel_time
     store.pe_summed[:, :, day]      = buf.pe_summed
     store.nr_summed[:, :, day]      = buf.nr_summed
     store.tr_summed[:, :, day]      = buf.tr_summed
@@ -300,6 +348,12 @@ function preprocess_daily_outputs(
     ce_gc        = convcv(ce_processed) .* ce_processed .* coverage_gpu
     ce_summed    = sum_with_nan_handling(ce_gc, 4)
 
+    # 5. Discharge (Routing)
+    # Map 1D discharge state back to 2D Grid for IO.
+    # Note: 'routing_state' is accessed from global scope here.
+    discharge_2d = reshape(routing_state.discharge_gpu, size(total_runoff))
+    travel_time_2d = reshape(routing_state.travel_time_gpu, size(total_runoff)) 
+
     # --- PACKAGING ---
     return (
         # Direct 2D
@@ -309,7 +363,9 @@ function preprocess_daily_outputs(
         total_et       = total_et,
         surface_runoff = surface_runoff,
         total_runoff   = total_runoff,
-        
+        discharge      = discharge_2d,
+        travel_time    = travel_time_2d,
+
         # Direct 3D (Layers)
         soil_evaporation  = soil_evaporation,
         soil_moisture = soil_moisture,

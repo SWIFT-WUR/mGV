@@ -24,6 +24,10 @@ include("src/physics/groundwater.jl")
 include("src/physics/runoff.jl")
 include("src/physics/temperature.jl")
 
+# Routing routine
+include("src/routing/routing.jl")
+include("src/routing/init_routing.jl")
+
 # Load user-modifiable configuration
 include("config/user_config.jl")
 

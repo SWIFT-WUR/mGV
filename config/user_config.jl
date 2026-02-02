@@ -18,6 +18,8 @@ if CASE == "global"
         
     # Input file paths/names
     input_param_file       = "./input_data/global/vic_global_5min_params_fix2.nc"
+    routing_param_file = "./params/VIC_rout_params_ISIMIP3b.nc"
+
     input_prec_prefix      = "./input_data/global/5arcmin/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"
     input_tair_prefix      = "./input_data/global/5arcmin/forcing/tair/tair_WFDE5_v2.0_5arcmin_"
     input_wind_prefix      = "./input_data/global/5arcmin/forcing/wind/wind_WFDE5_v2.0_5arcmin_"
@@ -97,6 +99,8 @@ elseif CASE == "indus"
    
     # Input file paths/names
     input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
+    routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus.nc"
+
     input_prec_prefix      = "./input_data/indus/forcing/pr_daily_GFDL-ESM4adj_historical/pr_daily_GFDL-ESM4adj_historical_"
     input_tair_prefix      = "./input_data/indus/forcing/tas_daily_GFDL-ESM4adj_historical/tas_daily_GFDL-ESM4adj_historical_"
     input_wind_prefix      = "./input_data/indus/forcing/wind10_daily_GFDL-ESM4_historical/wind10_daily_GFDL-ESM4_historical_"

@@ -25,6 +25,10 @@ end
     depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil
 )...)
 
+@timeit to "init_routing" begin
+    const routing_state = initialize_routing_model(routing_param_file)
+end
+
 @timeit to "reshaping_inputs" begin
     reshape_static_inputs!()
 end
@@ -373,6 +377,14 @@ function process_year(year)
                         subsurface_runoff,  
                         fillvalue_threshold
                     )
+                end
+
+                @timeit to "run_routing" begin
+                run_routing_step!(
+                    routing_state,
+                    total_runoff,    # 2D Runoff from Physics [mm/day]
+                    day_sec        # Timestep [s]
+                )
                 end
 
                 # ============================================================
