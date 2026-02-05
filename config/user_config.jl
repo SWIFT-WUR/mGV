@@ -3,7 +3,6 @@ check_and_set_gpu_usage()
 
 # Choose Float64 or Float32 for operations and output
 global float_type = Float32
-
 lat_var = "lat"
 lon_var = "lon"
 

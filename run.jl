@@ -9,7 +9,7 @@ include("src/constants/physical_constants.jl")
 include("src/utils/runtime_utils.jl")
 include("src/utils/diagnostics.jl")
 
-# I/O Helpers
+# I/O helpers
 include("src/io/io_helpers.jl")
 include("src/io/io_writer.jl")
 include("src/io/parameter_reader.jl")
@@ -17,14 +17,14 @@ include("src/io/parameter_reader.jl")
 # Initialization routines
 include("src/init/init_calc.jl")
 
-# Physics Modules
+# Physics modules
 include("src/physics/physics.jl")
 include("src/physics/evapotranspiration.jl")
 include("src/physics/groundwater.jl")
 include("src/physics/runoff.jl")
 include("src/physics/temperature.jl")
 
-# Routing routine
+# Routing module
 include("src/routing/routing.jl")
 include("src/routing/init_routing.jl")
 
