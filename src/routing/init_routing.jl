@@ -96,14 +96,10 @@ function initialize_routing_model(param_file)
         CuArray(flat_acc),             # Store Accumulation
         CUDA.zeros(Float32, n_total),  # area_gpu
         CUDA.zeros(Float32, n_total),  # discharge_gpu
-        CUDA.zeros(Float32, n_total),  # travel_time_gpu       
-        CUDA.zeros(Float32, n_total),  # cfl_gpu               
-        CUDA.zeros(Float32, n_total),  # river_temperature     
-        CUDA.zeros(Float32, n_total),  # energy_inflow_current 
-        CUDA.zeros(Float32, n_total),  # energy_inflow_next    
+        CUDA.zeros(Float32, n_total),  # travel_time_gpu
+        CUDA.zeros(Float32, n_total),  # cfl_gp
         CUDA.zeros(Float32, n_total),  # inflow_current
         CUDA.zeros(Float32, n_total)   # inflow_next
-
     )
     
     println("  -> Routing Initialized Successfully.")
