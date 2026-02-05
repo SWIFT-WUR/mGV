@@ -1,8 +1,8 @@
 CASE, start_year_arg, end_year_arg = parse_case_args()
-check_and_set_gpu_usage()
 
-# Choose Float64 or Float32 for operations and output
+# Choose Float64, Float32 or other for operations and output
 global float_type = Float32
+
 lat_var = "lat"
 lon_var = "lon"
 
@@ -178,6 +178,8 @@ elseif CASE == "mekong"
    
     # Input file paths/names
     input_param_file       = "./input_data/mekong/vic_mekong_5min_params.nc"
+    routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
+
     input_prec_prefix      = "./input_data/mekong/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"
     input_tair_prefix      = "./input_data/mekong/forcing/tair/tair_WFDE5_v2.0_5arcmin_"
     input_wind_prefix      = "./input_data/mekong/forcing/wind/wind_WFDE5_v2.0_5arcmin_"

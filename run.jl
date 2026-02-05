@@ -1,13 +1,19 @@
 # Load package definitions
 include("src/packages.jl")
 
+# Utilities
+include("src/utils/runtime_utils.jl")
+include("src/utils/diagnostics.jl") 
+
+# Load user-modifiable configuration
+include("config/user_config.jl")
+
+# Setup backend; device (GPU/CPU) type and float type
+include("src/backend_setup.jl")
+
 # Constants
 include("src/constants/sim_constants.jl")
 include("src/constants/physical_constants.jl")
-
-# Utilities
-include("src/utils/runtime_utils.jl")
-include("src/utils/diagnostics.jl")
 
 # I/O helpers
 include("src/io/io_helpers.jl")
@@ -28,8 +34,6 @@ include("src/physics/temperature.jl")
 include("src/routing/routing.jl")
 include("src/routing/init_routing.jl")
 
-# Load user-modifiable configuration
-include("config/user_config.jl")
 
 # Main program entry point
 include("src/main.jl")

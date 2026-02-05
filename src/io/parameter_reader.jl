@@ -1,63 +1,46 @@
 function read_and_allocate_parameter(varname::String)
     println("Loading $varname parameter input...")
 
-    # 1) Open netCDF file, read variable into a CPU array and copy array into preload
-    dataset       = NetCDF.open(input_param_file)
-    # cpu_arr access removed as it wasn't used/needed if we read immediately below
-    var_dims      = size(dataset[varname]) 
-
-    # Handle slicing based on dimensionality
-    cpu_preload = if length(var_dims) == 1
-        dataset[varname][:]
-    elseif length(var_dims) == 2
-        dataset[varname][:, :]
-    elseif length(var_dims) == 3
-        dataset[varname][:, :, :]
-    elseif length(var_dims) == 4
-        dataset[varname][:, :, :, :]
-    else
-        error("Unsupported variable dimensionality: ", length(var_dims))
-    end
+    # 1) Open netCDF file 
+    dataset  = NetCDF.open(input_param_file)
+    var_dims = size(dataset[varname]) 
     
-    # Print info
+    # 2) Read (landuse) parameter into CPU memory (RAM) for 1D/2D/3D/4D arrays
+    slicing_indices = repeat([:], length(var_dims))
+    cpu_preload     = dataset[varname][slicing_indices...]
+
+    # 3) Print array sizes for diagnostics
     if length(var_dims) <= 4
         println("Element type for $(length(var_dims))D: ", eltype(cpu_preload))
     end
     println("Full size of $varname: ", size(cpu_preload))
 
-    # 2) Conditionally allocate a GPU array AND PIN CPU MEMORY
-    if GPU_USE
-        # --- PINNING OPTIMIZATION ---
-        # "Pin" the CPU memory. This prevents the OS from swapping it out 
-        # and enables high-speed DMA transfers to the GPU.
-        try
-            CUDA.Mem.pin(cpu_preload)
-            println("  -> CPU memory pinned successfully.")
-        catch e
-            println("  -> WARNING: Failed to pin CPU memory. Transfer will be slower. Error: $e")
-        end
-        # ----------------------------
-
-        # Adjust dimensions for the GPU array
-        adjusted_dims = if length(var_dims) == 4
-            (var_dims[1], var_dims[2], (var_dims[3] == 12 ? 1 : var_dims[3]), var_dims[4])
-        else
-            var_dims
-        end
-
-        gpu_arr = CUDA.zeros(float_type, adjusted_dims...)
-        println("Allocated GPU array of size: ", size(gpu_arr))
-        return cpu_preload, gpu_arr
-    else
-        return cpu_preload, nothing
+    # 4) Optimizations for data transfer
+    # Locks memory pages if using NVIDIA/AMD; does nothing on CPU/Metal.
+    try
+        pin_memory!(cpu_preload)
+    catch e
+        println("  -> WARNING: Failed to pin CPU memory. Transfer will be slower. Error: $e")
     end
+
+    # 5) Allocate device memory
+    # Handle 4D reshaping logic to only pre-allocate memory daily for monthly (vegetation) tiles 
+    adjusted_dims = if length(var_dims) == 4
+        (var_dims[1], var_dims[2], (var_dims[3] == 12 ? 1 : var_dims[3]), var_dims[4])
+    else
+        var_dims
+    end
+
+    # 6) Pre-allocating memory on the active device (VRAM/RAM)
+    device_arr = KernelAbstractions.zeros(device_backend, FloatType, adjusted_dims...)
+    println("Allocated $backend_name array of size: ", size(device_arr))
+    
+    return cpu_preload, device_arr
 end
 
-# This macro automates the creation of the CPU and GPU variables
+# Macro to make the creation of the CPU and GPU variables easier and more compact
 macro load_params(vars...)
     quote
-        # The `esc(...)` is what allows the macro to create variables
-        # in the scope where you call it.
         $(map(vars) do var
             cpu_name = Symbol(String(var), "_cpu")
             gpu_name = Symbol(String(var), "_gpu")
@@ -69,22 +52,11 @@ macro load_params(vars...)
     end
 end
 
-
-"""
-    @vars(names...)
-
-Takes a list of base variable names and expands them into two lists:
-one with a `_cpu` suffix and one with a `_gpu` suffix.
-Returns a tuple containing the two lists.
-"""
 macro vars(names...)
-    # Create a list of symbols with the `_cpu` suffix
+    # Create list of symbols with the "_cpu" and "_gpu" suffixes
     cpu_vars = [Symbol(String(name), "_cpu") for name in names]
-    # Create a list of symbols with the `_gpu` suffix
     gpu_vars = [Symbol(String(name), "_gpu") for name in names]
     
-    # The `esc()` is crucial for the macro to access the variables
-    # from the scope where it is called.
     # We construct two array expressions, e.g., `[var1_cpu, var2_cpu]`
     # and `[var1_gpu, var2_gpu]`.
     quote
@@ -92,45 +64,34 @@ macro vars(names...)
     end
 end
 
-
 function read_and_allocate_forcing(prefix::String, year::Int, varname::String)
     println("Loading $varname forcing input...")
 
-    # 1) Open netCDF file, read variable into a CPU array
+    # 1) Open netCDF file, read yearly forcing variable into CPU memory (RAM)
     file_path     = "$(prefix)$(year).nc"
     dataset       = NetCDF.open(file_path)
+    cpu_preload   = dataset[varname][:, :, :] # 3D array: [x, y, time]
     
-    # Read the data into a standard Julia Array
-    cpu_preload   = dataset[varname][:, :, :]
-    
-    # 2) Conditionally allocate a GPU array AND PIN CPU MEMORY
-    if GPU_USE
-        # --- PINNING OPTIMIZATION ---
-        try
-            CUDA.Mem.pin(cpu_preload)
-        catch e
-            println("  -> WARNING: Failed to pin CPU memory for $varname. Error: $e")
-        end
-        # ----------------------------
-
-        # Allocate 2D buffer on GPU (since forcing is loaded day-by-day)
-        gpu_arr = CUDA.zeros(float_type, size(cpu_preload, 1), size(cpu_preload, 2))
-        println("Allocated GPU buffer size: ", size(gpu_arr))
-        
-        return cpu_preload, gpu_arr
-    else
-        return cpu_preload, nothing
+    # 2) Optimizations for data transfer
+    # Locks memory pages if using NVIDIA/AMD; does nothing on CPU/Metal.
+    try
+        pin_memory!(cpu_preload)
+    catch e
+        println("  -> WARNING: Failed to pin forcing memory for $varname. Error: $e")
     end
+
+    # 3) Allocate device buffer (2D)
+    # For forcing, we only keep the current day (therefore a 2D buffer) on the device to save memory
+    device_arr = KernelAbstractions.zeros(device_backend, FloatType, size(cpu_preload, 1), size(cpu_preload, 2))
+    
+    println("Allocated $backend_name buffer size: ", size(device_arr))
+    
+    return cpu_preload, device_arr
 end
 
 
-"""
-    @load_forcing(year_var, names...)
-
-Takes a year variable and a list of base variable names. For each name,
-it generates a call to `read_and_allocate_forcing`, creating the
-corresponding `_cpu` and `_gpu` variables.
-"""
+# Macro that takes a year variable and a list of base variable names. For each name,
+# it generates a call to `read_and_allocate_forcing`, to create the corresponding `_cpu` and `_gpu` variables.
 macro load_forcing(year_var, names...)
     # The `quote ... end` block collects all the generated lines of code.
     quote
@@ -152,51 +113,29 @@ end
 
 function gpu_load_static_inputs(cpu_vars, gpu_vars)
     for (cpu, gpu) in zip(cpu_vars, gpu_vars)
-        CUDA.copyto!(gpu, cpu)
+        copyto!(gpu, cpu)
     end
 end
 
 function gpu_load_monthly_inputs(month, month_prev, cpu_vars, gpu_vars)
-    if month != month_prev
-        for (cpu, gpu) in zip(cpu_vars, gpu_vars)
-            # 1. Get dimensions
-            # cpu is typically (nx, ny, 12, nveg)
-            # gpu is typically (nx, ny, 1, nveg)
-            nx, ny = size(cpu, 1), size(cpu, 2)
-            n_months = size(cpu, 3) # Should be 12
-            n_tiles = size(cpu, 4)  # Vegetation tiles (1 if variable is 3D)
+    # Fast exit if month hasn't changed
+    month == month_prev && return
 
-            block_size = nx * ny
-
-            # 2. Iterate over vegetation tiles to copy each contiguous chunk
-            for k in 1:n_tiles
-                # Calculate Source Offset (CPU)
-                # Skip previous tiles (k-1) * (months * block)
-                # Skip previous months in current tile (month-1) * block
-                offset_cpu = (k - 1) * (block_size * n_months) + (month - 1) * block_size + 1
-
-                # Calculate Dest Offset (GPU)
-                # GPU only has 1 month, so we just skip previous tiles
-                offset_gpu = (k - 1) * block_size + 1
-
-                # 3. Direct Copy
-                copyto!(gpu, offset_gpu, cpu, offset_cpu, block_size)
-            end
+    @views for (cpu, gpu) in zip(cpu_vars, gpu_vars)
+        # Iterate over (e.g. vegetation-)tiles; size is 1 for 3D arrays, > 1 for 4D arrays)
+        for k in 1:size(cpu, 4)
+            # Copy a single month's slice from CPU archive to the active GPU buffer
+            copyto!(gpu[:, :, 1, k], cpu[:, :, month, k])
         end
     end
 end
 
 function gpu_load_daily_inputs(day, day_prev, cpu_vars, gpu_vars)
-    if day != day_prev
-        for (cpu, gpu) in zip(cpu_vars, gpu_vars)
-        # Calculate the starting linear index for the current day
-            # cpu is (nx, ny, days), gpu is (nx, ny)
-            len = length(gpu)
-            offset = (day - 1) * len + 1
-            
-            # Direct copy using linear offsets: copyto!(dest, dest_offset, src, src_offset, count)
-            # This avoids allocating a View and guarantees a fast Memcpy
-            copyto!(gpu, 1, cpu, offset, len)
-        end
+    # Fast exit if day hasn't changed
+    day == day_prev && return
+
+    @views for (cpu, gpu) in zip(cpu_vars, gpu_vars)
+        # Copy a single daily slice from CPU archive to the active GPU buffer
+        copyto!(gpu, cpu[:, :, day])
     end
 end
