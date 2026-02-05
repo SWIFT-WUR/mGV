@@ -1,10 +1,5 @@
-using Zarr
-using NetCDF
-using NCDatasets
-using CUDA
-
 # ============================================================================
-# 1. TRANSFER BUFFER (Common)
+# 1. TRANSFER BUFFER 
 # ============================================================================
 struct TransferBuffer
     tsurf::Matrix{Float32}
@@ -26,7 +21,7 @@ end
 function create_transfer_buffer(nx, ny, nlayers)
     function make_pinned(dims...)
         A = zeros(Float32, dims...)
-        CUDA.Mem.pin(A)
+        Main.pin_memory!(A)
         return A
     end
 
@@ -73,7 +68,6 @@ struct ZarrOutputStore{A3, A4}
 end
 
 # --- NetCDF Store ---
-# We wrap the NCDataset and the variables to mimic the Zarr struct structure
 struct NetCDFOutputStore
     ds::NCDataset
     tsurf::Any
@@ -125,22 +119,6 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
     z_lon[:] = lon_cpu
 
-    # --- ADD STATIC ACCUMULATION VARIABLE ---
-    chunk_2d_static = (nx, ny)
-    path = joinpath(output_path, "accumulation_area")
-    
-    # Note: 'compressor' is defined earlier in this function (line 119), so it is safe to use here.
-    acc_arr = zcreate(Float32, nx, ny; path=path, chunks=chunk_2d_static, compressor=compressor)
-    acc_arr.attrs["_ARRAY_DIMENSIONS"] = ["lon", "lat"]
-    acc_arr.attrs["long_name"] = "Upstream Drainage Area"
-    
-    if isdefined(Main, :routing_state)
-        acc_gpu_flat = Main.routing_state.accumulation_gpu
-        acc_2d = Array(reshape(acc_gpu_flat, nx, ny))
-        acc_arr[:, :] = acc_2d
-    end
-
-
     store = ZarrOutputStore(
         make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
@@ -186,20 +164,6 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     lat = defVar(out_ds, "lat", Float32, ("lat",)); lat[:] = lat_cpu; lat.attrib["axis"] = "Y"
     lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
 
-    acc_var = defVar(out_ds, "accumulation_area", Float32, ("lon", "lat"); 
-                     chunksizes=(nx, ny), deflatelevel=1)
-    acc_var.attrib["long_name"] = "Upstream Drainage Area"
-    acc_var.attrib["units"] = "m2"
-    
-    # Check if routing state exists in global scope and write data
-    if isdefined(Main, :routing_state)
-        acc_gpu_flat = Main.routing_state.accumulation_gpu
-        acc_2d = Array(reshape(acc_gpu_flat, nx, ny))
-        acc_var[:, :] = acc_2d
-    else
-        println("⚠️ Warning: routing_state not found. Accumulation map output skipped.")
-    end
-
     # Store
     store = NetCDFOutputStore(
         out_ds,
@@ -225,22 +189,16 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
 end
 
 # ============================================================================
-# 4. DATA TRANSFER & WRITING (Dispatch based on Store Type)
+# 4. DATA TRANSFER & WRITING (Dispatch based on store type)
 # ============================================================================
 
-# Phase 1: Optimized Async Transfer (DMA with Fallback)
-function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
+# Phase 1: Transfer to buffer
+function async_transfer!(processed_data, buf::TransferBuffer, stream)
     
-    # 1. Use events instead of global synchronization for speed
-    evt = CuEvent()
-    CUDA.record(evt) 
-    CUDA.wait(evt, stream)
+    # Helper to copy from GPU (processed_data fields) to CPU (buffer fields)
+    # copyto! detects pinned memory and optimizes automatically on CUDA/AMDGPU
+    dma!(dest, src) = copyto!(dest, src)
 
-    # 2. Raw DMA Transfer (Case 1 Only)
-    # We define a tiny helper to keep the code readable
-    dma!(dest, src) = CUDA.unsafe_copyto!(pointer(dest), pointer(src), length(dest), stream=stream)
-
-    # 3. Execute Transfers
     dma!(buf.tsurf,          processed_data.tsurf)
     dma!(buf.tair,           processed_data.tair)
     dma!(buf.prec,           processed_data.prec)
@@ -261,9 +219,12 @@ function async_transfer!(processed_data, buf::TransferBuffer, stream::CuStream)
     return nothing
 end
 
-# Phase 2a: ZARR Parallel Write
-function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::ZarrOutputStore)
-    synchronize(stream)
+# Phase 2a: ZARR Parallel write
+function write_slice!(day, buf::TransferBuffer, stream, store::ZarrOutputStore)
+    # Wait for GPU to finish copying to "buf"
+    # before we let the CPU threads read the buffer
+    KernelAbstractions.synchronize(Main.device_backend)
+
     Threads.@sync begin
         Threads.@spawn store.tsurf[:, :, day]          = buf.tsurf
         Threads.@spawn store.tair[:, :, day]           = buf.tair
@@ -282,9 +243,11 @@ function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::ZarrOut
     end
 end
 
-# Phase 2b: NETCDF Serial Write
-function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::NetCDFOutputStore)
-    synchronize(stream)
+# Phase 2b: NETCDF Serial write
+function write_slice!(day, buf::TransferBuffer, stream, store::NetCDFOutputStore)
+
+    KernelAbstractions.synchronize(Main.device_backend)
+    
     # NetCDF writes are not thread-safe for the same dataset, so we do this serially
     store.tsurf[:, :, day]          = buf.tsurf
     store.tair[:, :, day]           = buf.tair
@@ -293,7 +256,7 @@ function write_slice!(day, buf::TransferBuffer, stream::CuStream, store::NetCDFO
     store.surface_runoff[:, :, day] = buf.surface_runoff
     store.total_runoff[:, :, day]   = buf.total_runoff
     store.discharge[:, :, day]      = buf.discharge
-    store.travel_time[:, :, day] = buf.travel_time
+    store.travel_time[:, :, day]    = buf.travel_time
     store.pe_summed[:, :, day]      = buf.pe_summed
     store.nr_summed[:, :, day]      = buf.nr_summed
     store.tr_summed[:, :, day]      = buf.tr_summed
@@ -308,6 +271,77 @@ end
 close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
 close_output(store::NetCDFOutputStore) = close(store.ds)
 
+
+# ============================================================================
+# 6. OPTIMIZED PREPROCESSING KERNELS
+# ============================================================================
+
+@kernel function fused_preprocess_kernel!(
+    pe_out, nr_out, tr_out, ce_out,     # 2D Outputs
+    @Const(pe_in), @Const(nr_in),       # 4D Inputs
+    @Const(tr_in), @Const(ce_in),       # 4D Inputs
+    @Const(coverage), @Const(cv),       # 4D Weights
+    threshold, fill_val                 # Scalars
+)
+    i, j = @index(Global, NTuple)
+
+    # 1. Initialize Accumulators (sums for this grid cell)
+    # We use the type of the output array to ensure stability
+    acc_pe = zero(eltype(pe_out))
+    acc_nr = zero(eltype(nr_out))
+    acc_tr = zero(eltype(tr_out))
+    acc_ce = zero(eltype(ce_out))
+
+    # 2. Iterate over Vegetation Tiles (4th Dimension)
+    # We assume inputs are (nx, ny, 1, n_tiles)
+    n_tiles = size(pe_in, 4)
+
+    for k in 1:n_tiles
+        # --- Helper: Load, Sanitize, and Weight ---
+        # We inline the logic here for maximum speed
+        
+        # A. Shared Weights
+        # Cast to FloatType to prevent accidental promotion to Float64
+        w_cv  = eltype(pe_out)(cv[i, j, 1, k])
+        w_cov = eltype(pe_out)(coverage[i, j, 1, k])
+
+        # B. Potential Evaporation (PE)
+        # Logic: sum(cv * sanitize(pe))
+        val = pe_in[i, j, 1, k]
+        # Sanitize: If NaN or > Threshold, treat as 0 for the sum (nansum behavior)
+        if !isnan(val) && abs(val) <= threshold
+            acc_pe += w_cv * val
+        end
+
+        # C. Net Radiation (NR)
+        # Logic: sum(cv * sanitize(nr))
+        val = nr_in[i, j, 1, k]
+        if !isnan(val) && abs(val) <= threshold
+            acc_nr += w_cv * val
+        end
+
+        # D. Transpiration (TR)
+        # Logic: sum(coverage * sanitize(tr))
+        val = tr_in[i, j, 1, k]
+        if !isnan(val) && abs(val) <= threshold
+            acc_tr += w_cov * val
+        end
+
+        # E. Canopy Evaporation (CE)
+        # Logic: sum(cv * coverage * sanitize(ce))
+        val = ce_in[i, j, 1, k]
+        if !isnan(val) && abs(val) <= threshold
+            acc_ce += w_cv * w_cov * val
+        end
+    end
+
+    # 3. Write Final Sums to Global Memory
+    pe_out[i, j] = acc_pe
+    nr_out[i, j] = acc_nr
+    tr_out[i, j] = acc_tr
+    ce_out[i, j] = acc_ce
+end
+
 function preprocess_daily_outputs(
     day, tsurf, tair_gpu, prec_gpu, 
     total_et, surface_runoff, total_runoff,
@@ -315,46 +349,36 @@ function preprocess_daily_outputs(
     potential_evaporation, net_radiation, transpiration, canopy_evaporation,
     coverage_gpu, cv_gpu, fillvalue_threshold
 )
-    # --- HELPER FUNCTIONS ---
-    san_nan = A -> begin
-        T = eltype(A)
-        thr = T(fillvalue_threshold)
-        rep = T(NaN)
-        ifelse.(isnan.(A) .| (abs.(A) .> thr), rep, A)
-    end
+    # 1. Allocate Output Arrays (2D)
+    # These are small (nx * ny), so allocation is cheap.
+    # We use similar() to ensure they are on the correct GPU backend.
+    nx, ny = size(tsurf)[1:2]
     
-    # Helper to broadcast convert cv_gpu to match input array type
-    convcv = A -> convert.(eltype(A), cv_gpu)
+    pe_summed = similar(tsurf, nx, ny)
+    nr_summed = similar(tsurf, nx, ny)
+    tr_summed = similar(tsurf, nx, ny)
+    ce_summed = similar(tsurf, nx, ny)
 
-    # --- CALCULATION & SANITIZATION ---
+    # 2. Launch the Fused Kernel
+    # Get the backend from one of the arrays (Device Agnostic)
+    backend = KernelAbstractions.get_backend(tsurf)
+    kernel! = fused_preprocess_kernel!(backend)
+    
+    # Launch with 2D range
+    kernel!(
+        pe_summed, nr_summed, tr_summed, ce_summed,
+        potential_evaporation, net_radiation, transpiration, canopy_evaporation,
+        coverage_gpu, cv_gpu,
+        Float32(fillvalue_threshold), Float32(NaN);
+        ndrange=(nx, ny)
+    )
+    
+    # 3. Handle Reshapes (Metadata only, instant)
+    # We access Main.routing_state to be safe
+    discharge_2d = reshape(Main.routing_state.discharge_gpu, size(total_runoff))
+    travel_time_2d = reshape(Main.routing_state.travel_time_gpu, size(total_runoff)) 
 
-    # 1. Potential Evaporation
-    pe_processed = san_nan(potential_evaporation)
-    pe_summed    = sum_with_nan_handling(convcv(pe_processed) .* pe_processed, 4)
-
-    # 2. Net Radiation
-    nr_processed = san_nan(net_radiation)
-    nr_summed    = sum_with_nan_handling(convcv(nr_processed) .* nr_processed, 4)
-
-    # 3. Transpiration
-    tr_processed = san_nan(transpiration)
-    # Weight by coverage
-    tr_gc        = tr_processed .* coverage_gpu
-    tr_summed    = sum_with_nan_handling(tr_gc, 4)
-
-    # 4. Canopy Evaporation
-    ce_processed = san_nan(canopy_evaporation)
-    # Weight by coverage AND cv
-    ce_gc        = convcv(ce_processed) .* ce_processed .* coverage_gpu
-    ce_summed    = sum_with_nan_handling(ce_gc, 4)
-
-    # 5. Discharge (Routing)
-    # Map 1D discharge state back to 2D Grid for IO.
-    # Note: 'routing_state' is accessed from global scope here.
-    discharge_2d = reshape(routing_state.discharge_gpu, size(total_runoff))
-    travel_time_2d = reshape(routing_state.travel_time_gpu, size(total_runoff)) 
-
-    # --- PACKAGING ---
+    # 4. Package and Return
     return (
         # Direct 2D
         tsurf          = tsurf,
@@ -366,11 +390,11 @@ function preprocess_daily_outputs(
         discharge      = discharge_2d,
         travel_time    = travel_time_2d,
 
-        # Direct 3D (Layers)
+        # Direct 3D
         soil_evaporation  = soil_evaporation,
-        soil_moisture = soil_moisture,
+        soil_moisture     = soil_moisture,
 
-        # Calculated Sums (2D results from 3D inputs)
+        # Calculated Sums (Now computed instantly)
         pe_summed = pe_summed,
         nr_summed = nr_summed,
         tr_summed = tr_summed,

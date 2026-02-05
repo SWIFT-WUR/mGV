@@ -1,8 +1,5 @@
 using .SimConstants
 
-CUDA.allowscalar(false)
-#CUDA.math_mode!(CUDA.FAST_MATH)
-
 const to = TimerOutputs.TimerOutput()
 
 # ============================================================================
@@ -37,86 +34,87 @@ end
 # INITIALIZE GPU STATE ARRAYS
 # ============================================================================
 println("Julia has started with $(Threads.nthreads()) threads.")
+println("Allocating State Arrays on: $backend_name")
 
 @timeit to "initialize_GPU_arrays" begin
 
+    # Helper for brevity
+    alloc(dims...) = KernelAbstractions.zeros(device_backend, FloatType, dims...)
+
     # Canopy and surface states
-    const water_storage = CUDA.zeros(float_type, size(coverage_gpu))
-    const max_water_storage = CUDA.zeros(float_type, size(coverage_gpu))
-    const throughfall = CUDA.zeros(float_type, size(coverage_gpu))
-    const canopy_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
-    const f_n = CUDA.zeros(float_type, size(coverage_gpu))
+    const water_storage = alloc(size(coverage_gpu))
+    const max_water_storage = alloc(size(coverage_gpu))
+    const throughfall = alloc(size(coverage_gpu))
+    const canopy_evaporation = alloc(size(coverage_gpu))
+    const f_n = alloc(size(coverage_gpu))
 
-    const net_radiation = CUDA.zeros(float_type, size(coverage_gpu))
-    const Q_12 = CUDA.zeros(float_type, size(Tavg_gpu))
-    const potential_evaporation = CUDA.zeros(float_type, size(coverage_gpu))
-    const aerodynamic_resistance = CUDA.zeros(float_type, size(coverage_gpu))
-    const tsurf = CUDA.zeros(float_type, size(Tavg_gpu))
+    const net_radiation = alloc(size(coverage_gpu))
+    const Q_12 = alloc(size(Tavg_gpu))
+    const potential_evaporation = alloc(size(coverage_gpu))
+    const aerodynamic_resistance = alloc(size(coverage_gpu))
+    const tsurf = alloc(size(Tavg_gpu))
 
+    const soil_evaporation = alloc(size(Tavg_gpu))
+    const total_et = alloc(size(Tavg_gpu))
+    const infiltration = alloc(size(Tavg_gpu))
 
-    const soil_evaporation = CUDA.zeros(float_type, size(Tavg_gpu))
-    const total_et = CUDA.zeros(float_type, size(Tavg_gpu))
-    const infiltration = CUDA.zeros(float_type, size(Tavg_gpu))
+    const surface_runoff = alloc(size(Tavg_gpu))
+    const asat = alloc(size(Tavg_gpu))
 
-    const surface_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
-    const asat = CUDA.zeros(float_type, size(Tavg_gpu))
-
-    const subsurface_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
-    const interlayer_drainage = CUDA.zeros(float_type, size(Tavg_gpu, 1), size(Tavg_gpu, 2), 2)
-    const total_runoff = CUDA.zeros(float_type, size(Tavg_gpu))
+    const subsurface_runoff = alloc(size(Tavg_gpu))
+    const interlayer_drainage = alloc(size(Tavg_gpu, 1), size(Tavg_gpu, 2), 2)
+    const total_runoff = alloc(size(Tavg_gpu))
 
     # Soil property arrays
-    const bulk_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
-    const soil_dens_min = CUDA.zeros(float_type, size(bulk_dens_gpu))
-    const porosity = CUDA.zeros(float_type, size(bulk_dens_gpu))
-    const Lsum = CUDA.zeros(float_type, size(soil_dens_gpu))
+    const bulk_dens_min = alloc(size(bulk_dens_gpu))
+    const soil_dens_min = alloc(size(bulk_dens_gpu))
+    const porosity = alloc(size(bulk_dens_gpu))
+    const Lsum = alloc(size(soil_dens_gpu))
 
     # Soil temperature initialization
-    const soil_temperature = CUDA.zeros(float_type, size(soil_dens_gpu))
-    soil_temperature[:, :, 1:1] = Tavg_gpu
-    soil_temperature[:, :, 2:2] = Tavg_gpu
-    soil_temperature[:, :, 3:3] = Tavg_gpu
+    const soil_temperature = alloc(size(soil_dens_gpu))
+    soil_temperature[:, :, 1:1] .= Tavg_gpu
+    soil_temperature[:, :, 2:2] .= Tavg_gpu
+    soil_temperature[:, :, 3:3] .= Tavg_gpu
 
     # Soil moisture arrays (3D: lon, lat, layer)
     soil_dims = (size(soil_dens_gpu, 1), size(soil_dens_gpu, 2), size(soil_dens_gpu, 3))
-    const soil_moisture = CUDA.zeros(float_type, soil_dims...)
-    const soil_moisture_max = CUDA.zeros(float_type, soil_dims...)
-    const soil_moisture_critical = CUDA.zeros(float_type, soil_dims...)
 
-    const kappa_array = CUDA.zeros(float_type, soil_dims...)
-    const cs_array = CUDA.zeros(float_type, soil_dims...)
+    const soil_moisture = alloc(soil_dims...)
+    const soil_moisture_max = alloc(soil_dims...)
+    const soil_moisture_critical = alloc(soil_dims...)
 
-    const field_capacity = CUDA.zeros(float_type, soil_dims...)
-    const wilting_point = CUDA.zeros(float_type, soil_dims...)
-    const residual_moisture = CUDA.zeros(float_type, soil_dims...)
+    const kappa_array = alloc(soil_dims...)
+    const cs_array = alloc(soil_dims...)
 
-    const ice_frac = CUDA.zeros(float_type, size(soil_moisture))
-    const organic_frac_gpu = CUDA.fill(float_type(organic_frac), size(soil_moisture))
+    const field_capacity = alloc(soil_dims...)
+    const wilting_point = alloc(soil_dims...)
+    const residual_moisture = alloc(soil_dims...)
+
+    const ice_frac = alloc(size(soil_moisture))
+    const organic_frac_gpu = alloc(size(soil_moisture))
+    fill!(organic_frac_gpu, FloatType(organic_frac))
 
     # --- Pre allocation for transpiration ---
-    # transpiration_full: (ny, nx, 1, nveg)
-    const transpiration = CUDA.zeros(float_type, size(coverage_gpu))
+    const transpiration = alloc(size(coverage_gpu))
 
     # transpiration_layers: (ny, nx, 3, nveg)
-    const transpiration_layers = CUDA.zeros(float_type, size(coverage_gpu, 1), size(coverage_gpu, 2), 3, size(coverage_gpu, 4))
+    const transpiration_layers = alloc(size(coverage_gpu, 1), size(coverage_gpu, 2), 3, size(coverage_gpu, 4))
 
     # Layer splits: (ny, nx, 1, nveg)
-    const E_1_t = CUDA.zeros(float_type, size(coverage_gpu))
-    const E_2_t = CUDA.zeros(float_type, size(coverage_gpu))
+    const E_1_t = alloc(size(coverage_gpu))
+    const E_2_t = alloc(size(coverage_gpu))
 
     # Intermediate buffers for stress and conductance
-    # g1, g2: (ny, nx)
-    const g1_buf = CUDA.zeros(float_type, size(Tavg_gpu))
-    const g2_buf = CUDA.zeros(float_type, size(Tavg_gpu))
+    const g1_buf = alloc(size(Tavg_gpu))
+    const g2_buf = alloc(size(Tavg_gpu))
 
-    # g_sw_veg: (ny, nx, 1, nveg-1) -> only for veg tiles
+    # g_sw_veg: (ny, nx, 1, nveg-1)
     veg_dim = size(root_gpu, 4)
-    const g_sw_veg_buf = CUDA.zeros(float_type, size(coverage_gpu, 1), size(coverage_gpu, 2), 1, veg_dim)
+    const g_sw_veg_buf = alloc(size(coverage_gpu, 1), size(coverage_gpu, 2), 1, veg_dim)
 
-    # dry_time_factor: (ny, nx, 1, nveg)
-    const dry_time_factor = CUDA.zeros(float_type, size(coverage_gpu))
+    const dry_time_factor = alloc(size(coverage_gpu))
     # ---
-
 end
 
 # ============================================================================
@@ -124,19 +122,16 @@ end
 # ============================================================================
 
 @timeit to "calculate_soil_properties" begin
-
     _bulk_dens_min, _soil_dens_min, _porosity, _soil_moisture_max,
     _soil_moisture_critical, _field_capacity, _wilting_point, _residual_moisture =
         calculate_soil_properties(
             bulk_dens_gpu, soil_dens_gpu, depth_gpu,
             Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu
         )
-
 end
 
 
 @timeit to "copy_soil_properties" begin
-
     # Copy calculated values into constant/global GPU arrays
     bulk_dens_min .= _bulk_dens_min
     soil_dens_min .= _soil_dens_min
@@ -150,40 +145,14 @@ end
     # Initialize soil moisture within physical bounds
     soil_moisture .= min.(init_moist_gpu, soil_moisture_max)
     soil_moisture .= max.(soil_moisture, residual_moisture)
-
 end
-
-# Print diagnostics
-@debug println("Wmax (mean) [mm]: L1=", mean(Array(soil_moisture_max[:, :, 1])),
-    " L2=", mean(Array(soil_moisture_max[:, :, 2])),
-    " L3=", mean(Array(soil_moisture_max[:, :, 3])))
-@debug println("Ksat (median) [mm/day]: L1=", median(Array(ksat_gpu[:, :, 1])),
-    " L2=", median(Array(ksat_gpu[:, :, 2])),
-    " L3=", median(Array(ksat_gpu[:, :, 3])))
 
 # ============================================================================
 # PROCESS YEAR FUNCTION
 # ============================================================================
 
 function process_year(year)
-    # Ensure we're modifying global variables
-    @timeit to "take_in_global_arrays" begin
-
-        #   global soil_moisture       
-        #    global water_storage, throughfall, canopy_evaporation, bulk_dens_min, soil_dens_min, porosity
-        #    global field_capacity, wilting_point, residual_moisture, Q_12
-        #    global Lsum, tsurf
-        #    global net_radiation
-        #    global potential_evaporation, aerodynamic_resistance
-        #    global max_water_storage
-        #    global ice_frac, organic_frac_gpu
-        #    global total_et
-
-    end
-
     println("============ Start run for year: $year ============")
-
-    # Determine Format
     output_format = get_output_format()
     println("Output format selected: $output_format")
 
@@ -199,8 +168,6 @@ function process_year(year)
     # Create output file
     # ------------------------------------------------------------------------
     @debug println("Initializing output store...")
-
-    # Declare these variables to ensure they are available in the loop scope
     local output_store
     local transfer_buf
 
@@ -220,9 +187,8 @@ function process_year(year)
         end
     end
 
-
     # Create a stream for data transfers
-    transfer_stream = CuStream()
+    transfer_stream = create_stream()
 
     # ------------------------------------------------------------------------
     # Daily timestep loop
@@ -299,7 +265,7 @@ function process_year(year)
             # ============================================================
             @timeit to "calculate_transpiration" begin
                 calculate_transpiration!(
-                    # --- OUTPUTS (Mutated in-place) ---
+                    # Outputs
                     transpiration, transpiration_layers, E_1_t, E_2_t,
                     g1_buf, g2_buf, g_sw_veg_buf, dry_time_factor,
                     # Inputs
@@ -340,9 +306,7 @@ function process_year(year)
                 )
             end
 
-            # Calculate infiltration
             calculate_infiltration!(infiltration, throughfall, surface_runoff)
-            @debug println("neg. infiltration cells = ", count(<(0), Array(infiltration_raw)))
 
             # ============================================================
             # Soil moisture update
@@ -377,57 +341,46 @@ function process_year(year)
                 )
             end
 
+            # ============================================================
+            # Routing
+            # ============================================================
             @timeit to "run_routing" begin
                 run_routing_step!(
                     routing_state,
-                    total_runoff,    # 2D Runoff from Physics [mm/day]
-                    day_sec        # Timestep [s]
+                    total_runoff,
+                    day_sec
                 )
             end
 
             # ============================================================
-            # Soil thermal properties
+            # Soil thermal properties & soil temperature
             # ============================================================
             @timeit to "soil_conductivity" begin
                 soil_conductivity!(
-                    kappa_array,
-                    soil_moisture,
-                    ice_frac,
-                    soil_dens_min,
-                    bulk_dens_min,
-                    quartz_gpu,
-                    organic_frac_gpu,
-                    porosity
+                    kappa_array, soil_moisture, ice_frac,
+                    soil_dens_min, bulk_dens_min, quartz_gpu,
+                    organic_frac_gpu, porosity
                 )
             end
 
             @timeit to "volumetric_heat_capacity" begin
                 volumetric_heat_capacity!(
-                    cs_array,
-                    bulk_dens_gpu,
-                    soil_dens_gpu,
-                    soil_moisture,
-                    rho_w,
-                    ice_frac,
-                    organic_frac
+                    cs_array, bulk_dens_gpu, soil_dens_gpu, soil_moisture,
+                    rho_w, ice_frac, organic_frac
                 )
             end
 
             @timeit to "estimate_layer_temperature" begin
                 estimate_layer_temperature!(
-                    soil_temperature,
-                    depth_gpu,
-                    dp_gpu,
-                    tsurf,
-                    Tavg_gpu
+                    soil_temperature, depth_gpu, dp_gpu, tsurf, Tavg_gpu
                 )
             end
 
             # ============================================================
-            # Surface temperature solution
+            # Surface temperature 
             # ============================================================
             if day == 1 && year == start_year
-                @timeit to "solve_surface_temperature" begin
+                @timeit to "solve_surface_temperature_init" begin
                     solve_surface_temperature!(
                         tsurf,
                         soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
@@ -447,14 +400,16 @@ function process_year(year)
 
             @timeit to "solve_surface_temperature" begin
                 solve_surface_temperature!(
-                    tsurf,
-                    soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
-                    aerodynamic_resistance,  # <-- Pass the 4D array directly
+                    tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+                    aerodynamic_resistance,
                     kappa_array, depth_gpu, day_sec, cs_array, total_et,
                     tair_gpu, cv_gpu, psurf_gpu
                 )
             end
 
+            # ============================================================
+            # Preprocess & Write Outputs
+            # ============================================================
             @timeit to "preprocess_daily_data" begin
                 gpu_results = preprocess_daily_outputs(
                     day, tsurf, tair_gpu, prec_gpu,
@@ -465,44 +420,23 @@ function process_year(year)
                 )
             end
 
-            # ============================================================
-            # Write outputs
-            # ============================================================
-            @debug println("Writing outputs")
             @timeit to "outputs" begin
-
-                # 1. Start the transfer for TODAY (Day N)
-                # This queues commands to the GPU stream and returns immediately.
                 async_transfer!(gpu_results, transfer_buf, transfer_stream)
-
-                # 2. Write Slice (Dispatched based on store type)
-                # Zarr store -> Parallel write
-                # NetCDF store -> Serial write
                 write_slice!(day, transfer_buf, transfer_stream, output_store)
             end
 
             day_prev = day
             month_prev = month
-        end # timeit process_year
-    end # daily loop
+        end 
+    end 
 
     # ------------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------------
     println("Closing output file...")
-    # This dispatches: closes NetCDF dataset, does nothing for Zarr
     @timeit to "closing outputfile" close_output(output_store)
 
-    # If using NetCDF, you might want to compress async (optional, from old code)
-    if output_format == :netcdf
-        output_path_nc = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
-        println("Postprocessing NetCDF for year $year...")
-        # @timeit to "compress_file_async call" compress_file_async(output_path_nc, 1)
-    end
-
     println("============ Completed run for year: $year ============\n")
-
-
     flush(stdout)
 end
 
@@ -514,11 +448,16 @@ for year in start_year:end_year
     if has_input_files(year)
         process_year(year)
 
-        show(to)  # Print profiling data
+        show(to) 
 
         @timeit to "garbage collection" begin
             Base.GC.gc()
-            CUDA.reclaim()
+            
+            if backend_name == "CUDA"
+                CUDA.reclaim()
+            elseif backend_name == "AMDGPU"
+                AMDGPU.reclaim()
+            end
         end
     else
         println("Skipping year $year due to missing input files.")
