@@ -2,7 +2,7 @@
 
 const MIN_SLOPE   = 0.0001f0    # Minimum channel slope [m/m]
 const MANNING_N   = 0.035f0
-const ROUTING_DT  = 90.0f0 #timestep in seconds
+const ROUTING_DT  = 900.0f0 #timestep in seconds
 
 struct RoutingState
     # --- Topography ---
