@@ -180,120 +180,148 @@ function calculate_infiltration!(infiltration, throughfall, surface_runoff)
     return nothing
 end
 
+
+
+@kernel function runoff_drainage_kernel!(
+    soil_moisture,          # (nx, ny, 3)
+    subsurface_runoff,      # (nx, ny)
+    interlayer_drainage,    # (nx, ny, 2)
+    surface_inflow,         # (nx, ny)
+    soil_evap,              # (nx, ny)
+    transpiration,          # (nx, ny, nlayer)
+    moisture_max,           # (nx, ny, 3)
+    ksat,                   # (nx, ny, 3)
+    resid_moisture,         # (nx, ny, 3)
+    expt,                   # (nx, ny, 3)
+    Dsmax, Ds, Ws, c_expt   # (nx, ny) Arrays
+)
+    i, j = @index(Global, NTuple)
+
+    # Boundary check
+    if i <= size(soil_moisture, 1) && j <= size(soil_moisture, 2)
+        
+        tiny = ft(1e-9)
+        zero = ft(0.0)
+        one  = ft(1.0)
+
+        # --- LOAD SCALAR PARAMETERS ---
+        # We load values for this specific pixel (i,j)
+        max1, max2, max3 = moisture_max[i,j,1], moisture_max[i,j,2], moisture_max[i,j,3]
+        res1, res2, res3 = resid_moisture[i,j,1], resid_moisture[i,j,2], resid_moisture[i,j,3]
+        exp1, exp2       = expt[i,j,1], expt[i,j,2]
+        k1, k2           = ksat[i,j,1], ksat[i,j,2]
+        
+        # Baseflow params (Scalars)
+        _Dsmax  = Dsmax[i,j]
+        _Ds     = Ds[i,j]
+        _Ws     = Ws[i,j]
+        _c_expt = c_expt[i,j]
+
+        # Load State
+        sm1 = soil_moisture[i,j,1]
+        sm2 = soil_moisture[i,j,2]
+        sm3 = soil_moisture[i,j,3]
+
+        # Transpiration Handling
+        n_trans_layers = size(transpiration, 3)
+        t1 = transpiration[i,j,1] 
+        t2 = (n_trans_layers >= 2) ? transpiration[i,j,2] : zero
+        t3 = (n_trans_layers >= 3) ? transpiration[i,j,3] : zero
+
+        inflow = surface_inflow[i,j]
+        evap   = soil_evap[i,j]
+
+        # ==================== LAYER 1 ====================
+        sm1_new = sm1 + inflow
+
+        # ET Removal
+        eff_sm1 = max(sm1_new - res1, zero)
+        denom_1 = max(evap + t1, tiny)
+        ratio_1 = min(one, eff_sm1 / denom_1)
+        sm1_new -= (evap + t1) * ratio_1
+
+        # Drainage L1 -> L2 (CALLING YOUR FUNCTION)
+        drain_pot_1 = calculate_interlayer_drainage(k1, sm1_new, max1, res1, exp1)
+        
+        drain_1 = min(drain_pot_1, max(sm1_new - res1, zero))
+        sm1_new -= drain_1
+
+        # Spillover L1
+        spill_1 = max(sm1_new - max1, zero)
+        sm1_new -= spill_1
+        drain_1 += spill_1
+
+        # ==================== LAYER 2 ====================
+        sm2_new = sm2 + drain_1
+
+        # ET Removal
+        eff_sm2 = max(sm2_new - res2, zero)
+        denom_2 = max(t2, tiny)
+        ratio_2 = min(one, eff_sm2 / denom_2)
+        sm2_new -= t2 * ratio_2
+
+        # Drainage L2 -> L3 (CALLING YOUR FUNCTION)
+        drain_pot_2 = calculate_interlayer_drainage(k2, sm2_new, max2, res2, exp2)
+        
+        drain_2 = min(drain_pot_2, max(sm2_new - res2, zero))
+        sm2_new -= drain_2
+
+        # Spillover L2
+        spill_2 = max(sm2_new - max2, zero)
+        sm2_new -= spill_2
+        drain_2 += spill_2
+
+        # ==================== LAYER 3 ====================
+        sm3_new = sm3 + drain_2
+
+        # ET Removal
+        eff_sm3 = max(sm3_new - res3, zero)
+        denom_3 = max(t3, tiny)
+        ratio_3 = min(one, eff_sm3 / denom_3)
+        sm3_new -= t3 * ratio_3
+
+        # Baseflow (CALLING YOUR FUNCTION)
+        # We pass the scalar values we loaded above
+        baseflow_pot = calculate_baseflow(sm3_new, res3, max3, _Dsmax, _Ds, _Ws, _c_expt)
+        
+        runoff = min(baseflow_pot, max(sm3_new - res3, zero))
+        sm3_new -= runoff
+
+        # Deep Drainage
+        deep_drain = max(sm3_new - max3, zero)
+        sm3_new -= deep_drain
+        runoff += deep_drain
+
+        # ==================== WRITE BACK ====================
+        soil_moisture[i,j,1] = sm1_new
+        soil_moisture[i,j,2] = sm2_new
+        soil_moisture[i,j,3] = sm3_new
+        
+        interlayer_drainage[i,j,1] = drain_1
+        interlayer_drainage[i,j,2] = drain_2
+        
+        subsurface_runoff[i,j] = runoff
+    end
+end
+
+
 function solve_runoff_and_drainage!(
-    soil_moisture,   # (ny,nx,nlayer) [Mutated Output]
-    subsurface_runoff,   # (ny,nx)        [Mutated Output]
-    interlayer_drainage, # (ny,nx,2)      [Mutated Output]
-    surface_inflow,      # (ny,nx)
-    soil_evaporation,    # (ny,nx)
-    transpiration,       # (ny,nx,nlayer, ...) OR (ny,nx,1, ...)
-    soil_moisture_max,   
-    ksat,           
-    residual_moisture,
-    expt,           
+    soil_moisture, subsurface_runoff, interlayer_drainage,
+    surface_inflow, soil_evaporation, transpiration,
+    soil_moisture_max, ksat, residual_moisture, expt,
     Dsmax, Ds, Ws, c_expt
 )
-
-    # Constants
-    zero_val = 0.0f0
-    one_val  = 1.0f0
-    epsilon  = 1.0f-9
-
-    # --- HANDLE TRANSPIRATION INPUT DIMS ---
-    # Check if we have 3 layers of transpiration or just 1 (total)
-    has_layers = size(transpiration, 3) >= 3
-
-    # Define views for T (Transpiration)
-    # If 1 layer provided, all T is removed from Layer 1. L2 and L3 get 0.
-    trans_L1 = @view(transpiration[:, :, 1])
+    kernel! = runoff_drainage_kernel!(device_backend)
+    nx, ny = size(surface_inflow)
     
-    # We use a scalar 0.0f0 for L2/L3 if data is missing; broadcasting handles this efficiently.
-    trans_L2 = has_layers ? @view(transpiration[:, :, 2]) : zero_val
-    trans_L3 = has_layers ? @view(transpiration[:, :, 3]) : zero_val
-
-    # ========================================================================
-    # LAYER 1: Inflow + ET + Drainage to Layer 2
-    # ========================================================================
-    
-    sm_L1    = @view(soil_moisture[:, :, 1])
-    resid_L1 = @view(residual_moisture[:, :, 1])
-    max_L1   = @view(soil_moisture_max[:, :, 1])
-    drain_L1 = @view(interlayer_drainage[:, :, 1]) 
-
-    # 1.1 Inflow
-    @. sm_L1 += surface_inflow
-
-    # 1.2 Evapotranspiration Removal
-    # We use trans_L1 here
-    @. sm_L1 -= (soil_evaporation + trans_L1) * min(one_val, max(sm_L1 - resid_L1, zero_val) / max(soil_evaporation + trans_L1, epsilon))
-
-    # 1.3 Drainage (L1 -> L2)
-    drain_pot = calculate_interlayer_drainage(
-        @view(ksat[:,:,1]), sm_L1, max_L1, resid_L1, @view(expt[:,:,1])
+    kernel!(
+        soil_moisture, subsurface_runoff, interlayer_drainage,
+        surface_inflow, soil_evaporation, transpiration,
+        soil_moisture_max, ksat, residual_moisture, expt,
+        Dsmax, Ds, Ws, c_expt;
+        ndrange = (nx, ny)
     )
-    
-    @. drain_L1 = min(drain_pot, max(sm_L1 - resid_L1, zero_val))
-    @. sm_L1 -= drain_L1
-    
-    spill = max.(sm_L1 .- max_L1, zero_val)
-    @. sm_L1 -= spill
-    @. drain_L1 += spill 
 
-    # ========================================================================
-    # LAYER 2: Inflow from L1 + ET + Drainage to Layer 3
-    # ========================================================================
-    
-    sm_L2    = @view(soil_moisture[:, :, 2])
-    resid_L2 = @view(residual_moisture[:, :, 2])
-    max_L2   = @view(soil_moisture_max[:, :, 2])
-    drain_L2 = @view(interlayer_drainage[:, :, 2]) 
-
-    # 2.1 Inflow from Layer 1
-    @. sm_L2 += drain_L1
-
-    # 2.2 Transpiration Removal
-    # Uses trans_L2 (which is either a view or 0.0f0)
-    @. sm_L2 -= trans_L2 * min(one_val, max(sm_L2 - resid_L2, zero_val) / max(trans_L2, epsilon))
-
-    # 2.3 Drainage (L2 -> L3)
-    drain_pot_2 = calculate_interlayer_drainage(
-        @view(ksat[:,:,2]), sm_L2, max_L2, resid_L2, @view(expt[:,:,2])
-    )
-    
-    @. drain_L2 = min(drain_pot_2, max(sm_L2 - resid_L2, zero_val))
-    @. sm_L2 -= drain_L2
-    
-    spill_2 = max.(sm_L2 .- max_L2, zero_val)
-    @. sm_L2 -= spill_2
-    @. drain_L2 += spill_2
-
-    # ========================================================================
-    # LAYER 3: Inflow from L2 + ET + Baseflow
-    # ========================================================================
-    
-    sm_L3    = @view(soil_moisture[:, :, 3])
-    resid_L3 = @view(residual_moisture[:, :, 3])
-    max_L3   = @view(soil_moisture_max[:, :, 3])
-
-    # 3.1 Inflow from Layer 2
-    @. sm_L3 += drain_L2
-
-    # 3.2 Transpiration Removal
-    # Uses trans_L3 (which is either a view or 0.0f0)
-    @. sm_L3 -= trans_L3 * min(one_val, max(sm_L3 - resid_L3, zero_val) / max(trans_L3, epsilon))
-
-    # 3.3 Baseflow
-    baseflow_pot = calculate_baseflow(
-        sm_L3, resid_L3, max_L3, Dsmax, Ds, Ws, c_expt
-    )
-    
-    @. subsurface_runoff = min(baseflow_pot, max(sm_L3 - resid_L3, zero_val))
-    @. sm_L3 -= subsurface_runoff
-
-    # 3.4 Deep Drainage
-    deep_drain = max.(sm_L3 .- max_L3, zero_val)
-    @. sm_L3 -= deep_drain
-    @. subsurface_runoff += deep_drain
-
+    KernelAbstractions.synchronize(device_backend)
     return nothing
 end

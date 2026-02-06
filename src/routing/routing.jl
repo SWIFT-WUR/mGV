@@ -144,7 +144,7 @@ function run_routing_step!(r_state::RoutingState, total_runoff_mm, dt_day_sec)
         # Diagnostics: copy the single integer from GPU to CPU to print it
         n_capped = Array(r_state.violation_counter)[1]
         if n_capped > 0
-            @warn "Velocity capped!" substep=t count=n_capped max_allowed=MAX_RIVER_VELOCITY
+        #    @warn "Velocity capped!" substep=t count=n_capped max_allowed=MAX_RIVER_VELOCITY
         end
 
         copyto!(r_state.inflow_current, r_state.inflow_next)

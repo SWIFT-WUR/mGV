@@ -225,63 +225,77 @@ function calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu, covera
 end
 
 
+@inline function canopy_evap_physics_kernel(
+    ws, max_ws, pot_evap, ra, rarc, 
+    prec, lai, tair, elev, rmin
+)
+
+    # --- 1. Physics Calculations ---
+    # Using your existing project functions
+    slope = calculate_svp_slope(tair)
+    latent_heat = calculate_latent_heat(tair + t_freeze)
+
+    scale_height = calculate_scale_height(tair, elev)
+    surface_pressure = ft(101325.0) * exp(-elev / scale_height)
+    gamma_val = ft(1628.6) * surface_pressure / latent_heat
+
+    # --- 2. Resistances ---
+    rc = rmin / max(lai, ft(1e-6))
+    inv_ra = ft(1.0) / max(ra, ft(1e-6))
+
+    # --- 3. Denominators (Penman-Monteith) ---
+    den_w = slope + gamma_val * (ft(1.0) + rarc * inv_ra)
+    den_rc = den_w + (gamma_val * rc * inv_ra)
+
+    E_p_wet = pot_evap * (den_rc / max(den_w, ft(1e-6)))
+
+    # --- 4. VIC Equations ---
+    Wratio = clamp(ws / max(max_ws, ft(1e-6)), ft(0.0), ft(1.0))
+    ra_ratio = ra / max(ra + rarc, ft(1e-6))
+    
+    canopy_evap_star = (Wratio ^ (ft(2.0) / ft(3.0))) * E_p_wet * ra_ratio
+
+    # --- 5. Fraction Calculation (f_n) ---
+    f_n_val = clamp((ws + prec) / max(canopy_evap_star, ft(1e-6)), ft(0.0), ft(1.0))
+    f_n_val = ifelse(canopy_evap_star <= ft(1e-6), ft(1.0), f_n_val)
+
+    # --- 6. Final Evaporation ---
+    evap = f_n_val * canopy_evap_star
+    
+    # Sanitize
+    evap = ifelse(isnan(evap) || abs(evap) > ft(1e15), ft(0.0), evap)
+
+    return evap, f_n_val
+end
+
+# Helper functions (must be global) 
+@inline pick_evap(args...) = canopy_evap_physics_kernel(args...)[1]
+@inline pick_fn(args...)   = canopy_evap_physics_kernel(args...)[2]
+
 function calculate_canopy_evaporation!(
     canopy_evaporation, f_n, 
     water_storage, max_water_storage, potential_evaporation,
-    aerodynamic_resistance, rarc, prec_gpu, cv_gpu, rmin, LAI_gpu,
-    tair_gpu, elev_gpu,
+    aerodynamic_resistance, rarc, prec_gpu, cv_gpu, rmin_gpu, LAI_gpu,
+    tair_gpu, elev_gpu
 )
 
-    tiny = 1.0f-6
-    
-    # We use @. to broadcast scalar physics functions
-    slope = @. calculate_svp_slope(tair_gpu)
-    
-    latent_heat = @. calculate_latent_heat(tair_gpu + t_freeze)
+    # 1. Update canopy_evaporation
+    @. canopy_evaporation = pick_evap(
+        water_storage, max_water_storage, potential_evaporation,
+        aerodynamic_resistance, rarc, 
+        prec_gpu, LAI_gpu, tair_gpu, elev_gpu, rmin_gpu
+    )
 
-    scale_height = @. calculate_scale_height(tair_gpu, elev_gpu)
-    
-    # Calculate Pressure and Gamma
-    # p_std is Float32 from SimConstants
-    surface_pressure = @. p_std * exp(-elev_gpu / scale_height)
-    gamma_ = @. 1628.6f0 * surface_pressure / latent_heat
+    # 2. Update f_n
+    @. f_n = pick_fn(
+        water_storage, max_water_storage, potential_evaporation,
+        aerodynamic_resistance, rarc, 
+        prec_gpu, LAI_gpu, tair_gpu, elev_gpu, rmin_gpu
+    )
 
-    # ---- Resistances ----
-    rc = @. rmin / max(LAI_gpu, 1.0f-6)
-    ra = aerodynamic_resistance # Alias
-
-    RALPHA_MIN = nothing
-    ralpha = (RALPHA_MIN === nothing) ? rarc : max.(rarc, RALPHA_MIN)
-
-    # ---- Denominators & E_p_wet ----
-    den_rc  = @. slope + gamma_ * (1.0f0 + (rc + ralpha) / ra)
-    den_w   = @. slope + gamma_ * (1.0f0 + ralpha / ra)
-    
-    E_p_wet = @. potential_evaporation * (den_rc / max(den_w, tiny))
-
-    # ---- VIC Eq. (1) ----
-    Wratio   = @. clamp(water_storage / max(max_water_storage, tiny), 0.0f0, 1.0f0)
-    ra_ratio = @. ra / max(ra + ralpha, tiny)
-    
-    # Note: 2/3 must be calculated as Float32 (2.0f0/3.0f0)
-    canopy_evaporation_star = @. (Wratio ^ (2.0f0 / 3.0f0)) * E_p_wet * ra_ratio
-
-    # ---- Update f_n (In-Place) ----
-    # 1. Calculate raw fraction
-    @. f_n = clamp((water_storage + prec_gpu) / max(canopy_evaporation_star, tiny), 0.0f0, 1.0f0)
-    
-    # 2. Apply masking logic directly to f_n
-    # Logic: if star <= tiny, f_n = 1.0, else keep f_n
-    @. f_n = ifelse(canopy_evaporation_star <= tiny, 1.0f0, f_n)
-
-    # ---- Update canopy_evaporation (In-Place) ----
-    @. canopy_evaporation = f_n * canopy_evaporation_star
-    
-    # Final sanitize
-    @. canopy_evaporation = ifelse(isnan(canopy_evaporation) | (abs(canopy_evaporation) > fillvalue_threshold), 0.0f0, canopy_evaporation)
-
-    # Zero out bare soil tile (last index)
-    canopy_evaporation[:, :, :, end:end] .= 0.0f0
+    # 3. Post-Process: Zero out bare soil (last index)
+    last_veg = size(canopy_evaporation, 4)
+    view(canopy_evaporation, :, :, :, last_veg) .= ft(0.0)
 
     return nothing
 end
