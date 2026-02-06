@@ -1,24 +1,77 @@
-function calculate_soil_properties(bulk_dens_gpu, soil_dens_gpu, depth_gpu, Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu)
+# ============================================================================
+# KERNEL DEFINITION
+# ============================================================================
+@kernel function soil_properties_kernel!(
+    # Outputs
+    bulk_dens_min, soil_dens_min, porosity,
+    soil_moisture_max, soil_moisture_critical, 
+    field_capacity, wilting_point, residual_moisture,
+    # Inputs
+    @Const(bulk_dens), @Const(soil_dens), @Const(depth),
+    @Const(Wcr), @Const(Wfc), @Const(Wpwp), @Const(residmoist),
+    # Constants
+    organic_frac, bulk_dens_org, soil_dens_org
+)
+    i, j, k = @index(Global, NTuple)
 
-    # === Calculate Bulk Density and Porosity ===
-    bulk_dens_min = (bulk_dens_gpu .- organic_frac * bulk_dens_org) ./ (1 .- organic_frac)
-    soil_dens_min = (soil_dens_gpu .- organic_frac * soil_dens_org) ./ (1 .- organic_frac)
+    # 1. Mineral Densities
+    bd_val = bulk_dens[i, j, k]
+    sd_val = soil_dens[i, j, k]
+    
+    # We use the types passed in (FloatType) automatically
+    bd_min = (bd_val - organic_frac * bulk_dens_org) / (1 - organic_frac)
+    sd_min = (sd_val - organic_frac * soil_dens_org) / (1 - organic_frac)
+    
+    bulk_dens_min[i, j, k] = bd_min
+    soil_dens_min[i, j, k] = sd_min
 
-    bulk_density = (1 .- organic_frac) .* bulk_dens_min .+ organic_frac .* bulk_dens_org
-    soil_density = (1 .- organic_frac) .* soil_dens_min .+ organic_frac .* soil_dens_org
+    # 2. Porosity
+    p = 1 - (bd_val / sd_val)
+    # Ensure 0 matches the array type to avoid type promotion issues
+    p = max(p, zero(eltype(porosity)))
+    porosity[i, j, k] = p
 
-    porosity = 1 .- bulk_density ./ soil_density
-    porosity = max.(porosity, 0.0)
+    # 3. Hydraulic Properties
+    d = depth[i, j, k]
+    
+    w_max = d * p * 1000
+    soil_moisture_max[i, j, k] = w_max
+    
+    # Fractions
+    soil_moisture_critical[i, j, k] = Wcr[i, j, k] * w_max
+    field_capacity[i, j, k]         = Wfc[i, j, k] * w_max
+    wilting_point[i, j, k]          = Wpwp[i, j, k] * w_max
+    
+    residual_moisture[i, j, k]      = residmoist[i, j, k] * d * 1000
+end
 
-
-    # === Calculate Maximum Soil Moisture ===
-    soil_moisture_max = depth_gpu .* porosity .* 1000
-
-    # === Field Capacity, Wilting Point, and Critical Moisture ===
-    soil_moisture_critical = Wcr_gpu .* soil_moisture_max
-    field_capacity = Wfc_gpu .* soil_moisture_max
-    wilting_point = Wpwp_gpu .* soil_moisture_max
-    residual_moisture = residmoist_gpu .* depth_gpu .* 1000
-
-    return bulk_dens_min, soil_dens_min, porosity, soil_moisture_max, soil_moisture_critical, field_capacity, wilting_point, residual_moisture
+# ============================================================================
+# WRAPPER FUNCTION
+# ============================================================================
+function calculate_soil_properties!(
+    # Outputs
+    bulk_dens_min, soil_dens_min, porosity,
+    soil_moisture_max, soil_moisture_critical, 
+    field_capacity, wilting_point, residual_moisture,
+    # Inputs
+    bulk_dens_gpu, soil_dens_gpu, depth_gpu,
+    Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
+    # Constants
+    organic_frac, bulk_dens_org, soil_dens_org
+)
+    backend = KernelAbstractions.get_backend(bulk_dens_min)
+    kernel! = soil_properties_kernel!(backend)
+    
+    kernel!(
+        bulk_dens_min, soil_dens_min, porosity,
+        soil_moisture_max, soil_moisture_critical, 
+        field_capacity, wilting_point, residual_moisture,
+        bulk_dens_gpu, soil_dens_gpu, depth_gpu,
+        Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
+        # Just cast directly to the user-defined FloatType
+        FloatType(organic_frac), FloatType(bulk_dens_org), FloatType(soil_dens_org);
+        ndrange=size(bulk_dens_gpu)
+    )
+    
+    KernelAbstractions.synchronize(backend)
 end

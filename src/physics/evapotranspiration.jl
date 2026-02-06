@@ -226,24 +226,14 @@ end
 
 
 function calculate_canopy_evaporation!(
-    canopy_evaporation, f_n, # <--- Mutated Outputs (4D Arrays)
+    canopy_evaporation, f_n, 
     water_storage, max_water_storage, potential_evaporation,
     aerodynamic_resistance, rarc, prec_gpu, cv_gpu, rmin, LAI_gpu,
     tair_gpu, elev_gpu,
 )
-    # Constants (Float32 literals)
+
     tiny = 1.0f-6
     
-    # ---- Sanitize Inputs (In-place) ----
-    # Using Float32 literals (0.0f0, 1.0f6) directly
-    @. potential_evaporation  = ifelse(isnan(potential_evaporation) | (abs(potential_evaporation) > fillvalue_threshold), 0.0f0, potential_evaporation)
-    @. water_storage          = ifelse(isnan(water_storage)         | (abs(water_storage)         > fillvalue_threshold), 0.0f0, water_storage)
-    @. max_water_storage      = ifelse(isnan(max_water_storage)     | (abs(max_water_storage)     > fillvalue_threshold), 0.0f0, max_water_storage)
-    @. aerodynamic_resistance = ifelse(isnan(aerodynamic_resistance)| (abs(aerodynamic_resistance)> fillvalue_threshold), 1.0f6, aerodynamic_resistance)
-    @. rarc                   = ifelse(isnan(rarc)                  | (abs(rarc)                  > fillvalue_threshold), 0.0f0, rarc)
-
-    
-    # ---- Δ and γ ----
     # We use @. to broadcast scalar physics functions
     slope = @. calculate_svp_slope(tair_gpu)
     

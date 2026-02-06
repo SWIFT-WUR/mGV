@@ -37,84 +37,76 @@ println("Julia has started with $(Threads.nthreads()) threads.")
 println("Allocating State Arrays on: $backend_name")
 
 @timeit to "initialize_GPU_arrays" begin
+    
+    # --- 1. Define shapes for readability and consistency ---
+    dim_grid = size(Tavg_gpu)                        # (nx, ny)
+    dim_tile = size(coverage_gpu)                    # (nx, ny, 1, nveg)
+    dim_soil = size(soil_dens_gpu)                   # (nx, ny, nlayers)
+    dim_veg  = size(root_gpu, 4)                     # Number of vegetation tiles: nveg
+    n_layers = dim_soil[3]                           # Extract layer count (usually 3)
 
-    # Helper for brevity
-    alloc(dims...) = KernelAbstractions.zeros(device_backend, FloatType, dims...)
+    # --- 2. Per-Tile States (Vegetation/Canopy) ---
+    # Shape: (nx, ny, 1, nveg)
+    const water_storage          = alloc(dim_tile...)
+    const max_water_storage      = alloc(dim_tile...)
+    const throughfall            = alloc(dim_tile...)
+    const canopy_evaporation     = alloc(dim_tile...)
+    const f_n                    = alloc(dim_tile...)
+    const net_radiation          = alloc(dim_tile...)
+    const potential_evaporation  = alloc(dim_tile...)
+    const aerodynamic_resistance = alloc(dim_tile...)
+    const transpiration          = alloc(dim_tile...)
+    const E_1_t                  = alloc(dim_tile...)
+    const E_2_t                  = alloc(dim_tile...)
+    const dry_time_factor        = alloc(dim_tile...)
 
-    # Canopy and surface states
-    const water_storage = alloc(size(coverage_gpu))
-    const max_water_storage = alloc(size(coverage_gpu))
-    const throughfall = alloc(size(coverage_gpu))
-    const canopy_evaporation = alloc(size(coverage_gpu))
-    const f_n = alloc(size(coverage_gpu))
+    # --- 3. Per-Pixel States (Grid Averages) ---
+    # Shape: (nx, ny)
+    const tsurf             = alloc(dim_grid...)
+    const Q_12              = alloc(dim_grid...)
+    const soil_evaporation  = alloc(dim_grid...)
+    const total_et          = alloc(dim_grid...)
+    const infiltration      = alloc(dim_grid...)
+    const surface_runoff    = alloc(dim_grid...)
+    const asat              = alloc(dim_grid...)
+    const subsurface_runoff = alloc(dim_grid...)
+    const total_runoff      = alloc(dim_grid...)
+    const g1_buf            = alloc(dim_grid...)
+    const g2_buf            = alloc(dim_grid...)
 
-    const net_radiation = alloc(size(coverage_gpu))
-    const Q_12 = alloc(size(Tavg_gpu))
-    const potential_evaporation = alloc(size(coverage_gpu))
-    const aerodynamic_resistance = alloc(size(coverage_gpu))
-    const tsurf = alloc(size(Tavg_gpu))
-
-    const soil_evaporation = alloc(size(Tavg_gpu))
-    const total_et = alloc(size(Tavg_gpu))
-    const infiltration = alloc(size(Tavg_gpu))
-
-    const surface_runoff = alloc(size(Tavg_gpu))
-    const asat = alloc(size(Tavg_gpu))
-
-    const subsurface_runoff = alloc(size(Tavg_gpu))
-    const interlayer_drainage = alloc(size(Tavg_gpu, 1), size(Tavg_gpu, 2), 2)
-    const total_runoff = alloc(size(Tavg_gpu))
-
-    # Soil property arrays
-    const bulk_dens_min = alloc(size(bulk_dens_gpu))
-    const soil_dens_min = alloc(size(bulk_dens_gpu))
-    const porosity = alloc(size(bulk_dens_gpu))
-    const Lsum = alloc(size(soil_dens_gpu))
-
-    # Soil temperature initialization
-    const soil_temperature = alloc(size(soil_dens_gpu))
-    soil_temperature[:, :, 1:1] .= Tavg_gpu
-    soil_temperature[:, :, 2:2] .= Tavg_gpu
-    soil_temperature[:, :, 3:3] .= Tavg_gpu
-
-    # Soil moisture arrays (3D: lon, lat, layer)
-    soil_dims = (size(soil_dens_gpu, 1), size(soil_dens_gpu, 2), size(soil_dens_gpu, 3))
-
-    const soil_moisture = alloc(soil_dims...)
-    const soil_moisture_max = alloc(soil_dims...)
-    const soil_moisture_critical = alloc(soil_dims...)
-
-    const kappa_array = alloc(soil_dims...)
-    const cs_array = alloc(soil_dims...)
-
-    const field_capacity = alloc(soil_dims...)
-    const wilting_point = alloc(soil_dims...)
-    const residual_moisture = alloc(soil_dims...)
-
-    const ice_frac = alloc(size(soil_moisture))
-    const organic_frac_gpu = alloc(size(soil_moisture))
+    # --- 4. Soil Properties & States ---
+    # Shape: (nx, ny, 3) or matched to soil density
+    const soil_moisture          = alloc(dim_soil...)
+    const soil_moisture_max      = alloc(dim_soil...)
+    const soil_moisture_critical = alloc(dim_soil...)
+    const kappa_array            = alloc(dim_soil...)
+    const cs_array               = alloc(dim_soil...)
+    const field_capacity         = alloc(dim_soil...)
+    const wilting_point          = alloc(dim_soil...)
+    const residual_moisture      = alloc(dim_soil...)
+    const ice_frac               = alloc(dim_soil...)
+    const soil_temperature       = alloc(dim_soil...) 
+    
+    const organic_frac_gpu       = alloc(dim_soil...)
     fill!(organic_frac_gpu, FloatType(organic_frac))
 
-    # --- Pre allocation for transpiration ---
-    const transpiration = alloc(size(coverage_gpu))
+    # Soil constant maps (Shape: nx, ny, 3)
+    const bulk_dens_min = alloc(size(bulk_dens_gpu)...)
+    const soil_dens_min = alloc(size(bulk_dens_gpu)...)
+    const porosity      = alloc(size(bulk_dens_gpu)...)
+    const Lsum          = alloc(size(soil_dens_gpu)...)
 
-    # transpiration_layers: (ny, nx, 3, nveg)
-    const transpiration_layers = alloc(size(coverage_gpu, 1), size(coverage_gpu, 2), 3, size(coverage_gpu, 4))
+    # --- 5. Complex Shapes ---
+    const interlayer_drainage  = alloc(dim_grid[1], dim_grid[2], 2)
+    const transpiration_layers = alloc(dim_grid[1], dim_grid[2], n_layers, dim_veg)
+    const g_sw_veg_buf         = alloc(dim_grid[1], dim_grid[2], 1, dim_veg)
 
-    # Layer splits: (ny, nx, 1, nveg)
-    const E_1_t = alloc(size(coverage_gpu))
-    const E_2_t = alloc(size(coverage_gpu))
-
-    # Intermediate buffers for stress and conductance
-    const g1_buf = alloc(size(Tavg_gpu))
-    const g2_buf = alloc(size(Tavg_gpu))
-
-    # g_sw_veg: (ny, nx, 1, nveg-1)
-    veg_dim = size(root_gpu, 4)
-    const g_sw_veg_buf = alloc(size(coverage_gpu, 1), size(coverage_gpu, 2), 1, veg_dim)
-
-    const dry_time_factor = alloc(size(coverage_gpu))
-    # ---
+    # --- 6. Initialization ---
+    # Initialize soil temperature with Tavg (broadcast across the ground layers, usually 3)
+    for k in 1:n_layers
+        # Using view to ensure we copy into the existing array
+        view(soil_temperature, :, :, k) .= Tavg_gpu
+    end
 end
 
 # ============================================================================
@@ -122,29 +114,22 @@ end
 # ============================================================================
 
 @timeit to "calculate_soil_properties" begin
-    _bulk_dens_min, _soil_dens_min, _porosity, _soil_moisture_max,
-    _soil_moisture_critical, _field_capacity, _wilting_point, _residual_moisture =
-        calculate_soil_properties(
-            bulk_dens_gpu, soil_dens_gpu, depth_gpu,
-            Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu
-        )
-end
+    # Calculate properties directly into the pre-allocated global arrays
+    calculate_soil_properties!(
+        # Destinations (global arrays)
+        bulk_dens_min, soil_dens_min, porosity,
+        soil_moisture_max, soil_moisture_critical,
+        field_capacity, wilting_point, residual_moisture,
 
+        # Inputs
+        bulk_dens_gpu, soil_dens_gpu, depth_gpu,
+        Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
 
-@timeit to "copy_soil_properties" begin
-    # Copy calculated values into constant/global GPU arrays
-    bulk_dens_min .= _bulk_dens_min
-    soil_dens_min .= _soil_dens_min
-    porosity .= _porosity
-    soil_moisture_max .= _soil_moisture_max
-    soil_moisture_critical .= _soil_moisture_critical
-    field_capacity .= _field_capacity
-    wilting_point .= _wilting_point
-    residual_moisture .= _residual_moisture
+        # Constants
+        organic_frac, bulk_dens_org, soil_dens_org
+    )
 
-    # Initialize soil moisture within physical bounds
-    soil_moisture .= min.(init_moist_gpu, soil_moisture_max)
-    soil_moisture .= max.(soil_moisture, residual_moisture)
+    soil_moisture .= clamp.(init_moist_gpu, residual_moisture, soil_moisture_max)
 end
 
 # ============================================================================
@@ -427,8 +412,8 @@ function process_year(year)
 
             day_prev = day
             month_prev = month
-        end 
-    end 
+        end
+    end
 
     # ------------------------------------------------------------------------
     # Cleanup
@@ -448,11 +433,11 @@ for year in start_year:end_year
     if has_input_files(year)
         process_year(year)
 
-        show(to) 
+        show(to)
 
         @timeit to "garbage collection" begin
             Base.GC.gc()
-            
+
             if backend_name == "CUDA"
                 CUDA.reclaim()
             elseif backend_name == "AMDGPU"

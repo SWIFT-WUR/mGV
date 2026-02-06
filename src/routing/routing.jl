@@ -1,99 +1,125 @@
-# src/routing/routing.jl
-
-const MIN_SLOPE   = 0.0001f0    # Minimum channel slope [m/m]
-const MANNING_N   = 0.035f0
-const ROUTING_DT  = 900.0f0 #timestep in seconds
+const MIN_SLOPE = ft(0.0001)    # Minimum channel slope [m/m]
+const MANNING_N = ft(0.035)
+const ROUTING_DT = ft(28800.0)  # timestep in seconds
+const MAX_RIVER_VELOCITY = ft(6.0)  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
 
 struct RoutingState
     # --- Topography ---
-    downstream_idx::CuArray{Int32, 1}
-    length_gpu::CuArray{Float32, 1}
-    slope_gpu::CuArray{Float32, 1}
-    width_gpu::CuArray{Float32, 1}
-    cell_area_gpu::CuArray{Float32, 1}
-    accumulation_gpu::CuArray{Float32, 1}
-    
+    # Downstream index is integer
+    downstream_idx::ArrayType{Int32,1}
+
+    # Static parameters (geometry)
+    length_gpu::ArrayType{FloatType,1}
+    slope_gpu::ArrayType{FloatType,1}
+    width_gpu::ArrayType{FloatType,1}
+    cell_area_gpu::ArrayType{FloatType,1}
+    accumulation_gpu::ArrayType{FloatType,1}
+
     # --- State ---
-    area_gpu::CuArray{Float32, 1}
-    discharge_gpu::CuArray{Float32, 1}
-    travel_time_gpu::CuArray{Float32, 1}
+    area_gpu::ArrayType{FloatType,1}
+    discharge_gpu::ArrayType{FloatType,1}
+    travel_time_gpu::ArrayType{FloatType,1}
 
     # --- CFL Diagnostics ---
-    cfl_gpu::CuArray{Float32, 1}    
-    
+    cfl_gpu::ArrayType{FloatType,1}
+
     # --- Buffers ---
-    inflow_current::CuArray{Float32, 1} 
-    inflow_next::CuArray{Float32, 1}
+    inflow_current::ArrayType{FloatType,1}
+    inflow_next::ArrayType{FloatType,1}
+
+    # --- Diagnostic counter ---
+    violation_counter::ArrayType{Int32,1}
 end
 
-function kinematic_wave_kernel!(area, discharge, inflow_next, inflow_current, 
-                                cfl_buffer, travel_time_buffer,
-                                runoff_forcing_flat, downstream_idx, lengths, 
-                                slopes, widths, cell_areas, dt::Float32, n::Int)
-    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if i > n; return; end
+@kernel function kinematic_wave_kernel!(area, discharge, inflow_next, inflow_current,
+    cfl_buffer, travel_time_buffer,
+    runoff_forcing_flat, downstream_idx, lengths,
+    slopes, widths, cell_areas, dt, n,
+    violation_counter)
 
-    # [Load Data]
-    A_old = area[i]
-    Q_old = discharge[i]
-    Q_in  = inflow_current[i]
-    
-    # [Lateral Inflow]
-    runoff_m3s = (runoff_forcing_flat[i] * cell_areas[i]) * 1.15740741f-8 
-    Q_total_in = Q_in + runoff_m3s
+    # Backend-agnostic indexing
+    i = @index(Global, Linear)
 
-    # [Continuity]
-    dAdt  = (Q_total_in - Q_old) / lengths[i]
-    A_new = max(A_old + dAdt * dt, 0.0f0)
+    if i <= n
+        # Load Data
+        A_old = area[i] # Water (area) stored in channel (in this cell)
+        Q_old = discharge[i]
+        Q_in = inflow_current[i] # Inflow from upstream cell(s)
 
-    # [Momentum]
-    width = widths[i]
-    slope = slopes[i]
-    alpha = (sqrt(slope) / MANNING_N) * (width ^ -0.6666666f0)
-    Q_new = alpha * (A_new ^ 1.6666666f0)
+        # Lateral inflow from runoff
+        # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8 
+        runoff_m3s = (runoff_forcing_flat[i] * cell_areas[i]) * ft(1.15740741e-8)
+        Q_total_in = Q_in + runoff_m3s
 
-    # --- CFL & TRAVEL TIME CALCULATION ---    
-    # Celerity c = dQ/dA = (5/3) * v
-    current_cfl = 0.0f0
-    t_time      = NaN32 # Default to NaN if no water
-    if A_new > 1.0f-4 # Avoid division by zero
-        v = Q_new / A_new
-        c = 1.6666666f0 * v  # 5/3 * v
-        current_cfl = (c * dt) / lengths[i]
+        # Mass balance
+        dAdt = (Q_total_in - Q_old) / lengths[i] # Rate of change of stored water
+        A_new = max(A_old + dAdt * dt, ft(0)) # Update amount of water in channel
 
-        # Calculate Travel Time: T = L / v
-        # Guard against extremely small velocity to prevent infinity
-        if v > 1.0f-6
-            t_time = lengths[i] / v
+        # Momentum (Manning's equation)
+        width = widths[i]
+        slope = slopes[i]
+        alpha = (sqrt(slope) / MANNING_N) * (width^ft(-0.66666667)) # -2/3
+        Q_new = alpha * (A_new^ft(1.66666667))  # 5/3
+
+        # Velocity capping
+        # We calculate the theoretical velocity
+        v = ft(0)
+        if A_new > ft(1.0e-6)
+            v = Q_new / A_new
+            
+            # Check against the limit             
+            if v > MAX_RIVER_VELOCITY
+                v = MAX_RIVER_VELOCITY # Clamp velocity
+                Q_new = v * A_new # Recalculate Q to maintain mass consistency (Q = V * A)
+                KernelAbstractions.@atomic violation_counter[1] += 1 # Diagnostic
+            end
+        end
+
+        # CFL and travel time     
+        current_cfl = ft(0)
+        t_time = ft(NaN)
+
+        if A_new > ft(1.0e-4) # Threshold for "water exists"
+            v = Q_new / A_new # Speed of the water
+            c = ft(1.66666667) * v # Wave celerity c = 5/3 * v
+            current_cfl = (c * dt) / lengths[i]
+
+            # Calculate travel time
+            if v > ft(1.0e-6)
+                t_time = lengths[i] / v
+            end
+        end
+
+        cfl_buffer[i] = current_cfl
+        travel_time_buffer[i] = t_time
+
+        # Update states
+        area[i] = A_new
+        discharge[i] = Q_new
+
+        # Scatter / routing
+        dest = downstream_idx[i]
+
+        # Atomic add for safety since multiple upstream cells
+        # can simultaneously flow into the same downstream cell
+        if dest > 0
+            KernelAbstractions.@atomic inflow_next[dest] += Q_new
         end
     end
-
-    cfl_buffer[i] = current_cfl
-    travel_time_buffer[i] = t_time
-
-    # [Update State]
-    area[i]      = A_new
-    discharge[i] = Q_new
-
-    # [Scatter]
-    dest = downstream_idx[i]
-    if dest > 0
-        CUDA.atomic_add!(pointer(inflow_next, dest), Q_new)
-    end
-    return nothing
 end
 
 function run_routing_step!(r_state::RoutingState, total_runoff_mm, dt_day_sec)
+    
     n_pixels = length(r_state.downstream_idx)
     n_substeps = Int(ceil(dt_day_sec / ROUTING_DT))
-    dt_step    = Float32(dt_day_sec) / Float32(n_substeps)
-
+    dt_step = Float32(dt_day_sec) / Float32(n_substeps)
     runoff_flat = reshape(total_runoff_mm, :)
-    threads = 256
-    blocks  = cld(n_pixels, threads)
+
+    kernel_launcher! = kinematic_wave_kernel!(device_backend, 256)
 
     for t in 1:n_substeps
-        @cuda threads=threads blocks=blocks kinematic_wave_kernel!(
+        # We call the 'launcher', not the original function name
+        kernel_launcher!(
             r_state.area_gpu,
             r_state.discharge_gpu,
             r_state.inflow_next,
@@ -107,20 +133,22 @@ function run_routing_step!(r_state::RoutingState, total_runoff_mm, dt_day_sec)
             r_state.width_gpu,
             r_state.cell_area_gpu,
             dt_step,
-            n_pixels
+            n_pixels,
+            r_state.violation_counter;
+            ndrange=n_pixels # Define the total number of items to process
         )
-        
-        # --- CFL CHECK ---
-        # Find max CFL in the grid (GPU Reduction)
-        max_cfl = maximum(r_state.cfl_gpu)
-        
-        if max_cfl > 1.0f0
-            @warn "CFL Violation Detected!" substep=t max_courant=max_cfl threshold=1.0
-            # Optional: You could break or throw error here
+
+        # Ensure GPU finishes this step before we swap buffers
+        KernelAbstractions.synchronize(device_backend)
+
+        # Diagnostics: copy the single integer from GPU to CPU to print it
+        n_capped = Array(r_state.violation_counter)[1]
+        if n_capped > 0
+            @warn "Velocity capped!" substep=t count=n_capped max_allowed=MAX_RIVER_VELOCITY
         end
 
         copyto!(r_state.inflow_current, r_state.inflow_next)
-        fill!(r_state.inflow_next, 0.0f0)
+        fill!(r_state.inflow_next, ft(0))
     end
     return nothing
 end

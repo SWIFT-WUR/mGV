@@ -8,7 +8,7 @@ module SimConstants
     const K   = 0.4f0
     const z2  = 10.0f0    # Even for whole numbers, use .0f0 or just f0
     const Ri_cr = 0.2f0
-    const emissivity = 0.97f0 
+    const emissivity = 1.0f0 
 
     # Thermal conductivity constants
     const Ki       = 2.2f0   # Thermal conductivity of ice (W/mK)

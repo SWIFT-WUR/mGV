@@ -1,68 +1,63 @@
 @inline function surface_temp_kernel(
-    tsurf_val, T_soil_1, T_soil_2, albedo, Rs, RL, ra, 
+    tsurf_val, T_soil_1, T_soil_2, albedo, 
+    swdown, lwdown, ra, 
     kap, D_1, D_2, D_3, Cs_val, total_et_val, Ta, psurf, 
     delta_t 
 )
-    # --- Constants (Strict Float32 via f0) ---
-    # No casting needed if these are written as f0
-    Sigma   = 5.67f-8
-    Emis    = 0.98f0 
+    # --- Empirical Newton-Raphson Constants ---
     Hvap_Tb = 2.26f6
     Tb      = 373.15f0
     Tc      = 647.096f0
     n_exp   = 0.38f0
-    denom_L = Tc - Tb        # Calculated once at compile time
-    Rho_w   = 1000.0f0 
-    Cp_air  = 1004.0f0 
-    Kelvin  = 273.15f0
-
-    # --- Calculations ---
-    Ta_K = Ta + Kelvin
+    denom_L = Tc - Tb
     
-    # Air Density
-    air_dens = 0.003486f0 * psurf * 1000.0f0 / (Kelvin + Ta)
+    # --- Atmospheric Calculations ---
+    Ta_K = Ta + t_freeze # Using t_freeze from PhysicalConstants 
     
+    # Air Density using pa_per_kpa 
+    air_dens = 0.003486f0 * psurf * pa_per_kpa / (t_freeze + Ta) 
+    
+    # Combined soil depths 
     D_combined_1 = D_1 + D_2
     D_combined_2 = D_3
 
-    # Heat Transfer Terms
+    # Heat Transfer 
     term_A = (kap / D_combined_2) + (Cs_val * D_combined_2 / (2.0f0 * delta_t))
-    
-    # Note: 1.0f0 ensures the whole denominator is Float32
     denom_ht = 1.0f0 + (D_combined_1 / D_combined_2) + (Cs_val * D_combined_1 * D_combined_2 / (2.0f0 * delta_t * kap))
-    
     ht_term = term_A / denom_ht
 
-    # Soil temp terms
-    T1_K = T_soil_1 + Kelvin
-    T2_K = T_soil_2 + Kelvin
+    # Soil temp terms (L2 and L3) 
+    T1_K = T_soil_1 + t_freeze
+    T2_K = T_soil_2 + t_freeze
     num_t6 = (kap * T2_K / D_combined_2) + (Cs_val * D_combined_2 * T1_K / (2.0f0 * delta_t))
     term6  = num_t6 / denom_ht
 
-    # Air terms
+    # Air resistance and storage using c_p_air 
     z_a = 10.0f0
-    air_storage = (air_dens * Cp_air * z_a) / (2.0f0 * delta_t)
-    air_cond    = air_dens * Cp_air / max(ra, 1f-3)
+    air_storage = (air_dens * c_p_air * z_a) / (2.0f0 * delta_t)
+    air_cond    = air_dens * c_p_air / max(ra, 1f-3)
 
-    term5 = air_storage * (tsurf_val + Kelvin)
+    term5 = air_storage * (tsurf_val + t_freeze)
 
-    RHS_const = (1.0f0 - albedo) * Rs + Emis * RL + air_cond * Ta_K + term5 + term6
+    # --- Energy Balance (RHS) ---
+    # Using emissivity and swdown/lwdown directly 
+    RHS_const = (1.0f0 - albedo) * swdown + emissivity * lwdown + air_cond * Ta_K + term5 + term6
     LHS_coeff = ht_term + air_cond + air_storage
-    et_factor = total_et_val / (delta_t * 1000.0f0)
+    et_factor = total_et_val / (delta_t * 1000.0f0) 
 
     # --- Newton-Raphson Loop ---
     current_tsurf = tsurf_val
     
     for i in 1:3
-        Tk = current_tsurf + Kelvin
+        Tk = current_tsurf + t_freeze
         
-        # Latent Heat
-        term4 = Rho_w * (2.501f6 - 2370.0f0 * current_tsurf) * et_factor
+        # Latent Heat of Vaporization using rho_w 
+        term4 = rho_w * (2.501f6 - 2370.0f0 * current_tsurf) * et_factor
         
-        # Function Value
-        f_val = (Emis * Sigma * (Tk^4) + LHS_coeff * Tk) - (RHS_const - term4)
+        # Function Value using sigma 
+        f_val = (emissivity * sigma * (Tk^4) + LHS_coeff * Tk) - (RHS_const - term4)
         
-        # Derivative calculation
+        # Derivative 
         if Tk < Tc
             ratio = max((Tc - Tk) / denom_L, 1f-6)
             lv_deriv = Hvap_Tb * n_exp * (ratio ^ (n_exp - 1.0f0)) * (-1.0f0 / denom_L)
@@ -70,9 +65,9 @@
             lv_deriv = 0.0f0
         end
         
-        df_val = 4.0f0 * Emis * Sigma * (Tk^3) + LHS_coeff - (Rho_w * lv_deriv * et_factor)
+        df_val = 4.0f0 * emissivity * sigma * (Tk^3) + LHS_coeff - (rho_w * lv_deriv * et_factor)
         
-        # Step with safety check
+        # Step 
         step = (abs(df_val) >= 1f-10) ? (f_val / df_val) : 0.0f0
         step = clamp(step, -10.0f0, 10.0f0)
         
@@ -82,43 +77,28 @@
     return (current_tsurf <= -99.0f0 || current_tsurf >= 99.0f0) ? 0.0f0 : current_tsurf
 end
 
-# --- 2. The Optimized Driver Function ---
 function solve_surface_temperature!(
     tsurf, 
-    soil_temperature, albedo_gpu, Rs, RL, 
+    soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
     aerodynamic_resistance, 
     kappa, depth_gpu, delta_t, Cs, total_et, 
     T_a, cv_gpu, psurf_gpu
 )
-
-    @assert delta_t isa Float32 "delta_t must be Float32"
-    @assert eltype(tsurf) == Float32
-
-    # 1. Albedo Reduction
-    # (Matches existing logic)
-    albedo_grid = sum_with_nan_handling(cv_gpu .* albedo_gpu, 4)
-    @. albedo_grid = ifelse(isnan(albedo_grid) | (abs(albedo_grid) > 1f30), 0f0, albedo_grid)
+    # 1. Calculate weighted Albedo correctly across ALL tiles (Veg + Soil)
+    # This ensures the bare soil albedo is included 
+    albedo_grid = sum(cv_gpu .* albedo_gpu, dims=4) 
     
-    # 2. Aerodynamic Resistance Reduction (MOVED HERE)
-    # Calculate effective inverse resistance: sum(cv / ra)
-    # We use Float32 literals and avoid explicit T() casts
-    ra_eff_inv = sum(cv_gpu ./ aerodynamic_resistance, dims=4)
-    
-    # Invert back to resistance: ra_eff = 1 / ra_eff_inv
-    # Add epsilon to avoid division by zero
+    # 2. Calculate ra_eff correctly (Inverse weighted sum)
+    ra_eff_inv = sum(cv_gpu ./ max.(aerodynamic_resistance, 1f-9), dims=4)
     ra_eff = 1.0f0 ./ max.(ra_eff_inv, 1f-9)
-    
-    # Sanitize RA in-place
-    @. ra_eff = ifelse(isnan(ra_eff) | (abs(ra_eff) > 1f30), 0f0, ra_eff)
 
-    # 3. THE MEGA-BROADCAST
-    # We pass views of the 3D/4D arrays so the kernel sees 2D inputs.
+    # 3. Call the mega-broadcast
     @views @. tsurf = surface_temp_kernel(
         tsurf,                      
         soil_temperature[:,:,2],    
         soil_temperature[:,:,3],    
         albedo_grid,                
-        Rs, RL, ra_eff,             # Using the locally calculated ra_eff
+        swdown_gpu, lwdown_gpu, ra_eff,
         kappa[:,:,1],               
         depth_gpu[:,:,1],           
         depth_gpu[:,:,2],           
@@ -127,12 +107,9 @@ function solve_surface_temperature!(
         total_et,                   
         T_a,                        
         psurf_gpu,       
-        delta_t            
+        delta_t             
     )
-
-    return nothing
 end
-
 
 
 function estimate_layer_temperature!(soil_temperature, depth_gpu, dp_gpu, tsurf, Tavg_gpu)
