@@ -58,30 +58,6 @@ function calculate_surface_runoff!(surface_runoff, A_sat, prec_gpu, throughfall,
 end
 
 
-function calculate_subsurface_runoff(soil_moisture, soil_moisture_max, Ds_gpu, Dsmax_gpu, Ws_gpu)
-    bottomsoil_moisture = soil_moisture[:, :, 3:3]  # W_2^-[N+1], shape (204, 180, 1)
-    bottomsoil_moisture_max = soil_moisture_max[:, :, 3:3]   # W_2^c, 
-    Ws_fraction = Ws_gpu .* bottomsoil_moisture_max         # W_s * W_2^c, shape (204, 180, 1)
-
-    # Initialize subsurface runoff (Q_b * Δt, assuming Δt = 1 day)
-    Q_b = CUDA.zeros(float_type, size(bottomsoil_moisture, 1), size(bottomsoil_moisture, 2), size(bottomsoil_moisture, 3))
-
-    # Compute subsurface runoff using ifelse for Eq. 21a and 21b
-    Q_b = ifelse.(
-        bottomsoil_moisture .<= Ws_fraction,
-        # Eq. 21a: Linear drainage
-        (Ds_gpu .* Dsmax_gpu ./ Ws_fraction) .* bottomsoil_moisture,
-        # Eq. 21b: Nonlinear drainage
-        (Ds_gpu .* Dsmax_gpu ./ Ws_fraction) .* bottomsoil_moisture .+
-        (Dsmax_gpu .- (Ds_gpu .* Dsmax_gpu ./ Ws_gpu)) .* 
-        ((bottomsoil_moisture .- Ws_fraction) ./ (bottomsoil_moisture_max .- Ws_fraction)) .^ 2
-    )
-
-    Q_b = max.(Q_b, 0.0)     # Ensure non-negative runoff
-
-    return Q_b
-end
-
 # Eq. (24): Total runoff
 function calculate_total_runoff!(total_runoff, surface_runoff, subsurface_runoff, fillvalue_threshold)
     

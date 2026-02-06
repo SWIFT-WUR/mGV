@@ -60,9 +60,9 @@ function calculate_soil_properties!(
     organic_frac, bulk_dens_org, soil_dens_org
 )
     backend = KernelAbstractions.get_backend(bulk_dens_min)
-    kernel! = soil_properties_kernel!(backend)
+    kernel_launcher! = soil_properties_kernel!(backend)
     
-    kernel!(
+    kernel_launcher!(
         bulk_dens_min, soil_dens_min, porosity,
         soil_moisture_max, soil_moisture_critical, 
         field_capacity, wilting_point, residual_moisture,

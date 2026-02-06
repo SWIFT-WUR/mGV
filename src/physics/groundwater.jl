@@ -74,29 +74,6 @@ function volumetric_heat_capacity!(cs_array, bulk_dens, soil_dens, soil_moisture
     return nothing
 end
 
-function calculate_gsm_inv(soil_moisture, soil_moisture_critical, wilting_point)
-    ## Initialize gsm_inv to zeros (handles full stress case: soil_moisture < wilting_point)
-    # println("soil_moisture shape: ", size(soil_moisture))
-
-    gsm_inv = CUDA.zeros(eltype(soil_moisture), size(soil_moisture,1), size(soil_moisture,2), size(soil_moisture,3) )
-    # println("gsm_inv shape: ", size(gsm_inv))
-    
-    # Calculate the partial stress term for all elements
-    partial_stress = (soil_moisture .- wilting_point) ./ (soil_moisture_critical .- wilting_point)
-
-    # Use ifelse to handle the two remaining cases:
-    # - Case 1: No stress (soil_moisture >= soil_moisture_critical) -> 1
-    # - Case 2: Partial stress (wilting_point <= soil_moisture < soil_moisture_critical) -> partial_stress
-    # - Case 3: Anything still zero is implicitly soil_moisture < wilting_point
-
-    gsm_inv .= ifelse.(soil_moisture .>= soil_moisture_critical,
-                      1.0,
-                      partial_stress)
-
-    return gsm_inv
-end
-
-
 function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moist, expt)
     T = eltype(current_moist)
     Z = T(0)
@@ -311,10 +288,10 @@ function solve_runoff_and_drainage!(
     soil_moisture_max, ksat, residual_moisture, expt,
     Dsmax, Ds, Ws, c_expt
 )
-    kernel! = runoff_drainage_kernel!(device_backend)
+    kernel_launcher! = runoff_drainage_kernel!(device_backend)
     nx, ny = size(surface_inflow)
     
-    kernel!(
+    kernel_launcher!(
         soil_moisture, subsurface_runoff, interlayer_drainage,
         surface_inflow, soil_evaporation, transpiration,
         soil_moisture_max, ksat, residual_moisture, expt,
@@ -322,6 +299,5 @@ function solve_runoff_and_drainage!(
         ndrange = (nx, ny)
     )
 
-    KernelAbstractions.synchronize(device_backend)
     return nothing
 end
