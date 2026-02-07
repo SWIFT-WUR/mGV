@@ -301,81 +301,163 @@ function calculate_canopy_evaporation!(
 end
 
 
-function calculate_transpiration!(
-    # --- OUTPUTS (Mutated in-place) ---
-    transpiration_full, transpiration_layers, E_1_t_full, E_2_t_full, 
-    g1, g2, g_sw_veg, dry_time_factor,
+@kernel function transpiration_kernel!(
+    # --- OUTPUTS ---
+    transpiration_full,      # (nx, ny, 1, nveg)
+    transpiration_layers,    # (nx, ny, 3, nveg)
+    
     # --- INPUTS ---
-    potential_evaporation, aerodynamic_resistance, rarc_gpu,
-    water_storage, max_water_storage, soil_moisture_old,
-    soil_moisture_critical, wilting_point, root_gpu,
-    rmin_gpu, LAI_gpu, cv_gpu, f_n
+    potential_evaporation,   # (nx, ny, 1, nveg)
+    water_storage,           # (nx, ny, 1, nveg)
+    max_water_storage,       # (nx, ny, 1, nveg)
+    soil_moisture_old,       # (nx, ny, 3)
+    soil_moisture_critical,  # (nx, ny, 3)
+    wilting_point,           # (nx, ny, 3)
+    root_gpu,                # (nx, ny, 3, nveg)
+    cv_gpu,                  # (nx, ny, 1, nveg)
+    f_n                      # (nx, ny, 1, nveg)
+    
+    # Unused arguments from original function signature are omitted 
+    # from the kernel to save register pressure:
+    # aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
 )
-    # Constants
-    EPS = 1f-9
-    ny, nx = size(potential_evaporation, 1), size(potential_evaporation, 2)
-    veg_dim = size(root_gpu, 4)
-    nveg    = size(cv_gpu, 4)
+    i, j = @index(Global, NTuple)
 
-    # 1. Stress Factors (In-place)
-    # Using original names directly since they are confirmed Float32
-    @views begin
-        W1 = soil_moisture_old[:, :, 1]
-        W2 = soil_moisture_old[:, :, 2]
-        Wcr1 = soil_moisture_critical[:, :, 1]
-        Wcr2 = soil_moisture_critical[:, :, 2]
-        Wwp1 = wilting_point[:, :, 1]
-        Wwp2 = wilting_point[:, :, 2]
+    # Boundary Check
+    if i <= size(transpiration_full, 1) && j <= size(transpiration_full, 2)
+        
+        # Constants
+        EPS  = ft(1e-9)
+        ZERO = ft(0.0)
+        ONE  = ft(1.0)
+        
+        # --- 1. SOIL STRESS (g1, g2) ---
+        # Load Layer 1
+        W1   = soil_moisture_old[i,j,1]
+        Wcr1 = soil_moisture_critical[i,j,1]
+        Wwp1 = wilting_point[i,j,1]
+        
+        # Load Layer 2
+        W2   = soil_moisture_old[i,j,2]
+        Wcr2 = soil_moisture_critical[i,j,2]
+        Wwp2 = wilting_point[i,j,2]
+
+        # g1 = clamp((W1 - Wwp1) / (Wcr1 - Wwp1 + EPS), 0, 1)
+        g1 = clamp((W1 - Wwp1) / (Wcr1 - Wwp1 + EPS), ZERO, ONE)
+        g2 = clamp((W2 - Wwp2) / (Wcr2 - Wwp2 + EPS), ZERO, ONE)
+
+        # --- 2. VEGETATION LOOP ---
+        # Loop over the 4th dimension (vegetation tiles)
+        nveg = size(root_gpu, 4)
+        
+        # Determine actual vegetation limit (exclude bare soil if needed)
+        # Original code implied bare soil is the last index and should be zeroed.
+        # We loop through all, but apply zero logic at the end.
+        
+        for k in 1:nveg
+            # Load Root Fractions
+            f1 = root_gpu[i,j,1,k]
+            f2 = root_gpu[i,j,2,k]
+            
+            # --- Vegetation Conductance (g_sw_veg) ---
+            # Original: clamp((f1 * g1) / (f1 + EPS), 0, 1)
+            g_sw_veg = clamp((f1 * g1) / (f1 + EPS), ZERO, ONE)
+
+            # --- Canopy Wetness / Dry Time Factor ---
+            # Inputs are 4D (nx,ny,1,veg). Access [i,j,1,k]
+            ws   = water_storage[i,j,1,k]
+            max_ws = max_water_storage[i,j,1,k]
+            cv   = cv_gpu[i,j,1,k]
+            fn_val = f_n[i,j,1,k]
+            pe   = potential_evaporation[i,j,1,k]
+
+            # Logic: clamp(1 - f_n * ( (Ws/Cv) / MaxWs )^(2/3), 0, 1)
+            # Be careful with parenthesis from original code
+            term_inner = (ws / max(cv, EPS)) / max(max_ws, EPS)
+            term_inner = clamp(term_inner, ZERO, ONE)
+            
+            dry_time_factor = clamp(ONE - fn_val * (term_inner ^ (ft(2.0)/ft(3.0))), ZERO, ONE)
+
+            # Fix: Original code forced dry_time_factor to 1.0 for the last index (bare soil)
+            # We handle that generally by checking if we are at the last index
+            if k == nveg
+                dry_time_factor = ONE
+            end
+
+            # --- Transpiration Calculation ---
+            # T = Cv * DryFactor * PotEvap * Conductance
+            trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg, ZERO, ft(Inf))
+            
+            # --- Layer Weighting (E1, E2) ---
+            # Original: trans * (f1*g1) / (f1*g1 + f2*g2 + EPS)
+            weight1 = f1 * g1
+            weight2 = f2 * g2
+            total_denom = weight1 + weight2 + EPS
+            
+            e1_val = trans_val * (weight1 / total_denom)
+            e2_val = trans_val * (weight2 / total_denom)
+
+            # --- Bare Soil Check ---
+            # Original code zeros out the last index (Bare Soil)
+            # "if nveg > veg_dim ... end:end .= 0"
+            # Assuming the last index is always bare soil in this context:
+            if k == nveg
+                 trans_val = ZERO
+                 e1_val = ZERO
+                 e2_val = ZERO
+            end
+
+            # --- WRITE OUTPUTS ---
+            # 1. Total Transpiration
+            transpiration_full[i,j,1,k] = trans_val
+            
+            # 2. Layer distributed transpiration
+            transpiration_layers[i,j,1,k] = e1_val
+            transpiration_layers[i,j,2,k] = e2_val
+            transpiration_layers[i,j,3,k] = ZERO
+        end
     end
+end
 
-    @. g1 = clamp((W1 - Wwp1) / (Wcr1 - Wwp1 + EPS), 0f0, 1f0)
-    @. g2 = clamp((W2 - Wwp2) / (Wcr2 - Wwp2 + EPS), 0f0, 1f0)
+function calculate_transpiration!(
+    # Outputs
+    transpiration_full, 
+    transpiration_layers, 
+    # Inputs
+    potential_evaporation, 
+    water_storage, 
+    max_water_storage, 
+    soil_moisture_old, 
+    soil_moisture_critical, 
+    wilting_point, 
+    root_gpu, 
+    cv_gpu, 
+    f_n
+)
+    # 1. Configuration
+    kernel_launcher! = transpiration_kernel!(device_backend)    
+    nx, ny = size(transpiration_full)
 
-    # 2. Vegetation Conductance
-    @views begin
-        f1 = reshape(root_gpu[:, :, 1, :], ny, nx, 1, veg_dim)
-        f2 = reshape(root_gpu[:, :, 2, :], ny, nx, 1, veg_dim)
-    end
-    # Reshaping views for broadcasting
-    g1b = reshape(g1, ny, nx, 1, 1)
-    g2b = reshape(g2, ny, nx, 1, 1)
-
-    @. g_sw_veg = clamp((f1 * g1b) / (f1 + EPS), 0f0, 1f0)
-
-    # 3. Canopy Wetness and Dry Time Factor
-    # Fused broadcast: no intermediate allocations
-    @. dry_time_factor = clamp(1f0 - f_n * (clamp((water_storage / max(cv_gpu, EPS)) / max(max_water_storage, EPS), 0f0, 1f0) ^ (2f0/3f0)), 0f0, 1f0)
-    dry_time_factor[:, :, :, end:end] .= 1f0
-
-    # 4. Transpiration (Vegetation Tiles)
-    # Define views of pre-allocated output arrays
-    trans_veg_slice = @view transpiration_full[:, :, :, 1:veg_dim]
-    e1_veg_slice    = @view E_1_t_full[:, :, :, 1:veg_dim]
-    e2_veg_slice    = @view E_2_t_full[:, :, :, 1:veg_dim]
-
-    @. trans_veg_slice = clamp(cv_gpu[:, :, :, 1:veg_dim] * dry_time_factor[:, :, :, 1:veg_dim] * potential_evaporation[:, :, :, 1:veg_dim] * g_sw_veg, 0f0, Inf32)
-
-    # 5. Layer Weighting & Assembly
-    # Fusing the layer split math
-    @. e1_veg_slice = trans_veg_slice * (f1 * g1b) / (f1 * g1b + f2 * g2b + EPS)
-    @. e2_veg_slice = trans_veg_slice * (f2 * g2b) / (f1 * g1b + f2 * g2b + EPS)
-
-    # 6. Ensure Bare Soil (last tile) is zeroed if it exists
-    if nveg > veg_dim
-        transpiration_full[:, :, :, end:end] .= 0f0
-        E_1_t_full[:, :, :, end:end]         .= 0f0
-        E_2_t_full[:, :, :, end:end]         .= 0f0
-    end
-
-    # 7. Update 3D Transpiration Layers Array (In-place copy)
-    @views begin
-        transpiration_layers[:, :, 1, :] .= E_1_t_full[:, :, 1, :]
-        transpiration_layers[:, :, 2, :] .= E_2_t_full[:, :, 1, :]
-        transpiration_layers[:, :, 3, :] .= 0f0 
-    end
+    # 2. Launch
+    kernel_launcher!(
+        transpiration_full, 
+        transpiration_layers,
+        potential_evaporation, 
+        water_storage, 
+        max_water_storage, 
+        soil_moisture_old, 
+        soil_moisture_critical, 
+        wilting_point, 
+        root_gpu, 
+        cv_gpu, 
+        f_n;
+        ndrange = (nx, ny)
+    )
 
     return nothing
 end
+
+
 
 function calculate_soil_evaporation!(
     soil_evap, # <--- Output array (Modified in-place, 2D Grid)

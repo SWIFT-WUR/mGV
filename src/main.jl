@@ -251,13 +251,18 @@ function process_year(year)
             @timeit to "calculate_transpiration" begin
                 calculate_transpiration!(
                     # Outputs
-                    transpiration, transpiration_layers, E_1_t, E_2_t,
-                    g1_buf, g2_buf, g_sw_veg_buf, dry_time_factor,
+                    transpiration,
+                    transpiration_layers,
                     # Inputs
-                    potential_evaporation, aerodynamic_resistance, rarc_gpu,
-                    water_storage, max_water_storage, soil_moisture,
-                    soil_moisture_critical, wilting_point, root_gpu,
-                    rmin_gpu, LAI_gpu, cv_gpu, f_n
+                    potential_evaporation, 
+                    water_storage, 
+                    max_water_storage, 
+                    soil_moisture,
+                    soil_moisture_critical, 
+                    wilting_point, 
+                    root_gpu, 
+                    cv_gpu, 
+                    f_n
                 )
             end
 
