@@ -32,7 +32,7 @@ function read_and_allocate_parameter(varname::String)
     end
 
     # 6) Pre-allocating memory on the active device (VRAM/RAM)
-    device_arr = KernelAbstractions.zeros(device_backend, FloatType, adjusted_dims...)
+    device_arr = alloc(FloatType, adjusted_dims...)
     println("Allocated $backend_name array of size: ", size(device_arr))
 
     return cpu_preload, device_arr
@@ -82,7 +82,8 @@ function read_and_allocate_forcing(prefix::String, year::Int, varname::String)
 
     # 3) Allocate device buffer (2D)
     # For forcing, we only keep the current day (therefore a 2D buffer) on the device to save memory
-    device_arr = KernelAbstractions.zeros(device_backend, FloatType, size(cpu_preload, 1), size(cpu_preload, 2))
+    nx, ny = size(cpu_preload)[1:2]
+    device_arr = alloc(FloatType, nx, ny)
 
     println("Allocated $backend_name buffer size: ", size(device_arr))
 
