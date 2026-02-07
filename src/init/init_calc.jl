@@ -60,7 +60,7 @@ function calculate_soil_properties!(
     organic_frac, bulk_dens_org, soil_dens_org
 )
     backend = KernelAbstractions.get_backend(bulk_dens_min)
-    kernel_launcher! = soil_properties_kernel!(backend)
+    kernel_launcher! = soil_properties_kernel!(device_backend)
     
     kernel_launcher!(
         bulk_dens_min, soil_dens_min, porosity,
@@ -73,5 +73,4 @@ function calculate_soil_properties!(
         ndrange=size(bulk_dens_gpu)
     )
     
-    KernelAbstractions.synchronize(backend)
 end

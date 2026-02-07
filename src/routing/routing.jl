@@ -115,7 +115,7 @@ function run_routing_step!(r_state::RoutingState, total_runoff_mm, dt_day_sec)
     dt_step = Float32(dt_day_sec) / Float32(n_substeps)
     runoff_flat = reshape(total_runoff_mm, :)
 
-    kernel_launcher! = kinematic_wave_kernel!(device_backend, 256)
+    kernel_launcher! = kinematic_wave_kernel!(device_backend)
 
     for t in 1:n_substeps
         # We call the 'launcher', not the original function name
