@@ -369,7 +369,7 @@ function process_year(year)
                     solve_surface_temperature!(
                         tsurf,
                         soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
-                        sum_with_nan_handling(cv_gpu .* aerodynamic_resistance, 4),
+                        aerodynamic_resistance,
                         kappa_array, depth_gpu, day_sec, cs_array, total_et,
                         tair_gpu, cv_gpu, psurf_gpu
                     )
