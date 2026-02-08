@@ -5,11 +5,11 @@ include("src/packages.jl")
 include("src/utils/runtime_utils.jl")
 include("src/utils/diagnostics.jl") 
 
-# Load user-modifiable configuration
-include("config/user_config.jl")
-
 # Setup backend; device (GPU/CPU) type and float type
 include("src/backend_setup.jl")
+
+# Load user-modifiable configuration
+include("config/user_config.jl")
 
 # Constants
 include("src/constants/sim_constants.jl")

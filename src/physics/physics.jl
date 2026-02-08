@@ -1,5 +1,3 @@
-using .PhysicalConstants
-
 # Vapor Pressure Deficit Calculation
 function calculate_vpd(tair, vp)
     # 1. Tetens Equation (Standard over water)

@@ -112,7 +112,7 @@ function run_routing_step!(r_state::RoutingState, total_runoff_mm, dt_day_sec)
     
     n_pixels = length(r_state.downstream_idx)
     n_substeps = Int(ceil(dt_day_sec / ROUTING_DT))
-    dt_step = Float32(dt_day_sec) / Float32(n_substeps)
+    dt_step = FloatType(dt_day_sec) / FloatType(n_substeps)
     runoff_flat = reshape(total_runoff_mm, :)
 
     kernel_launcher! = kinematic_wave_kernel!(device_backend)

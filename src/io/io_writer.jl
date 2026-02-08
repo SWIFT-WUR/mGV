@@ -2,25 +2,25 @@
 # 1. TRANSFER BUFFER 
 # ============================================================================
 struct TransferBuffer
-    tsurf::Matrix{Float32}
-    tair::Matrix{Float32}
-    prec::Matrix{Float32}
-    total_et::Matrix{Float32}
-    surface_runoff::Matrix{Float32}
-    total_runoff::Matrix{Float32}
-    discharge::Matrix{Float32}
-    travel_time::Matrix{Float32}
-    pe_summed::Matrix{Float32}
-    nr_summed::Matrix{Float32}
-    tr_summed::Matrix{Float32}
-    ce_summed::Matrix{Float32}
-    soil_evaporation::Array{Float32, 3}
-    soil_moisture::Array{Float32, 3}
+    tsurf::Matrix{FloatType}
+    tair::Matrix{FloatType}
+    prec::Matrix{FloatType}
+    total_et::Matrix{FloatType}
+    surface_runoff::Matrix{FloatType}
+    total_runoff::Matrix{FloatType}
+    discharge::Matrix{FloatType}
+    travel_time::Matrix{FloatType}
+    pe_summed::Matrix{FloatType}
+    nr_summed::Matrix{FloatType}
+    tr_summed::Matrix{FloatType}
+    ce_summed::Matrix{FloatType}
+    soil_evaporation::Array{FloatType, 3}
+    soil_moisture::Array{FloatType, 3}
 end
 
 function create_transfer_buffer(nx, ny, nlayers)
     function make_pinned(dims...)
-        A = zeros(Float32, dims...)
+        A = zeros(FloatType, dims...)
         Main.pin_memory!(A)
         return A
     end
@@ -107,7 +107,7 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
 
     function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
         path = joinpath(output_path, name)
-        arr = zcreate(Float32, dims...; path=path, chunks=chunks, compressor=compressor, fill_value=NaN32)
+        arr = zcreate(FloatType, dims...; path=path, chunks=chunks, compressor=compressor, fill_value=NaN32)
         arr.attrs["_ARRAY_DIMENSIONS"] = dim_names
         for (k, v) in attrs; arr.attrs[k] = v; end
         return arr
@@ -157,12 +157,12 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     chunk_3d_top = (nx, ny, 1, 1)
 
     function def_fast_var(name, dims; chunks=nothing)
-        defVar(out_ds, name, Float32, dims; chunksizes=chunks, deflatelevel=0, shuffle=false)
+        defVar(out_ds, name, FloatType, dims; chunksizes=chunks, deflatelevel=0, shuffle=false)
     end
 
     # Coords
-    lat = defVar(out_ds, "lat", Float32, ("lat",)); lat[:] = lat_cpu; lat.attrib["axis"] = "Y"
-    lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
+    lat = defVar(out_ds, "lat", FloatType, ("lat",)); lat[:] = lat_cpu; lat.attrib["axis"] = "Y"
+    lon = defVar(out_ds, "lon", FloatType, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
 
     # Store
     store = NetCDFOutputStore(
@@ -369,7 +369,7 @@ function preprocess_daily_outputs(
         pe_summed, nr_summed, tr_summed, ce_summed,
         potential_evaporation, net_radiation, transpiration, canopy_evaporation,
         coverage_gpu, cv_gpu,
-        Float32(fillvalue_threshold), Float32(NaN);
+        FloatType(fillvalue_threshold), FloatType(NaN);
         ndrange=(nx, ny)
     )
     

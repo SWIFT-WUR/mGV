@@ -1,10 +1,7 @@
-using .SimConstants
-
-const to = TimerOutputs.TimerOutput()
-
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
+const to = TimerOutputs.TimerOutput()
 
 println("Loading parameter data and allocating memory...")
 
