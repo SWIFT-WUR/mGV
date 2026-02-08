@@ -38,24 +38,23 @@ function compute_aerodynamic_resistance!(
 )
     # --- 1. Hard Validation (Debugging/Safety) ---
     # This costs zero time if types are correct but saves you from Float64 lag.
-    @assert eltype(ra)       == Float32 "Output 'ra' must be Float32"
-    @assert eltype(tsurf)    == Float32 "Input 'tsurf' must be Float32"
-    @assert K                isa Float32 "Constant 'K' in SimConstants must be Float32 (use f0)"
-    @assert g                isa Float32 "Constant 'g' in SimConstants must be Float32 (use f0)"
+    @assert eltype(ra)       == FloatType "Output 'ra' must be FloatType"
+    @assert eltype(tsurf)    == FloatType "Input 'tsurf' must be FloatType"
+    @assert K                isa FloatType "Constant 'K' in SimConstants must be FloatType"
+    @assert g                isa FloatType "Constant 'g' in SimConstants must be FloatType"
 
-    # --- 2. Local Constants (Using f0 Literals) ---
-    # Defining these with f0 ensures no promotion occurs in the broadcast.
-    z_floor = 1f-3
-    d_floor = 1f-2
-    w_floor = 0.1f0
-    ra_min  = 1.0f0
-    ra_max  = 1f5
+    # --- 2. Local Constants ---
+    z_floor = ft(1e-3)
+    d_floor = ft(1e-2)
+    w_floor = ft(0.1)
+    ra_min  = ft(1.0)
+    ra_max  = ft(1e5)
     
-    # Pre-calculate log expression as Float32
-    L2_min  = Float32(log(1.01)^2)
+    # Pre-calculate log expression
+    L2_min  = ft(log(1.01)^2)
     
     # Cast scalar z2 once if it isn't already
-    z2T = Float32(z2)
+    z2T = ft(z2)
 
     # --- 3. Grid Dimensions ---
     N_all   = size(ra, 4)
@@ -65,9 +64,8 @@ function compute_aerodynamic_resistance!(
     # 1. SOIL TILES (Last Index)
     # ========================================================================
     # We pass the global constants (K, g, t_freeze, Ri_cr) directly.
-    # Since they are asserted as Float32 above, no promotion will happen.
     @views @. ra[:, :, :, N_all:N_all] = aerodynamic_kernel(
-        z0soil_gpu,                # Already CuArray{Float32}
+        z0soil_gpu,                
         d0_gpu[:,:,:,N_all:N_all], 
         tsurf,                     
         tair_gpu,                  
@@ -147,7 +145,7 @@ end
 
 
 function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
-    @. net_rad = (1.0f0 - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + 273.15f0)^4
+    @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + 273.15f0)^4
     
     return nothing
 end
@@ -160,7 +158,7 @@ function calculate_potential_evaporation!(
     # 1. Setup Type
     T = eltype(pe)
     
-    # --- Local Coefficients (Float32 Literals) ---
+    # --- Local Coefficients ---
     G_COEFF = 1628.6f0    
     AIR_C   = 0.003486f0  
     SOIL_RC = 100.0f0     
@@ -302,24 +300,19 @@ end
 
 
 @kernel function transpiration_kernel!(
-    # --- OUTPUTS ---
-    transpiration_full,      # (nx, ny, 1, nveg)
-    transpiration_layers,    # (nx, ny, 3, nveg)
-    
-    # --- INPUTS ---
-    potential_evaporation,   # (nx, ny, 1, nveg)
-    water_storage,           # (nx, ny, 1, nveg)
-    max_water_storage,       # (nx, ny, 1, nveg)
-    soil_moisture_old,       # (nx, ny, 3)
-    soil_moisture_critical,  # (nx, ny, 3)
-    wilting_point,           # (nx, ny, 3)
-    root_gpu,                # (nx, ny, 3, nveg)
-    cv_gpu,                  # (nx, ny, 1, nveg)
-    f_n                      # (nx, ny, 1, nveg)
-    
-    # Unused arguments from original function signature are omitted 
-    # from the kernel to save register pressure:
-    # aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
+    # Outputs
+    transpiration_full,
+    transpiration_layers,
+    # Inputs
+    potential_evaporation, 
+    water_storage, 
+    max_water_storage, 
+    soil_moisture_old,       
+    soil_moisture_critical,  
+    wilting_point,           
+    root_gpu, 
+    cv_gpu, 
+    f_n 
 )
     i, j = @index(Global, NTuple)
 
@@ -504,7 +497,7 @@ function calculate_soil_evaporation!(
         # Loop 40 times (matches your manual unrolling)
         for k in 1:40
             # dummy += b * (ratio_beta^k) / (b + k)
-            dummy += (b_i * ratio_pow_term) / (b_i + Float32(k))
+            dummy += (b_i * ratio_pow_term) / (b_i + FloatType(k))
             ratio_pow_term *= ratio_beta # Increment power for next loop
         end
 
