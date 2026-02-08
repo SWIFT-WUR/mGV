@@ -1,10 +1,10 @@
 @kernel function surface_runoff_kernel!(
-    surface_runoff,     # (nx, ny) [Output]
-    A_sat,              # (nx, ny) [Output]
-    soil_moisture,      # (nx, ny, 3)
-    soil_moisture_max,  # (nx, ny, 3)
-    b_i_grid,           # (nx, ny)
-    throughfall         # (nx, ny, 1, n_veg)
+    surface_runoff,
+    A_sat,
+    soil_moisture,
+    soil_moisture_max,
+    b_i_grid,
+    throughfall
 )
     i, j = @index(Global, NTuple)
 
@@ -98,9 +98,9 @@ end
 
 function calculate_surface_runoff!(
     surface_runoff, A_sat, 
-    prec_gpu, throughfall, 
+    throughfall, 
     soil_moisture, soil_moisture_max, 
-    b_i, cv_gpu
+    b_i
 )
 
     kernel_launcher! = surface_runoff_kernel!(device_backend)    
@@ -116,18 +116,8 @@ function calculate_surface_runoff!(
     return nothing
 end
 
-
-# Eq. (24): Total runoff
-function calculate_total_runoff!(total_runoff, surface_runoff, subsurface_runoff, fillvalue_threshold)
+function calculate_total_runoff!(total_runoff, surface_runoff, subsurface_runoff)
     
-    # 1. Clean Surface Runoff (Mutates input directly, matching original logic)
-    @. surface_runoff = ifelse(isnan(surface_runoff) | (abs(surface_runoff) > fillvalue_threshold), ft(0.0), surface_runoff)
-
-    # 2. Clean Subsurface Runoff (Mutates input directly)
-    @. subsurface_runoff = ifelse(isnan(subsurface_runoff) | (abs(subsurface_runoff) > fillvalue_threshold), ft(0.0), subsurface_runoff)
-
-    # 3. Compute Total Runoff (Writes to total_runoff)
-    # Simple addition: total = surface + subsurface
     @. total_runoff = surface_runoff + subsurface_runoff
 
     return nothing

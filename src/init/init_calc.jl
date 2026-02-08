@@ -59,7 +59,7 @@ function calculate_soil_properties!(
     # Constants
     organic_frac, bulk_dens_org, soil_dens_org
 )
-    backend = KernelAbstractions.get_backend(bulk_dens_min)
+
     kernel_launcher! = soil_properties_kernel!(device_backend)
     
     kernel_launcher!(
@@ -68,7 +68,6 @@ function calculate_soil_properties!(
         field_capacity, wilting_point, residual_moisture,
         bulk_dens_gpu, soil_dens_gpu, depth_gpu,
         Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
-        # Just cast directly to the user-defined FloatType
         FloatType(organic_frac), FloatType(bulk_dens_org), FloatType(soil_dens_org);
         ndrange=size(bulk_dens_gpu)
     )

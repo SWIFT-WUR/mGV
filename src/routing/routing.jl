@@ -118,7 +118,7 @@ function run_routing_step!(r_state::RoutingState, total_runoff_mm, dt_day_sec)
     kernel_launcher! = kinematic_wave_kernel!(device_backend)
 
     for t in 1:n_substeps
-        # We call the 'launcher', not the original function name
+
         kernel_launcher!(
             r_state.area_gpu,
             r_state.discharge_gpu,

@@ -360,8 +360,6 @@ function preprocess_daily_outputs(
     ce_summed = similar(tsurf, nx, ny)
 
     # 2. Launch the Fused Kernel
-    # Get the backend from one of the arrays (Device Agnostic)
-    backend = KernelAbstractions.get_backend(tsurf)
     kernel_launcher! = fused_preprocess_kernel!(device_backend)
     
     # Launch with 2D range

@@ -288,8 +288,8 @@ function process_year(year)
             @timeit to "calculate_surface_runoff" begin
                 calculate_surface_runoff!(
                     surface_runoff, asat,
-                    prec_gpu, throughfall, soil_moisture,
-                    soil_moisture_max, b_infilt_gpu, cv_gpu
+                    throughfall, soil_moisture,
+                    soil_moisture_max, b_infilt_gpu
                 )
             end
 
@@ -323,8 +323,7 @@ function process_year(year)
                 calculate_total_runoff!(
                     total_runoff,
                     surface_runoff,
-                    subsurface_runoff,
-                    fillvalue_threshold
+                    subsurface_runoff
                 )
             end
 
