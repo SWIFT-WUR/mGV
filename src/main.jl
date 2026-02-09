@@ -101,7 +101,6 @@ println("Allocating State Arrays on: $backend_name")
     # --- 6. Initialization ---
     # Initialize soil temperature with Tavg (broadcast across the ground layers, usually 3)
     for k in 1:n_layers
-        # Using view to ensure we copy into the existing array
         view(soil_temperature, :, :, k) .= Tavg_gpu
     end
 end

@@ -1,8 +1,5 @@
 CASE, start_year_arg, end_year_arg = parse_case_args()
 
-# Choose Float64, Float32 or other for operations and output
-global float_type = Float32
-
 lat_var = "lat"
 lon_var = "lon"
 
@@ -11,13 +8,13 @@ if CASE == "global"
 
     println("Loading configuration for 'global'...")
     global nveg = 14
-    global fillvalue_threshold = 1f30
+    global fillvalue_threshold = ft(1e30)
 
     # =========================== GLOBAL CONFIGURATION ===========================
         
     # Input file paths/names
     input_param_file       = "./input_data/global/vic_global_5min_params_fix2.nc"
-    routing_param_file = "./params/VIC_rout_params_ISIMIP3b.nc"
+    routing_param_file     = "./params/VIC_rout_params_ISIMIP3b.nc"
 
     input_prec_prefix      = "./input_data/global/5arcmin/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"
     input_tair_prefix      = "./input_data/global/5arcmin/forcing/tair/tair_WFDE5_v2.0_5arcmin_"
@@ -92,7 +89,7 @@ elseif CASE == "indus"
 
     println("Loading configuration for 'indus'...")
     global nveg = 22
-    global fillvalue_threshold = 1f30
+    global fillvalue_threshold = ft(1e30)
 
     # ============================ INDUS CONFIGURATION ============================
    
@@ -173,7 +170,7 @@ elseif CASE == "mekong"
 
     println("Loading configuration for 'mekong'...")
     global nveg = 14
-    global fillvalue_threshold = 9998.0f0
+    global fillvalue_threshold = ft(9998.0)
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
