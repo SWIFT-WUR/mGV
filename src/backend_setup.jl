@@ -43,8 +43,8 @@ elseif HAS_AMDGPU && AMDGPU.functional()
     const ArrayType = ROCArray
     const backend_name = "AMDGPU"
     
-    const StreamType = AMDGPU.ROCStream
-    create_stream() = AMDGPU.ROCStream()
+    const StreamType = AMDGPU.HIPStream
+    create_stream() = AMDGPU.HIPStream()
     
     pin_memory!(arr) = AMDGPU.Mem.pin(arr)
     println("✅ Active Device: AMD GPU (ROCm)")
