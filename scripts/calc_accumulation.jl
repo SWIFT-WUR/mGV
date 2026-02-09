@@ -106,7 +106,7 @@ function calculate_and_add_accumulation(filename)
         v[:,:] = acc_grid
     else
         println("  -> Creating new 'accumulation' variable.")
-        defVar(ds, "accumulation", acc_grid, ("lat", "lon"), 
+        defVar(ds, "accumulation", acc_grid, ("lon", "lat"), 
                attrib = Dict(
                    "units" => "m2", 
                    "long_name" => "flow accumulation from upstream area",
@@ -118,4 +118,4 @@ function calculate_and_add_accumulation(filename)
     println("Done! Saved to $filename")
 end
 
-calculate_and_add_accumulation("./VIC_rout_params_Mekong.nc")
+calculate_and_add_accumulation("./vic_global_5min_routing_param_wbt_f32.nc")
