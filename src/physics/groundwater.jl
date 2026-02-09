@@ -86,7 +86,7 @@ function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moi
     init_moist = max.(current_moist, resid_moist .+ EPS)
 
     term1 = (init_moist .- resid_moist) .^ (1 .- expt)
-    term2 = Ksat ./ (denom .^ expt) .* (1 .- expt)   # <-- keep this as-is
+    term2 = Ksat ./ (denom .^ expt) .* (1 .- expt)
     inner = max.(term1 .- term2, Z)
     Q12 = init_moist .- (inner .^ (1 ./ (1 .- expt))) .- resid_moist
 
@@ -119,44 +119,49 @@ end
 #end
 
 function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
-    EPS = 1f-9
-    frac = clamp.((W .- Wres) ./ max.(Wmax .- Wres, EPS), 0f0, 1f0)
+    EPS = ft(1e-9)
+    frac = clamp.((W .- Wres) ./ max.(Wmax .- Wres, EPS), ft(0), ft(1))
     Ws_eff = Ws  # Ws is fraction of effective capacity, but VIC uses it directly on effective frac
 
     bf = ifelse.(frac .<= Ws_eff,
         Dsmax .* (Ds ./ Ws_eff) .* frac,  # Linear: add / Ws for correct slope
-        Dsmax .* Ds + Dsmax .* (1f0 .- Ds) .* ((frac .- Ws_eff) ./ (1f0 .- Ws_eff)) .^ cexp  # Nonlinear: remove * Ws, as it's Dsmax * Ds start point
+        Dsmax .* Ds + Dsmax .* (ft(1) .- Ds) .* ((frac .- Ws_eff) ./ (ft(1) .- Ws_eff)) .^ cexp  # Nonlinear: remove * Ws, as it's Dsmax * Ds start point
     )
-    return max.(bf, 0f0)
+    return max.(bf, ft(0))
 end
 
 
-function calculate_infiltration!(infiltration, throughfall, surface_runoff)
-    # Logic: infiltration = max(sum(throughfall) - runoff, 0)
-    
-    # 1. Initialize with negative runoff
-    # This sets the baseline: we subtract runoff from the inputs.
-    @. infiltration = -surface_runoff
-    
-    # 2. Accumulate Throughfall (Sum over tiles)
-    # We iterate tiles to fuse the "sum_with_nan_handling" logic without allocations.
-    n_tiles = size(throughfall, 4)
-    
-    for i in 1:n_tiles
-        thr_i = @view throughfall[:, :, :, i]
-        
-        # Accumulate valid values only (NaN -> 0.0f0)
-        # This acts as the "Total Input" summation
-        @. infiltration += ifelse(isnan(thr_i), 0.0f0, thr_i)
-    end
+@kernel function infiltration_kernel!(infiltration, throughfall, surface_runoff)
+    i, j = @index(Global, NTuple)
 
-    # 3. Clamp to zero
-    # If runoff > input (conceptually impossible but good for safety), clamp to 0.
-    @. infiltration = max(infiltration, 0.0f0)
+    if i <= size(infiltration, 1) && j <= size(infiltration, 2)
+        
+        # 1. Initialize accumulator locally
+        acc = -surface_runoff[i, j]
+
+        # 2. Accumulate throughfall
+        # We loop over the 4th dimension (vegetation tiles) 
+        n_tiles = size(throughfall, 4)
+        for k in 1:n_tiles
+            # throughfall is (nx, ny, 1, nveg), so we index [i, j, 1, k]
+            acc += throughfall[i, j, 1, k]
+        end
+
+        # 3. Write result
+        infiltration[i, j] = acc
+    end
+end
+
+function calculate_infiltration!(infiltration, throughfall, surface_runoff)
+
+    kernel! = infiltration_kernel!(device_backend)
+    nx, ny  = size(infiltration)
+
+    # Launch kernel
+    kernel!(infiltration, throughfall, surface_runoff; ndrange=(nx, ny))
 
     return nothing
 end
-
 
 
 @kernel function runoff_drainage_kernel!(

@@ -209,7 +209,7 @@ function calculate_potential_evaporation!(
 end
 
 
-function calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu, coverage_gpu)
+function calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu)
 
     @. max_water_storage = K * LAI_gpu * cv_gpu #TODO should we multiply by .* cv_gpu ?
 

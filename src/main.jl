@@ -230,7 +230,7 @@ function process_year(year)
             # Canopy processes
             # ============================================================
             @timeit to "calculate_max_water_storage" begin
-                calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu, coverage_gpu)
+                calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu)
             end
 
             @timeit to "calculate_canopy_evaporation" begin
@@ -293,14 +293,18 @@ function process_year(year)
                 )
             end
 
-            calculate_infiltration!(infiltration, throughfall, surface_runoff)
+            @timeit to "calculate_infiltration" begin
+                calculate_infiltration!(infiltration, throughfall, surface_runoff)
+            end
 
             # ============================================================
             # Soil moisture update
             # ============================================================
             # Weight for soil water removal
-            transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
-            #transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+            @timeit to "transpiration_grid" begin
+                transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
+                #transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+            end
 
             @timeit to "solve_runoff_and_drainage" begin
                 solve_runoff_and_drainage!(
