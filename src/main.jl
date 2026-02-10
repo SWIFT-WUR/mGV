@@ -444,8 +444,6 @@ for year in start_year:end_year
 
             if backend_name == "CUDA"
                 CUDA.reclaim()
-            elseif backend_name == "AMDGPU"
-                AMDGPU.reclaim()
             end
         end
     else
