@@ -410,8 +410,13 @@ function process_year(year)
             end
 
             @timeit to "outputs" begin
-                async_transfer!(gpu_results, transfer_buf)
-                write_slice!(day, transfer_buf, output_store)
+                @timeit to "gpu_transfer" begin
+                    async_transfer!(gpu_results, transfer_buf)
+                end
+            
+                @timeit to "disk_io" begin
+                    write_slice!(day, transfer_buf, output_store)
+                end
             end
 
             day_prev = day
