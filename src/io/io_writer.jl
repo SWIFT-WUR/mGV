@@ -192,38 +192,51 @@ end
 # 4. DATA TRANSFER & WRITING (Dispatch based on store type)
 # ============================================================================
 
-# Phase 1: Transfer to buffer
+# ===========================================================================
+# 1. THE HELPER (Put this near the top of your file)
+# ===========================================================================
+function run_on_stream(f::Function, stream)
+    # Checks which backend is active and dispatches correctly
+    if @isdefined(CUDA) && stream isa CUDA.CuStream
+        CUDA.stream!(f, stream)
+    elseif @isdefined(AMDGPU) && stream isa AMDGPU.HIPStream
+        AMDGPU.stream!(f, stream)
+    else
+        # CPU or Metal fallback: just run it immediately (blocking)
+        f()
+    end
+end
+
+# ===========================================================================
+# 2. THE TRANSFER FUNCTION (Usage)
+# ===========================================================================
 function async_transfer!(processed_data, buf::TransferBuffer, stream)
     
-    # Helper to copy from GPU (processed_data fields) to CPU (buffer fields)
-    # copyto! detects pinned memory and optimizes automatically on CUDA/AMDGPU
-    dma!(dest, src) = copyto!(dest, src)
-
-    dma!(buf.tsurf,          processed_data.tsurf)
-    dma!(buf.tair,           processed_data.tair)
-    dma!(buf.prec,           processed_data.prec)
-    dma!(buf.total_et,       processed_data.total_et)
-    dma!(buf.surface_runoff, processed_data.surface_runoff)
-    dma!(buf.total_runoff,   processed_data.total_runoff)
-    dma!(buf.discharge,      processed_data.discharge)
-    dma!(buf.travel_time,    processed_data.travel_time)
-
-    dma!(buf.pe_summed,      processed_data.pe_summed)
-    dma!(buf.nr_summed,      processed_data.nr_summed)
-    dma!(buf.tr_summed,      processed_data.tr_summed)
-    dma!(buf.ce_summed,      processed_data.ce_summed)
+    run_on_stream(stream) do
+        copyto!(buf.tsurf,          processed_data.tsurf)
+        copyto!(buf.tair,           processed_data.tair)
+        copyto!(buf.prec,           processed_data.prec)
+        copyto!(buf.total_et,       processed_data.total_et)
+        copyto!(buf.surface_runoff, processed_data.surface_runoff)
+        copyto!(buf.total_runoff,   processed_data.total_runoff)
+        copyto!(buf.discharge,      processed_data.discharge)
+        copyto!(buf.travel_time,    processed_data.travel_time)
+        copyto!(buf.pe_summed,      processed_data.pe_summed)
+        copyto!(buf.nr_summed,      processed_data.nr_summed)
+        copyto!(buf.tr_summed,      processed_data.tr_summed)
+        copyto!(buf.ce_summed,      processed_data.ce_summed)
+        copyto!(buf.soil_evaporation, processed_data.soil_evaporation)
+        copyto!(buf.soil_moisture,    processed_data.soil_moisture)
+    end
     
-    dma!(buf.soil_evaporation, processed_data.soil_evaporation)
-    dma!(buf.soil_moisture,    processed_data.soil_moisture)
-
     return nothing
 end
 
 # Phase 2a: ZARR Parallel write
-function write_slice!(day, buf::TransferBuffer, stream, store::ZarrOutputStore)
+function write_slice!(day, buf::TransferBuffer, store::ZarrOutputStore)
     # Wait for GPU to finish copying to "buf"
     # before we let the CPU threads read the buffer
-    KernelAbstractions.synchronize(Main.device_backend)
+    KernelAbstractions.synchronize(device_backend)
 
     Threads.@sync begin
         Threads.@spawn store.tsurf[:, :, day]          = buf.tsurf
@@ -244,9 +257,9 @@ function write_slice!(day, buf::TransferBuffer, stream, store::ZarrOutputStore)
 end
 
 # Phase 2b: NETCDF Serial write
-function write_slice!(day, buf::TransferBuffer, stream, store::NetCDFOutputStore)
+function write_slice!(day, buf::TransferBuffer, store::NetCDFOutputStore)
 
-    KernelAbstractions.synchronize(Main.device_backend)
+    KernelAbstractions.synchronize(device_backend)
     
     # NetCDF writes are not thread-safe for the same dataset, so we do this serially
     store.tsurf[:, :, day]          = buf.tsurf
