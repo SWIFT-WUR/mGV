@@ -46,7 +46,7 @@ elseif HAS_AMDGPU && AMDGPU.functional()
     const StreamType = AMDGPU.HIPStream
     create_stream() = AMDGPU.HIPStream()
     
-    pin_memory!(arr) = AMDGPU.pin(arr)
+    pin_memory!(arr) = nothing
     println("✅ Active Device: AMD GPU (ROCm)")
 
 elseif HAS_METAL && Metal.functional()
