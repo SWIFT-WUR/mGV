@@ -3,7 +3,7 @@ using KernelAbstractions
 global float_type = Float32 # User settable float precision
 
 # ===========================================================================
-# 1. PRECISION CONFIGURATION
+# 1. PRECISION & THREAD CONFIGURATION
 # ===========================================================================
 if !isdefined(Main, :float_type)
     println("⚠️ User didn't specify a type in the configuration file. Defaulting to Float32.")
@@ -15,6 +15,7 @@ end
 ft(x) = FloatType(x)
 
 println("Precision set to: $FloatType")
+println("Active Julia Threads: $(Threads.nthreads())")
 
 # ===========================================================================
 # 2. PACKAGE LOADING
