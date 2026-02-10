@@ -410,7 +410,7 @@ function process_year(year)
             end
 
             @timeit to "outputs" begin
-                async_transfer!(gpu_results, transfer_buf, transfer_stream)
+                async_transfer!(gpu_results, transfer_buf)
                 write_slice!(day, transfer_buf, output_store)
             end
 
