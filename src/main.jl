@@ -1,6 +1,7 @@
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
+include("async_writer.jl")
 const to = TimerOutputs.TimerOutput()
 
 println("Loading parameter data and allocating memory...")
@@ -155,17 +156,21 @@ function process_year(year)
     @timeit to "create_output" begin
         nx, ny = size(prec_cpu, 1), size(prec_cpu, 2)
         nt = size(prec_cpu, 3)
-        nlayers = 3
+        nlayers = 3 
 
         if output_format == :netcdf
             output_path = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
-            # Returns NetCDFOutputStore and Buffer
-            output_store, transfer_buf = create_output_netcdf(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+            # Ignore the single buffer returned; we will create a pool instead.
+            output_store, _ = create_output_netcdf(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
         else
             output_path = joinpath(output_dir, "$(output_file_prefix)$(year).zarr")
-            # Returns ZarrOutputStore and Buffer
-            output_store, transfer_buf = create_output_zarr(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+            output_store, _ = create_output_zarr(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
         end
+
+        # === NEW: Start the Async Pool ===
+        # 4 buffers = ~1.5GB RAM. Good balance.
+        println("Starting Async I/O Service...")
+        io_service = start_async_service(nx, ny, nlayers, output_store, 4)
     end
 
     # Create a stream for data transfers
@@ -410,12 +415,23 @@ function process_year(year)
             end
 
             @timeit to "outputs" begin
+                
+                # 1. Get a free buffer from the pool 
+                # (Instant unless disk is >4 days behind)
+                local current_buf
+                @timeit to "wait_for_buffer" begin
+                    current_buf = get_free_buffer(io_service)
+                end
+
+                # 2. Transfer GPU -> CPU (Fast RAM copy)
                 @timeit to "gpu_transfer" begin
-                    async_transfer!(gpu_results, transfer_buf)
+                    async_transfer!(gpu_results, current_buf)
                 end
             
-                @timeit to "disk_io" begin
-                    write_slice!(day, transfer_buf, output_store)
+                # 3. Fire and Forget!
+                # Hand off to background thread and continue simulation immediately.
+                @timeit to "async_submit" begin
+                    submit_buffer(io_service, day, current_buf)
                 end
             end
 
@@ -427,6 +443,9 @@ function process_year(year)
     # ------------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------------
+    println("Waiting for pending background writes...")
+    stop_async_service(io_service) # Waits for the last few days to be written
+    
     println("Closing output file...")
     @timeit to "closing outputfile" close_output(output_store)
 
