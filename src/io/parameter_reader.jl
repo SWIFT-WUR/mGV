@@ -94,21 +94,41 @@ end
 # Macro that takes a year variable and a list of base variable names. For each name,
 # it generates a call to `read_and_allocate_forcing`, to create the corresponding `_cpu` and `_gpu` variables.
 macro load_forcing(year_var, names...)
-    # The `quote ... end` block collects all the generated lines of code.
-    quote
-        # `map` iterates through each variable name provided (e.g., :prec, :tair)
-        $(map(names) do name
-            # Construct all the necessary variable names from the base name
-            cpu_var = esc(Symbol(String(name), "_cpu"))
-            gpu_var = esc(Symbol(String(name), "_gpu"))
-            prefix_var = esc(Symbol("input_", String(name), "_prefix"))
-            source_var = esc(Symbol(String(name), "_var"))
-            year_esc = esc(year_var)
+    # Generate unique temporary names for the tasks so they don't conflict
+    task_syms = [gensym("task_$name") for name in names]
 
-            # This is the line of code that will be generated for each name:
-            # e.g., (prec_cpu, prec_gpu) = read_and_allocate_forcing(input_prec_prefix, year, prec_var)
-            :(($cpu_var, $gpu_var) = read_and_allocate_forcing($prefix_var, $year_esc, $source_var))
-        end...)
+    # --- PHASE 1: SPAWN (Launch threads) ---
+    # Creates lines like: ##task#123 = Threads.@spawn read_and_allocate_forcing(...)
+    spawns = map(names, task_syms) do name, task_sym
+        prefix_var = esc(Symbol("input_", String(name), "_prefix"))
+        source_var = esc(Symbol(String(name), "_var"))
+        year_esc   = esc(year_var)
+
+        # The actual spawn command
+        :($(task_sym) = Base.Threads.@spawn read_and_allocate_forcing($prefix_var, $year_esc, $source_var))
+    end
+
+    # --- PHASE 2: FETCH (Collect results) ---
+    # Creates lines like: (prec_cpu, prec_gpu) = fetch(##task#123)
+    fetches = map(names, task_syms) do name, task_sym
+        cpu_var = esc(Symbol(String(name), "_cpu"))
+        gpu_var = esc(Symbol(String(name), "_gpu"))
+
+        # The wait-and-assign command
+        :(($cpu_var, $gpu_var) = fetch($(task_sym)))
+    end
+
+    # Return the combined block of code
+    quote
+        println("🚀 Launching (parallel) input loaders for: ", $(string(names)))
+        
+        # 1. Fire all tasks at once
+        $(spawns...)
+        
+        # 2. Wait for all of them to finish
+        $(fetches...)
+        
+        println("✅ All inputs loaded!")
     end
 end
 
