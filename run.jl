@@ -18,6 +18,7 @@ include("src/constants/physical_constants.jl")
 # I/O helpers
 include("src/io/io_helpers.jl")
 include("src/io/io_writer.jl")
+include("src/io/async_writer.jl")
 include("src/io/parameter_reader.jl")
 
 # Initialization routines

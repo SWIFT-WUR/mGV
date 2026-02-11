@@ -1,7 +1,6 @@
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
-include("async_writer.jl")
 const to = TimerOutputs.TimerOutput()
 
 println("Loading parameter data and allocating memory...")
