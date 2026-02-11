@@ -1,6 +1,6 @@
 const MIN_SLOPE = ft(0.0001)    # Minimum channel slope [m/m]
 const MANNING_N = ft(0.035)
-const ROUTING_DT = ft(28800.0)  # timestep in seconds
+const ROUTING_DT = ft(600.0)  # timestep in seconds
 const MAX_RIVER_VELOCITY = ft(6.0)  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
 
 struct RoutingState

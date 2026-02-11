@@ -344,8 +344,6 @@ function preprocess_daily_outputs(
     coverage_gpu, cv_gpu, fillvalue_threshold
 )
     # 1. Allocate Output Arrays (2D)
-    # These are small (nx * ny), so allocation is cheap.
-    # We use similar() to ensure they are on the correct GPU backend.
     nx, ny = size(tsurf)[1:2]
     
     pe_summed = similar(tsurf, nx, ny)
@@ -365,12 +363,11 @@ function preprocess_daily_outputs(
         ndrange=(nx, ny)
     )
     
-    # 3. Handle Reshapes (Metadata only, instant)
-    # We access Main.routing_state to be safe
+    # 3. Handle reshapes (metadata only, instant)
     discharge_2d = reshape(Main.routing_state.discharge_gpu, size(total_runoff))
     travel_time_2d = reshape(Main.routing_state.travel_time_gpu, size(total_runoff)) 
 
-    # 4. Package and Return
+    # 4. Package and return
     return (
         # Direct 2D
         tsurf          = tsurf,
@@ -386,7 +383,7 @@ function preprocess_daily_outputs(
         soil_evaporation  = soil_evaporation,
         soil_moisture     = soil_moisture,
 
-        # Calculated Sums (Now computed instantly)
+        # Calculate sums
         pe_summed = pe_summed,
         nr_summed = nr_summed,
         tr_summed = tr_summed,

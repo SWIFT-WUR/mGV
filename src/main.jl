@@ -151,7 +151,6 @@ function process_year(year)
     # ------------------------------------------------------------------------
     @debug println("Initializing output store...")
     local output_store
-    local transfer_buf
 
     @timeit to "create_output" begin
         nx, ny = size(prec_cpu, 1), size(prec_cpu, 2)
@@ -172,9 +171,6 @@ function process_year(year)
         println("Starting Async I/O Service...")
         io_service = start_async_service(nx, ny, nlayers, output_store, 4)
     end
-
-    # Create a stream for data transfers
-    transfer_stream = create_stream()
 
     # ------------------------------------------------------------------------
     # Daily timestep loop
