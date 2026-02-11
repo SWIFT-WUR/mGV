@@ -164,10 +164,9 @@ function process_year(year)
             output_store, _ = create_output_zarr(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
         end
 
-        # === NEW: Start the Async Pool ===
-        # 4 buffers = ~1.5GB RAM. Good balance.
+        # Start the ssync pool 
         println("Starting Async I/O Service...")
-        io_service = start_async_service(nx, ny, nlayers, output_store, 4)
+        io_service = start_async_service(nx, ny, nlayers, output_store, 6)
     end
 
     # ------------------------------------------------------------------------

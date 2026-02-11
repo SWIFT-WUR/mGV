@@ -9,7 +9,7 @@ Starts the Async service.
 - Allocates `n_buffers` (default 4) to absorb disk latency spikes.
 - Starts the background thread that handles the actual writing.
 """
-function start_async_service(nx, ny, nlayers, output_store, n_buffers=6)
+function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
     # 1. Create Channels with fixed capacity
     free_pool = Channel{TransferBuffer}(n_buffers)
     job_queue = Channel{Tuple{Int, TransferBuffer}}(n_buffers)
