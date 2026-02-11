@@ -31,7 +31,6 @@ end
 # ============================================================================
 # INITIALIZE GPU STATE ARRAYS
 # ============================================================================
-println("Julia has started with $(Threads.nthreads()) threads.")
 println("Allocating State Arrays on: $backend_name")
 
 @timeit to "initialize_GPU_arrays" begin

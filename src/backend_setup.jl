@@ -37,7 +37,7 @@ if HAS_CUDA && CUDA.functional()
     create_stream() = CUDA.CuStream()
     
     pin_memory!(arr) = CUDA.Mem.pin(arr)
-    println("✅ Active Device: NVIDIA GPU (CUDA)")
+    println("✅ Active device: NVIDIA GPU (CUDA)")
 
 elseif HAS_AMDGPU && AMDGPU.functional()
     const device_backend = ROCBackend()
@@ -48,7 +48,7 @@ elseif HAS_AMDGPU && AMDGPU.functional()
     create_stream() = AMDGPU.HIPStream()
     
     pin_memory!(arr) = nothing
-    println("✅ Active Device: AMD GPU (ROCm)")
+    println("✅ Active device: AMD GPU (ROCm)")
 
 elseif HAS_METAL && Metal.functional()
     const device_backend = MetalBackend()
@@ -60,7 +60,7 @@ elseif HAS_METAL && Metal.functional()
     create_stream() = nothing
     
     pin_memory!(arr) = nothing 
-    println("✅ Active Device: Apple Silicon (Metal)")
+    println("✅ Active device: Apple Silicon (Metal)")
 
 else
     const device_backend = CPU()
@@ -72,7 +72,7 @@ else
     create_stream() = nothing
     
     pin_memory!(arr) = nothing
-    println("⚠️  GPU not found. Active Device: CPU")
+    println("⚠️  GPU not found. Active device: CPU")
 end
 
 # ===========================================================================

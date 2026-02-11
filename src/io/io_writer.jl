@@ -109,26 +109,16 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     chunk_3d_top = (nx, ny, 1, 1)
 
     function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
-        # Convert input dict to Dict{String, Any} 
-        # This allows it to hold both Strings ("degrees_north") and Vectors (["lat", "lon"])
-        full_attrs = Dict{String, Any}(attrs)
-        full_attrs["_ARRAY_DIMENSIONS"] = dim_names
-    
-        # Pass the attributes dict into zcreate
         arr = zcreate(FloatType, group, name, dims...; 
                       chunks=chunks, 
                       compressor=compressor, 
-                      fill_value=NaN32,
-                      attrs=full_attrs)
-                      
+                      fill_value=NaN32)
+        arr.attrs["_ARRAY_DIMENSIONS"] = dim_names
+        for (k, v) in attrs; arr.attrs[k] = v; end
         return arr
     end
 
-    # Coords and time
-    time_values = collect(0:nt-1) 
-    z_time = make_zarr("time", (nt,), (nt,), ["time"]; 
-                   attrs=Dict("units"=>"days since 1979-01-01", "calendar"=>"proleptic_gregorian"))
-    z_time[:] = time_values
+    # Coords
     z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs=Dict("units"=>"degrees_north", "axis"=>"Y"))
     z_lat[:] = lat_cpu
     z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
