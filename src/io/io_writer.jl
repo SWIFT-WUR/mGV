@@ -222,22 +222,23 @@ end
 # Phase 2a: ZARR Parallel write
 function write_slice!(day, buf::TransferBuffer, store::ZarrOutputStore)
 
-        store.tsurf[:, :, day]          = buf.tsurf
-        store.tair[:, :, day]           = buf.tair
-        store.prec[:, :, day]           = buf.prec
-        store.total_et[:, :, day]       = buf.total_et
-        store.surface_runoff[:, :, day] = buf.surface_runoff
-        store.total_runoff[:, :, day]   = buf.total_runoff
-        store.discharge[:, :, day]      = buf.discharge
-        store.travel_time[:, :, day]    = buf.travel_time
-        store.pe_summed[:, :, day]      = buf.pe_summed
-        store.nr_summed[:, :, day]      = buf.nr_summed
-        store.tr_summed[:, :, day]      = buf.tr_summed
-        store.ce_summed[:, :, day]      = buf.ce_summed
-        store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
-        store.soil_moisture[:, :, day, :]    = buf.soil_moisture
-
+    Threads.@sync begin
+        Threads.@spawn store.tsurf[:, :, day]          = buf.tsurf
+        Threads.@spawn store.tair[:, :, day]           = buf.tair
+        Threads.@spawn store.prec[:, :, day]           = buf.prec
+        Threads.@spawn store.total_et[:, :, day]       = buf.total_et
+        Threads.@spawn store.surface_runoff[:, :, day] = buf.surface_runoff
+        Threads.@spawn store.total_runoff[:, :, day]   = buf.total_runoff
+        Threads.@spawn store.discharge[:, :, day]      = buf.discharge
+        Threads.@spawn store.travel_time[:, :, day]    = buf.travel_time
+        Threads.@spawn store.pe_summed[:, :, day]      = buf.pe_summed
+        Threads.@spawn store.nr_summed[:, :, day]      = buf.nr_summed
+        Threads.@spawn store.tr_summed[:, :, day]      = buf.tr_summed
+        Threads.@spawn store.ce_summed[:, :, day]      = buf.ce_summed
+        Threads.@spawn store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
+        Threads.@spawn store.soil_moisture[:, :, day, :]    = buf.soil_moisture
     end
+end
 
 # Phase 2b: NETCDF Serial write
 function write_slice!(day, buf::TransferBuffer, store::NetCDFOutputStore)
