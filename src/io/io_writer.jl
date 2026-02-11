@@ -101,8 +101,8 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     # Initialize the group
     group = zgroup(output_path)
 
-    compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=false)
-    # compressor = nothing
+    # compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=false)
+    compressor = Zarr.NoCompressor()
 
     chunk_2d = (nx, ny, 1)
     chunk_3d_qlayer = (nx, ny, 1, 2)
