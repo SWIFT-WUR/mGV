@@ -416,6 +416,9 @@ function process_year(year)
                     current_buf = get_free_buffer(io_service)
                 end
 
+                # Force the CPU to wait until the GPU has finished all kernels for this day
+                KernelAbstractions.synchronize(device_backend)
+
                 # 2. Transfer GPU -> CPU (Fast RAM copy)
                 @timeit to "gpu_transfer" begin
                     async_transfer!(gpu_results, current_buf)
