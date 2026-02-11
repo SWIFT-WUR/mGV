@@ -109,38 +109,57 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     chunk_3d_top = (nx, ny, 1, 1)
 
     function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
+        # Convert input dict to Dict{String, Any} 
+        # This allows it to hold both Strings ("degrees_north") and Vectors (["lat", "lon"])
+        full_attrs = Dict{String, Any}(attrs)
+        full_attrs["_ARRAY_DIMENSIONS"] = dim_names
+    
+        # Pass the attributes dict into zcreate
         arr = zcreate(FloatType, group, name, dims...; 
                       chunks=chunks, 
                       compressor=compressor, 
-                      fill_value=NaN32)
-        arr.attrs["_ARRAY_DIMENSIONS"] = dim_names
-        for (k, v) in attrs; arr.attrs[k] = v; end
+                      fill_value=NaN32,
+                      attrs=full_attrs)
+                      
         return arr
     end
 
-    # Coords
+    # Coords and time
+    time_values = collect(0:nt-1) 
+    z_time = make_zarr("time", (nt,), (nt,), ["time"]; 
+                   attrs=Dict("units"=>"days since 1979-01-01", "calendar"=>"proleptic_gregorian"))
+    z_time[:] = time_values
     z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs=Dict("units"=>"degrees_north", "axis"=>"Y"))
     z_lat[:] = lat_cpu
     z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
     z_lon[:] = lon_cpu
 
+    # Reversed names to match Python's Row-Major read order
+    dim_2d = ["time", "lat", "lon"] 
+    dim_3d_qlayer = ["qlayers", "time", "lat", "lon"] 
+    dim_3d_top    = ["top_layer", "time", "lat", "lon"]
+    dim_3d_layer  = ["layer", "time", "lat", "lon"]
+
     store = ZarrOutputStore(
-        make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("tair_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("total_et_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("discharge_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("travel_time_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"s", "long_name"=>"River travel time")),
-        make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, ["lon", "lat", "time", "qlayers"]),
-        make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, ["lon", "lat", "time", "top_layer"]),
-        make_zarr("soil_temperature_output", (nx, ny, nt, nlayers), chunk_3d_layer, ["lon", "lat", "time", "layer"]),
-        make_zarr("soil_moisture_output", (nx, ny, nt, nlayers), chunk_3d_layer, ["lon", "lat", "time", "layer"])
+        make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("tair_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("total_et_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("discharge_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("travel_time_output", (nx, ny, nt), chunk_2d, dim_2d; 
+                  attrs=Dict("units"=>"s", "long_name"=>"River travel time")),
+        make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        
+        # 4D Variables (Reversed)
+        make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, dim_3d_qlayer),
+        make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, dim_3d_top),
+        make_zarr("soil_temperature_output", (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer),
+        make_zarr("soil_moisture_output", (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer)
     )
     
     return store, create_transfer_buffer(nx, ny, nlayers)
