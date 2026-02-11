@@ -98,6 +98,9 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     isdir(output_path) && rm(output_path, recursive=true)
     mkpath(output_path)
 
+    # Initialize the group
+    group = zgroup(output_path)
+
     compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=false)
 
     chunk_2d = (nx, ny, 1)
@@ -106,14 +109,20 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
     chunk_3d_top = (nx, ny, 1, 1)
 
     function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
-        path = joinpath(output_path, name)
-        arr = zcreate(FloatType, dims...; path=path, chunks=chunks, compressor=compressor, fill_value=NaN32)
+        arr = zcreate(FloatType, group, name, dims...; 
+                      chunks=chunks, 
+                      compressor=compressor, 
+                      fill_value=NaN32)
         arr.attrs["_ARRAY_DIMENSIONS"] = dim_names
         for (k, v) in attrs; arr.attrs[k] = v; end
         return arr
     end
 
-    # Coords
+    # Coords and time
+    time_values = collect(0:nt-1) 
+    z_time = make_zarr("time", (nt,), (nt,), ["time"]; 
+                   attrs=Dict("units"=>"days since 1979-01-01", "calendar"=>"proleptic_gregorian"))
+    z_time[:] = time_values
     z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs=Dict("units"=>"degrees_north", "axis"=>"Y"))
     z_lat[:] = lat_cpu
     z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
@@ -127,7 +136,7 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
         make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("discharge_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
-        make_zarr("travel_time_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"s", "long_name"=>"River Travel Time")),
+        make_zarr("travel_time_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]; attrs=Dict("units"=>"s", "long_name"=>"River travel time")),
         make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
         make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, ["lon", "lat", "time"]),
