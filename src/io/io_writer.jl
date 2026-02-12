@@ -156,7 +156,7 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
         make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         
-        # 4D Variables (Reversed)
+        # 4D Variables
         make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, dim_3d_qlayer),
         make_zarr("soil_evaporation_output", (nx, ny, nt, 1), chunk_3d_top, dim_3d_top),
         make_zarr("soil_temperature_output", (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer),
