@@ -409,19 +409,18 @@ function process_year(year)
 
             @timeit to "outputs" begin
                 
-                # 1. Get a free buffer from the pool 
+                # Get a free buffer from the pool 
                 # (Instant unless disk is >4 days behind)
                 local current_buf
                 @timeit to "wait_for_buffer" begin
                     current_buf = get_free_buffer(io_service)
                 end
 
-                # 2. Transfer GPU -> CPU (Fast RAM copy)
+                # Transfer GPU -> CPU (RAM copy)
                 @timeit to "gpu_transfer" begin
                     async_transfer!(gpu_results, current_buf)
                 end
             
-                # 3. Fire and Forget!
                 # Hand off to background thread and continue simulation immediately.
                 @timeit to "async_submit" begin
                     submit_buffer(io_service, day, current_buf)
