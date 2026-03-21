@@ -6,35 +6,35 @@ function soil_conductivity_kernel(moist, ice_frac, soil_dens_min, bulk_dens_min,
 
     # 2. Dry conductivity (Kdry)
     # Formula: (0.135*bulk + 64.7) / (soil_dens - 0.947*bulk)
-    Kdry_min = (0.135f0 * bulk_dens_min + 64.7f0) / (soil_dens_min - 0.947f0 * bulk_dens_min)
-    Kdry     = (1.0f0 - organic_frac) * Kdry_min + organic_frac * Kdry_org
+    Kdry_min = (ft(0.135) * bulk_dens_min + ft(64.7)) / (soil_dens_min - ft(0.947) * bulk_dens_min)
+    Kdry     = (ft(1.0) - organic_frac) * Kdry_min + organic_frac * Kdry_org
 
     # 3. Fractional degree of saturation (Sr)
-    Sr = ifelse(porosity > 0.0f0, moist / porosity, 0.0f0)
+    Sr = ifelse(porosity > ft(0.0), moist / porosity, ft(0.0))
 
     # 4. Mineral soil conductivity (Ks_min)
-    Ks_min = ifelse(quartz < 0.2f0,
-                    7.7f0 ^ quartz * 3.0f0 ^ (1.0f0 - quartz),
-                    ifelse(quartz <= 1.0f0,
-                           7.7f0 ^ quartz * 2.2f0 ^ (1.0f0 - quartz),
-                           0.0f0))
+    Ks_min = ifelse(quartz < ft(0.2),
+                    ft(7.7) ^ quartz * ft(3.0) ^ (ft(1.0) - quartz),
+                    ifelse(quartz <= ft(1.0),
+                           ft(7.7) ^ quartz * ft(2.2) ^ (ft(1.0) - quartz),
+                           ft(0.0)))
     
-    Ks = (1.0f0 - organic_frac) * Ks_min + organic_frac * Ks_org
+    Ks = (ft(1.0) - organic_frac) * Ks_min + organic_frac * Ks_org
 
     # 5. Saturated conductivity (Ksat)
     Ksat = ifelse(Wu == moist,
-                  Ks ^ (1.0f0 - porosity) * Kw ^ porosity,
-                  Ks ^ (1.0f0 - porosity) * Ki ^ (porosity - Wu) * Kw ^ Wu)
+                  Ks ^ (ft(1.0) - porosity) * Kw ^ porosity,
+                  Ks ^ (ft(1.0) - porosity) * Ki ^ (porosity - Wu) * Kw ^ Wu)
 
     # 6. Effective saturation parameter (Ke)
     Ke = ifelse(Wu == moist,
-                0.7f0 * log10(max(Sr, 1f-10)) + 1.0f0,
+                ft(0.7) * log10(max(Sr, ft(1.0e-10))) + ft(1.0),
                 Sr)
 
     # 7. Final Kappa Calculation
     # If moist > 0, interpolate. Else Kdry.
     term_moist = (Ksat - Kdry) * Ke + Kdry
-    kappa = ifelse(moist > 0.0f0,
+    kappa = ifelse(moist > ft(0.0),
                    max(term_moist, Kdry),
                    Kdry)
                    
@@ -64,11 +64,11 @@ function volumetric_heat_capacity!(cs_array, bulk_dens, soil_dens, soil_moisture
         # (1.0 - organic_frac) splits the soil_fract into mineral/organic components
         # Constant values are volumetric heat capacities in J/m^3/K
 
-        cs_array = 2.0f6 * (bulk_dens / soil_dens) * (1.0f0 - organic_frac) +
-                   2.7f6 * (bulk_dens / soil_dens) * organic_frac +
-                   4.2f6 * (soil_moisture / rho_w) +
-                   1.9f6 * ice_frac +
-                   1.3f3 * (1.0f0 - ((bulk_dens / soil_dens) + (soil_moisture / rho_w) + ice_frac))
+        cs_array = ft(2.0e6) * (bulk_dens / soil_dens) * (ft(1.0) - organic_frac) +
+                   ft(2.7e6) * (bulk_dens / soil_dens) * organic_frac +
+                   ft(4.2e6) * (soil_moisture / rho_w) +
+                   ft(1.9e6) * ice_frac +
+                   ft(1.3e3) * (ft(1.0) - ((bulk_dens / soil_dens) + (soil_moisture / rho_w) + ice_frac))
     end
 
     return nothing

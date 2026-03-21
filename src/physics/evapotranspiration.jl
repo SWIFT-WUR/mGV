@@ -5,28 +5,28 @@ function aerodynamic_kernel(z0, d0, tsurf, tair, wind, z2, Kt, gt, Tf, Ric, z_fl
     d_eff = max(z2 - d0, d_floor)
 
     # 2. Log-law terms
-    ratio = clamp(d_eff / rough, 1f-6, 1f6)
+    ratio = clamp(d_eff / rough, ft(1.0e-6), ft(1.0e6))
     L     = log(ratio)
     L2    = max(L^2, L2_min)
     a_sq  = (Kt^2) / L2
-    ccoef = 49.82f0 * a_sq * sqrt(ratio)
+    ccoef = ft(49.82) * a_sq * sqrt(ratio)
 
     # 3. Stability (Richardson Number)
     w_spd = max(wind, w_floor)
-    Tmean = max(((tair + Tf) + (tsurf + Tf)) * 0.5f0, 100.0f0)
+    Tmean = max(((tair + Tf) + (tsurf + Tf)) * ft(0.5), ft(100.0))
     
     Ri_B  = gt * (tair - tsurf) * d_eff / (Tmean * w_spd^2)
-    Ri_B  = clamp(Ri_B, -0.5f0, Ric)
+    Ri_B  = clamp(Ri_B, -ft(0.5), Ric)
 
     # 4. Friction Factor (Fw)
-    Fw_neg = 1.0f0 - (9.4f0 * Ri_B) / (1.0f0 + ccoef * sqrt(abs(Ri_B)))
-    Fw_pos = 1.0f0 / (1.0f0 + 4.7f0 * Ri_B)^2
-    Fw     = ifelse(Ri_B < 0f0, Fw_neg, Fw_pos)
-    Fw     = clamp(Fw, 1f-3, 10.0f0)
+    Fw_neg = ft(1.0) - (ft(9.4) * Ri_B) / (ft(1.0) + ccoef * sqrt(abs(Ri_B)))
+    Fw_pos = ft(1.0) / (ft(1.0) + ft(4.7) * Ri_B)^2
+    Fw     = ifelse(Ri_B < ft(0.0), Fw_neg, Fw_pos)
+    Fw     = clamp(Fw, ft(1.0e-3), ft(10.0))
 
     # 5. Final Resistance
-    C_H = max(1.351f0 * a_sq * Fw, 1f-6)
-    ra_val = 1.0f0 / (C_H * w_spd)
+    C_H = max(ft(1.351) * a_sq * Fw, ft(1.0e-6))
+    ra_val = ft(1.0) / (C_H * w_spd)
     
     return clamp(ra_val, ra_min, ra_max)
 end
@@ -145,7 +145,7 @@ end
 
 
 function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
-    @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + 273.15f0)^4
+    @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + ft(273.15))^4
     
     return nothing
 end
@@ -159,10 +159,10 @@ function calculate_potential_evaporation!(
     T = eltype(pe)
     
     # --- Local Coefficients ---
-    G_COEFF = 1628.6f0    
-    AIR_C   = 0.003486f0  
-    SOIL_RC = 100.0f0     
-    EPS     = 1.0f-6      
+    G_COEFF = ft(1628.6)    
+    AIR_C   = ft(0.003486)  
+    SOIL_RC = ft(100.0)     
+    EPS     = ft(1.0e-6)      
 
     # 2. Pre-calculate 2D Meteorological Terms (Fused)
     # We reduce allocations by inlining 'vpd', 'scale_h', and 'p_sfc' 
@@ -192,17 +192,17 @@ function calculate_potential_evaporation!(
     @views @. pe[:, :, :, veg_indices] = max(
         (slope * (net_radiation[:, :, :, veg_indices] * day_sec) + 
          (air_dens_term / aerodynamic_resistance[:, :, :, veg_indices])) / 
-        (latent_heat * (slope + gamma_ * (1f0 + 
+        (latent_heat * (slope + gamma_ * (ft(1.0) + 
          ((rmin_gpu[:, :, :, veg_indices] / max(LAI_gpu[:, :, :, veg_indices], EPS)) + 
           rarc_gpu[:, :, :, veg_indices]) / aerodynamic_resistance[:, :, :, veg_indices]))),
-        0f0
+        ft(0.0)
     )
 
     # --- Bare Soil Tile (Index 14) ---
     @views @. pe[:, :, :, nveg] = max(
         (slope * (net_radiation[:, :, :, nveg] * day_sec) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
-        (latent_heat * (slope + gamma_ * (1f0 + SOIL_RC / aerodynamic_resistance[:, :, :, nveg]))),
-        0f0
+        (latent_heat * (slope + gamma_ * (ft(1.0) + SOIL_RC / aerodynamic_resistance[:, :, :, nveg]))),
+        ft(0.0)
     )
 
     return nothing
@@ -215,7 +215,7 @@ function calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu)
 
     @. max_water_storage = ifelse(
         isnan(max_water_storage) | (abs(max_water_storage) > fillvalue_threshold), 
-        0.0f0, 
+        ft(0.0), 
         max_water_storage
     )
 
@@ -460,21 +460,21 @@ function calculate_soil_evaporation!(
     T = eltype(soil_evap)
     
     # Clear the output array first (since we accumulate into it)
-    fill!(soil_evap, 0.0f0)
+    fill!(soil_evap, ft(0.0))
 
     # --- 1. The Scalar Physics Kernel (Inner Function) ---
     function soil_evap_kernel(sm_top, sm_max_top, resid_top, pe, b_i, cv, cov)
         # 1. Calculate Max Infiltration
-        max_infil = (1.0f0 + b_i) * sm_max_top
+        max_infil = (ft(1.0) + b_i) * sm_max_top
         
         # 2. Moisture Ratio
-        ratio = clamp(1.0f0 - sm_top / sm_max_top, 0.0f0, 1.0f0)
+        ratio = clamp(ft(1.0) - sm_top / sm_max_top, ft(0.0), ft(1.0))
         
         # 3. Handle b_i == -1.0 case
-        ratio_adj = (b_i == -1.0f0) ? ratio : ratio ^ (1.0f0 / (b_i + 1.0f0))
+        ratio_adj = (b_i == -ft(1.0)) ? ratio : ratio ^ (ft(1.0) / (b_i + ft(1.0)))
         
-        tmp = max_infil * (1.0f0 - ratio_adj)
-        if b_i == -1.0f0
+        tmp = max_infil * (ft(1.0) - ratio_adj)
+        if b_i == -ft(1.0)
             tmp = max_infil
         end
 
@@ -482,16 +482,16 @@ function calculate_soil_evaporation!(
         is_saturated = tmp >= max_infil
         
         # 5. ARNO Evaporation Logic
-        ratio_unsat = clamp(1.0f0 - (tmp / max_infil), 0.0f0, 1.0f0)
+        ratio_unsat = clamp(ft(1.0) - (tmp / max_infil), ft(0.0), ft(1.0))
         
-        ratio_powered = (ratio_unsat > 0.0f0) ? ratio_unsat ^ b_i : 0.0f0
-        as_val = 1.0f0 - ratio_powered
+        ratio_powered = (ratio_unsat > ft(0.0)) ? ratio_unsat ^ b_i : ft(0.0)
+        as_val = ft(1.0) - ratio_powered
         
-        ratio_beta = (ratio_powered > 0.0f0) ? ratio_powered ^ (1.0f0 / b_i) : 0.0f0
+        ratio_beta = (ratio_powered > ft(0.0)) ? ratio_powered ^ (ft(1.0) / b_i) : ft(0.0)
         
         # 6. Series Expansion (Replaces the 40 lines of unrolled code)
         # Using a simple loop here uses registers, not VRAM arrays!
-        dummy = 1.0f0
+        dummy = ft(1.0)
         ratio_pow_term = ratio_beta # Starts as x^1
         
         # Loop 40 times (matches your manual unrolling)
@@ -501,18 +501,18 @@ function calculate_soil_evaporation!(
             ratio_pow_term *= ratio_beta # Increment power for next loop
         end
 
-        beta_asp = as_val + (1.0f0 - as_val) * (1.0f0 - ratio_beta) * dummy
+        beta_asp = as_val + (ft(1.0) - as_val) * (ft(1.0) - ratio_beta) * dummy
         
         # 7. Final Calculation
         # If saturated, use PE. Else, scale by beta_asp
         esoil = is_saturated ? pe : pe * beta_asp
         
         # Apply weights
-        esoil = esoil * (1.0f0 - cov) * cv
+        esoil = esoil * (ft(1.0) - cov) * cv
         
         # 8. Cap at Available Moisture
-        avail = max(sm_top - resid_top, 0.0f0)
-        esoil = clamp(esoil, 0.0f0, avail)
+        avail = max(sm_top - resid_top, ft(0.0))
+        esoil = clamp(esoil, ft(0.0), avail)
         
         return esoil
     end
@@ -547,13 +547,13 @@ function update_water_canopy_storage!(
     # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
     # Logic: excess = max(0, (W + P - E) - Wm)
     # Throughfall = (excess * coverage * cv) + (prec * (1 - coverage) * cv)
-    @. throughfall = (cv * max(0.0f0, water_storage + prec - canopy_evap - Wm) * coverage) + 
-                     (prec * (1.0f0 - coverage) * cv)
+    @. throughfall = (cv * max(ft(0.0), water_storage + prec - canopy_evap - Wm) * coverage) + 
+                     (prec * (ft(1.0) - coverage) * cv)
 
     # 2. Update Water Storage SECOND
     # Now we can safely mutate water_storage.
     # Logic: clamped new storage * cv
-    @. water_storage = clamp(water_storage + prec - canopy_evap, 0.0f0, Wm) * cv
+    @. water_storage = clamp(water_storage + prec - canopy_evap, ft(0.0), Wm) * cv
 
     return nothing
 end
