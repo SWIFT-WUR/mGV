@@ -227,7 +227,7 @@ function process_year(year)
             # Canopy processes
             # ============================================================
             @timeit to "calculate_max_water_storage" begin
-                calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu)
+                calculate_max_water_storage!(max_water_storage, LAI_gpu)
             end
 
             @timeit to "calculate_canopy_evaporation" begin

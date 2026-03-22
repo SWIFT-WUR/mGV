@@ -314,51 +314,51 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
     # 2. Iterate over Vegetation Tiles (4th Dimension)
     # We assume inputs are (nx, ny, 1, n_tiles)
     n_tiles = size(pe_in, 4)
+    total_cv = zero(eltype(pe_out))
 
     for k in 1:n_tiles
-        # --- Helper: Load, Sanitize, and Weight ---
-        # We inline the logic here for maximum speed
-        
         # A. Shared Weights
-        # Cast to FloatType to prevent accidental promotion to Float64
         w_cv  = eltype(pe_out)(cv[i, j, 1, k])
         w_cov = eltype(pe_out)(coverage[i, j, 1, k])
+        total_cv += w_cv
 
         # B. Potential Evaporation (PE)
-        # Logic: sum(cv * sanitize(pe))
         val = pe_in[i, j, 1, k]
-        # Sanitize: If NaN or > Threshold, treat as 0 for the sum (nansum behavior)
         if !isnan(val) && abs(val) <= threshold
             acc_pe += w_cv * val
         end
 
         # C. Net Radiation (NR)
-        # Logic: sum(cv * sanitize(nr))
         val = nr_in[i, j, 1, k]
         if !isnan(val) && abs(val) <= threshold
             acc_nr += w_cv * val
         end
 
         # D. Transpiration (TR)
-        # Logic: sum(coverage * sanitize(tr))
         val = tr_in[i, j, 1, k]
         if !isnan(val) && abs(val) <= threshold
             acc_tr += w_cov * val
         end
 
         # E. Canopy Evaporation (CE)
-        # Logic: sum(cv * coverage * sanitize(ce))
         val = ce_in[i, j, 1, k]
         if !isnan(val) && abs(val) <= threshold
             acc_ce += w_cv * w_cov * val
         end
     end
 
-    # 3. Write Final Sums to Global Memory
-    pe_out[i, j] = acc_pe
-    nr_out[i, j] = acc_nr
-    tr_out[i, j] = acc_tr
-    ce_out[i, j] = acc_ce
+    # 3. Write Final Sums or NaN to Global Memory
+    if isnan(total_cv) || total_cv < eltype(pe_out)(1e-6)
+        pe_out[i, j] = fill_val
+        nr_out[i, j] = fill_val
+        tr_out[i, j] = fill_val
+        ce_out[i, j] = fill_val
+    else
+        pe_out[i, j] = acc_pe
+        nr_out[i, j] = acc_nr
+        tr_out[i, j] = acc_tr
+        ce_out[i, j] = acc_ce
+    end
 end
 
 function preprocess_daily_outputs(
