@@ -209,9 +209,9 @@ function calculate_potential_evaporation!(
 end
 
 
-function calculate_max_water_storage!(max_water_storage, LAI_gpu, cv_gpu)
+function calculate_max_water_storage!(max_water_storage, LAI_gpu)
 
-    @. max_water_storage = K * LAI_gpu * cv_gpu #TODO should we multiply by .* cv_gpu ?
+    @. max_water_storage = K * LAI_gpu 
 
     @. max_water_storage = ifelse(
         isnan(max_water_storage) | (abs(max_water_storage) > fillvalue_threshold), 
@@ -546,14 +546,14 @@ function update_water_canopy_storage!(
     # 1. Update Throughfall FIRST
     # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
     # Logic: excess = max(0, (W + P - E) - Wm)
-    # Throughfall = (excess * coverage * cv) + (prec * (1 - coverage) * cv)
-    @. throughfall = (cv * max(ft(0.0), water_storage + prec - canopy_evap - Wm) * coverage) + 
-                     (prec * (ft(1.0) - coverage) * cv)
+    # Throughfall = (excess * coverage) + (prec * (1 - coverage))
+    @. throughfall = (max(ft(0.0), water_storage + prec - canopy_evap - Wm) * coverage) + 
+                     (prec * (ft(1.0) - coverage))
 
     # 2. Update Water Storage SECOND
     # Now we can safely mutate water_storage.
-    # Logic: clamped new storage * cv
-    @. water_storage = clamp(water_storage + prec - canopy_evap, ft(0.0), Wm) * cv
+    # Logic: clamped new storage
+    @. water_storage = clamp(water_storage + prec - canopy_evap, ft(0.0), Wm)
 
     return nothing
 end
