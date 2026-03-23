@@ -20,7 +20,8 @@ end
 )...)
 
 @timeit to "init_routing" begin
-    const routing_state = initialize_routing_model(routing_param_file)
+    # Conditionally initialize the routing state; if disabled, assign nothing to avoid undefined variable
+    const routing_state = enable_routing ? initialize_routing_model(routing_param_file) : nothing
 end
 
 @timeit to "reshaping_inputs" begin
@@ -334,12 +335,14 @@ function process_year(year)
             # ============================================================
             # Routing
             # ============================================================
-            @timeit to "run_routing" begin
-                run_routing_step!(
-                    routing_state,
-                    total_runoff,
-                    day_sec
-                )
+            if enable_routing
+                @timeit to "run_routing" begin
+                    run_routing_step!(
+                        routing_state,
+                        total_runoff,
+                        day_sec
+                    )
+                end
             end
 
             # ============================================================
