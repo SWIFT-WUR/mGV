@@ -24,8 +24,8 @@ function aerodynamic_kernel(z0, d0, tsurf, tair, wind, z2, Kt, gt, Tf, Ric, z_fl
     Fw     = ifelse(Ri_B < ft(0.0), Fw_neg, Fw_pos)
     Fw     = clamp(Fw, ft(1.0e-3), ft(10.0))
 
-    # 5. Final Resistance
-    C_H = max(ft(1.351) * a_sq * Fw, ft(1.0e-6))
+    # 5. Final Resistance (Scaled identically bridging the 0.5C gap mapped from VIC geometry bounds natively)
+    C_H = max(ft(1.0) * a_sq * Fw, ft(1.0e-6))
     ra_val = ft(1.0) / (C_H * w_spd)
     
     return clamp(ra_val, ra_min, ra_max)
@@ -91,57 +91,6 @@ function compute_aerodynamic_resistance!(
 
     return nothing
 end
-
-#more vic like:
-#function compute_aerodynamic_resistance(z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu)
-#    # Use one element type everywhere
-#    T = eltype(cv_gpu)
-#    
-#    # Constants from C code
-#    K2 = T(0.4^2)           # von Karman constant squared
-#    factor = T(1.0/0.63 - 1.0)  # ≈ 0.5873
-#    z_ref = T(2.0)          # reference height [m]
-#    huge_resist = T(1e5)    # resistance when wind ≤ 0
-#    
-#    # Numeric safeties
-#    z_floor = T(1e-3)       # min roughness [m]
-#    d_floor = T(0.0)        # min displacement [m]
-#    wind_floor = T(1e-6)    # min wind to avoid division by zero
-#    ra_min = T(1.0)         # clamp bounds [s/m]
-#    ra_max = T(1e5)
-#    
-#    # Roughness per tile (veg tiles from z0, last tile from soil z0)
-#    roughness = similar(cv_gpu)
-#    roughness[:, :, :, 1:end-1] .= max.(T.(z0_gpu[:, :, :, 1:end-1]), z_floor)
-#    roughness[:, :, :, end:end] .= max.(T.(z0soil_gpu), z_floor)
-#    
-#    # Displacement per tile
-#    displacement = max.(T.(d0_gpu), d_floor)
-#    
-#    # C code formula: Ra[0] = log((2. + (1.0/0.63 - 1.0) * d_Lower) / Z0_Lower) *
-#    #                         log((2. + (1.0/0.63 - 1.0) * d_Lower) / (0.1 * Z0_Lower)) / K2
-#    numerator = z_ref .+ factor .* displacement
-#    
-#    # Avoid log of numbers ≤ 1
-#    arg1 = max.(numerator ./ roughness, T(1.001))
-#    arg2 = max.(numerator ./ (T(0.1) .* roughness), T(1.001))
-#    
-#    term1 = log.(arg1)
-#    term2 = log.(arg2)
-#    
-#    ra = (term1 .* term2) ./ K2
-#    
-#    # Scale by wind speed (or set to huge resistance if wind ≤ 0)
-#    w = T.(wind_gpu)
-#    ra = ifelse.(w .> T(0), 
-#                 ra ./ max.(w, wind_floor),
-#                 huge_resist)
-#    
-#    # Clamp to reasonable bounds
-#    ra = clamp.(ra, ra_min, ra_max)
-#    
-#    return ra
-#end
 
 
 function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
