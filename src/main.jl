@@ -400,6 +400,12 @@ function process_year(year)
             # ============================================================
             # Preprocess & Write Outputs
             # ============================================================
+            # Correct logging outputs by recalculating Radiation dynamically closing the explicit current-day temperature offset mirroring the VIC closures.
+            @timeit to "calculate_net_radiation_post_closure" begin
+                calculate_net_radiation!(
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                )
+            end
             @timeit to "preprocess_daily_data" begin
                 gpu_results = preprocess_daily_outputs(
                     day, tsurf, tair_gpu, prec_gpu,

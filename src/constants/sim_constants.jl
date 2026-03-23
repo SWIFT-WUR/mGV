@@ -2,7 +2,7 @@ const K_L = ft(0.1)
 const K = ft(0.4)
 const z2 = ft(10.0)
 const Ri_cr = ft(0.2)
-const emissivity = ft(1.0)
+const emissivity = ft(0.97)
 
 # Thermal conductivity constants
 const Ki = ft(2.2)   # Thermal conductivity of ice (W/mK)
