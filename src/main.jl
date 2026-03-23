@@ -16,7 +16,7 @@ end
 
 @timeit to "gpu_load_static_inputs" @time gpu_load_static_inputs(@vars(
     rmin, rarc, cv, elev, ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp,
-    depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil
+    depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil, c_expt
 )...)
 
 @timeit to "init_routing" begin
@@ -125,6 +125,9 @@ end
     )
 
     soil_moisture .= clamp.(init_moist_gpu, residual_moisture, soil_moisture_max)
+    
+    # Translate baseflow parameters from NIJSSEN2001 to ARNO format
+    convert_nijssen2001_to_arno!(Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu, soil_moisture_max)
 end
 
 # ============================================================================
@@ -286,12 +289,12 @@ function process_year(year)
                 calculate_surface_runoff!(
                     surface_runoff, asat,
                     throughfall, soil_moisture,
-                    soil_moisture_max, b_infilt_gpu
+                    soil_moisture_max, b_infilt_gpu, cv_gpu
                 )
             end
 
             @timeit to "calculate_infiltration" begin
-                calculate_infiltration!(infiltration, throughfall, surface_runoff)
+                calculate_infiltration!(infiltration, throughfall, surface_runoff, cv_gpu)
             end
 
             # ============================================================
@@ -305,7 +308,7 @@ function process_year(year)
 
             @timeit to "solve_runoff_and_drainage" begin
                 solve_runoff_and_drainage!(
-                    soil_moisture, subsurface_runoff, interlayer_drainage,
+                    soil_moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
                     infiltration, soil_evaporation, transpiration_grid,
                     soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
                     Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu

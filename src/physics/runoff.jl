@@ -4,7 +4,8 @@
     soil_moisture,
     soil_moisture_max,
     b_i_grid,
-    throughfall
+    throughfall,
+    cv_grid
 )
     i, j = @index(Global, NTuple)
 
@@ -52,7 +53,7 @@
         n_veg = size(throughfall, 4)
         
         for k in 1:n_veg
-            val = throughfall[i,j,1,k]
+            val = throughfall[i,j,1,k] * cv_grid[i,j,1,k]
             # Handle NaN check inline
             if !isnan(val)
                 inflow_sum += val
@@ -100,7 +101,7 @@ function calculate_surface_runoff!(
     surface_runoff, A_sat, 
     throughfall, 
     soil_moisture, soil_moisture_max, 
-    b_i
+    b_i, cv_grid
 )
 
     kernel_launcher! = surface_runoff_kernel!(device_backend)    
@@ -109,7 +110,7 @@ function calculate_surface_runoff!(
     kernel_launcher!(
         surface_runoff, A_sat, 
         soil_moisture, soil_moisture_max, 
-        b_i, throughfall;
+        b_i, throughfall, cv_grid;
         ndrange = (nx, ny)
     )
 

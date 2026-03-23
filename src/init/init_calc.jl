@@ -73,3 +73,39 @@ function calculate_soil_properties!(
     )
     
 end
+
+# ============================================================================
+# NIJSSEN2001 BASEFLOW CONVERSION KERNEL
+# ============================================================================
+@kernel function convert_nijssen2001_kernel!(Dsmax, Ds, Ws, @Const(c), @Const(max_moist))
+    i, j = @index(Global, NTuple)
+    
+    d1 = Ds[i, j]
+    d2 = Dsmax[i, j]
+    d3 = Ws[i, j]
+    d4 = c[i, j]
+    
+    # VIC extracts ARNO limits strictly across the Layer 3 bound natively `options.Nlayer - 1`
+    m_max = max_moist[i, j, 3]
+    
+    T = eltype(Dsmax)
+    EPS = T(1e-9)
+    
+    if m_max > T(0) && d3 < m_max
+        new_Dsmax = d2 * ((m_max - d3) ^ d4) + d1 * m_max
+        new_Ds = (d1 * d3) / max(new_Dsmax, EPS)
+        new_Ws = d3 / m_max
+        
+        Dsmax[i, j] = new_Dsmax
+        Ds[i, j] = new_Ds
+        Ws[i, j] = new_Ws
+    end
+end
+
+function convert_nijssen2001_to_arno!(Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu, soil_moisture_max)
+    kernel_launcher! = convert_nijssen2001_kernel!(device_backend)
+    kernel_launcher!(
+        Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu, soil_moisture_max;
+        ndrange=size(Dsmax_gpu)
+    )
+end

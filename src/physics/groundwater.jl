@@ -75,63 +75,60 @@ function volumetric_heat_capacity!(cs_array, bulk_dens, soil_dens, soil_moisture
 end
 
 function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moist, expt)
-    T = eltype(current_moist)
-    Z = T(0)
-    EPS = T(1e-9)
+    # Cast entirely to Float64 strictly to mirror VIC's double-precision root solving 
+    # preventing catastrophic cancellation against the exponent 19 limits natively.
+    Z64 = 0.0
+    EPS64 = 1e-9
+    ONE64 = 1.0
 
-    # Maintain VIC constraint expt > 3
-    expt = max.(expt, T(3.001))
+    m = max(Float64(expt), 3.001)
+    
+    W_m = max(Float64(max_moist) - Float64(resid_moist), EPS64)
+    W_a = max(Float64(current_moist) - Float64(resid_moist), Z64)
 
-    denom = max.(max_moist .- resid_moist, EPS)
-    init_moist = max.(current_moist, resid_moist .+ EPS)
+    F = clamp((W_a / W_m), Z64, ONE64)
+    
+    tiny_mask = F < 0.01
 
-    term1 = (init_moist .- resid_moist) .^ (1 .- expt)
-    term2 = Ksat ./ (denom .^ expt) .* (1 .- expt)
-    inner = max.(term1 .- term2, Z)
-    Q12 = init_moist .- (inner .^ (1 ./ (1 .- expt))) .- resid_moist
+    term1 = F ^ (ONE64 - m)
+    term2 = (Float64(Ksat) / W_m) * (ONE64 - m)
+    
+    inner = max(term1 - term2, EPS64)
+    W_new = W_m * (inner ^ (ONE64 / (ONE64 - m)))
+    
+    Q12 = W_a - W_new
+    Q12 = tiny_mask ? Z64 : Q12
 
-    avail = max.(init_moist .- resid_moist, Z)
-    Q12 = clamp.(Q12, Z, avail)
-
-    return Q12
+    return Float32(clamp(Q12, Z64, W_a))
 end
 
 
 
 # VIC Eq. 21a–21b (Liang 1994)
-#function calculate_baseflow(W, Wres, Wc, Dsmax, Ds, Ws, c_exp)
-#    # Work with absolute storages; Ws is a fraction in (0,1)
-#    WsWc  = Ws .* Wc                  # threshold storage
-#    term1 = (Ds .* Dsmax) .* (W ./ max.(WsWc, eps(eltype(W))))  # linear part
-#
-#    # Below threshold: purely linear
-#    Qb_lin = term1
-#
-#    # Above threshold: add nonlinear part
-#    num   = max.(W .- WsWc, 0)
-#    den   = max.(Wc .- WsWc, eps(eltype(W)))
-#    nonlin = (Dsmax .- (Ds .* Dsmax) ./ Ws) .* (num ./ den) .^ c_exp
-#
-#    Qb = ifelse.(W .<= WsWc, Qb_lin, term1 .+ nonlin)
-#    # Do not withdraw more than available above residual
-#    avail = max.(W .- Wres, 0)
-#    return clamp.(Qb, 0, avail)
-#end
-
+# VIC Eq. 21a–21b (Liang 1994)
 function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
     EPS = ft(1e-9)
-    frac = clamp.((W .- Wres) ./ max.(Wmax .- Wres, EPS), ft(0), ft(1))
-    Ws_eff = Ws  # Ws is fraction of effective capacity, but VIC uses it directly on effective frac
-
-    bf = ifelse.(frac .<= Ws_eff,
-        Dsmax .* (Ds ./ Ws_eff) .* frac,  # Linear: add / Ws for correct slope
-        Dsmax .* Ds + Dsmax .* (ft(1) .- Ds) .* ((frac .- Ws_eff) ./ (ft(1) .- Ws_eff)) .^ cexp  # Nonlinear: remove * Ws, as it's Dsmax * Ds start point
-    )
-    return max.(bf, ft(0))
+    eff_max = max.(Wmax .- Wres, EPS)
+    rel_moist = clamp.((W .- Wres) ./ eff_max, ft(0), ft(1))
+    
+    Ws_safe = max.(Ws, EPS)
+    Ws_compl = max.(ft(1) .- Ws, EPS)
+    
+    linear_coeff = (Dsmax .* Ds) ./ Ws_safe
+    Qb_lin = linear_coeff .* rel_moist
+    
+    nonlin_amp = Dsmax .* (ft(1) .- Ds ./ Ws_safe)
+    nonlin_frac = max.(rel_moist .- Ws, ft(0)) ./ Ws_compl
+    Qb_nonlin = Qb_lin .+ nonlin_amp .* (nonlin_frac .^ cexp)
+    
+    Qb = ifelse.(rel_moist .<= Ws, Qb_lin, Qb_nonlin)
+    
+    avail = max.(W .- Wres, ft(0))
+    return clamp.(Qb, ft(0), avail)
 end
 
 
-@kernel function infiltration_kernel!(infiltration, throughfall, surface_runoff)
+@kernel function infiltration_kernel!(infiltration, throughfall, surface_runoff, cv_grid)
     i, j = @index(Global, NTuple)
 
     if i <= size(infiltration, 1) && j <= size(infiltration, 2)
@@ -144,7 +141,8 @@ end
         n_tiles = size(throughfall, 4)
         for k in 1:n_tiles
             # throughfall is (nx, ny, 1, nveg), so we index [i, j, 1, k]
-            acc += throughfall[i, j, 1, k]
+            # Multiply by fractional area cv_grid to preserve mass conservation!
+            acc += throughfall[i, j, 1, k] * cv_grid[i, j, 1, k]
         end
 
         # 3. Write result
@@ -152,13 +150,13 @@ end
     end
 end
 
-function calculate_infiltration!(infiltration, throughfall, surface_runoff)
+function calculate_infiltration!(infiltration, throughfall, surface_runoff, cv_grid)
 
     kernel! = infiltration_kernel!(device_backend)
     nx, ny  = size(infiltration)
 
     # Launch kernel
-    kernel!(infiltration, throughfall, surface_runoff; ndrange=(nx, ny))
+    kernel!(infiltration, throughfall, surface_runoff, cv_grid; ndrange=(nx, ny))
 
     return nothing
 end
@@ -167,6 +165,7 @@ end
 @kernel function runoff_drainage_kernel!(
     soil_moisture,          # (nx, ny, 3)
     subsurface_runoff,      # (nx, ny)
+    surface_runoff,         # (nx, ny)
     interlayer_drainage,    # (nx, ny, 2)
     surface_inflow,         # (nx, ny)
     soil_evap,              # (nx, ny)
@@ -213,66 +212,81 @@ end
         inflow = surface_inflow[i,j]
         evap   = soil_evap[i,j]
 
-        # ==================== LAYER 1 ====================
-        sm1_new = sm1 + inflow
-
-        # ET Removal
-        eff_sm1 = max(sm1_new - res1, zero)
-        denom_1 = max(evap + t1, tiny)
-        ratio_1 = min(one, eff_sm1 / denom_1)
-        sm1_new -= (evap + t1) * ratio_1
-
-        # Drainage L1 -> L2 (CALLING YOUR FUNCTION)
-        drain_pot_1 = calculate_interlayer_drainage(k1, sm1_new, max1, res1, exp1)
+        # ==========================================================
+        # Fractional Sub-Daily State Discretization
+        # Using 6 steps per day (dt=4h) matching explicit VIC config
+        # ==========================================================
+        N_STEPS = 6
+        INV_STEPS = ft(1.0 / 6.0)
         
-        drain_1 = min(drain_pot_1, max(sm1_new - res1, zero))
-        sm1_new -= drain_1
-
-        # Spillover L1
-        spill_1 = max(sm1_new - max1, zero)
-        sm1_new -= spill_1
-        drain_1 += spill_1
-
-        # ==================== LAYER 2 ====================
-        sm2_new = sm2 + drain_1
-
-        # ET Removal
-        eff_sm2 = max(sm2_new - res2, zero)
-        denom_2 = max(t2, tiny)
-        ratio_2 = min(one, eff_sm2 / denom_2)
-        sm2_new -= t2 * ratio_2
-
-        # Drainage L2 -> L3 (CALLING YOUR FUNCTION)
-        drain_pot_2 = calculate_interlayer_drainage(k2, sm2_new, max2, res2, exp2)
+        inflow_sub = inflow * INV_STEPS
+        evap_sub   = evap * INV_STEPS
+        t1_sub     = t1 * INV_STEPS
+        t2_sub     = t2 * INV_STEPS
+        t3_sub     = t3 * INV_STEPS
         
-        drain_2 = min(drain_pot_2, max(sm2_new - res2, zero))
-        sm2_new -= drain_2
-
-        # Spillover L2
-        spill_2 = max(sm2_new - max2, zero)
-        sm2_new -= spill_2
-        drain_2 += spill_2
-
-        # ==================== LAYER 3 ====================
-        sm3_new = sm3 + drain_2
-
-        # ET Removal
-        eff_sm3 = max(sm3_new - res3, zero)
-        denom_3 = max(t3, tiny)
-        ratio_3 = min(one, eff_sm3 / denom_3)
-        sm3_new -= t3 * ratio_3
-
-        # Baseflow (CALLING YOUR FUNCTION)
-        # We pass the scalar values we loaded above
-        baseflow_pot = calculate_baseflow(sm3_new, res3, max3, _Dsmax, _Ds, _Ws, _c_expt)
+        tot_drain_1 = zero
+        tot_drain_2 = zero
+        tot_baseflow = zero
+        tot_spill_1 = zero
         
-        runoff = min(baseflow_pot, max(sm3_new - res3, zero))
-        sm3_new -= runoff
+        for step in 1:N_STEPS
+            # ==================== LAYER 1 ====================
+            eff_sm1 = max(sm1 + inflow_sub - evap_sub - t1_sub, zero)
+            dpot_1 = calculate_interlayer_drainage(k1 * INV_STEPS, eff_sm1, max1, res1, exp1)
+            # Bound drainage dynamically across the fractional scalar
+            d_1 = min(dpot_1, max(eff_sm1 - res1, zero))
+            
+            sm1 = sm1 + inflow_sub - (evap_sub + t1_sub) - d_1
 
-        # Deep Drainage
-        deep_drain = max(sm3_new - max3, zero)
-        sm3_new -= deep_drain
-        runoff += deep_drain
+            # ==================== LAYER 2 ====================
+            eff_sm2 = max(sm2 + d_1 - t2_sub, zero)
+            dpot_2 = calculate_interlayer_drainage(k2 * INV_STEPS, eff_sm2, max2, res2, exp2)
+            d_2 = min(dpot_2, max(eff_sm2 - res2, zero))
+            
+            sm2 = sm2 + d_1 - t2_sub - d_2
+
+            # ==================== LAYER 3 ====================
+            sm3_avail = max(sm3 + d_2 - t3_sub, zero)
+            base_pot = calculate_baseflow(sm3_avail, res3, max3, _Dsmax, _Ds, _Ws, _c_expt)
+            b = min(base_pot * INV_STEPS, max(sm3_avail - res3, zero))
+            
+            sm3 = sm3 + d_2 - t3_sub - b
+            
+            # Upward Spill (Cascading vertically upwards)
+            sp_3 = max(sm3 - max3, zero)
+            sm3 -= sp_3
+            sm2 += sp_3
+            
+            sp_2 = max(sm2 - max2, zero)
+            sm2 -= sp_2
+            sm1 += sp_2
+            
+            sp_1 = max(sm1 - max1, zero)
+            sm1 -= sp_1
+            
+            tot_spill_1 += sp_1
+            tot_drain_1 += d_1
+            tot_drain_2 += d_2
+            tot_baseflow += b
+        end
+        
+        surface_runoff[i,j] += tot_spill_1
+        
+        sm1_new = sm1
+        sm2_new = sm2
+        sm3_new = sm3
+        drain_1 = tot_drain_1
+        drain_2 = tot_drain_2
+        runoff_val = tot_baseflow
+        
+        if sm3_new < res3
+            shortage = res3 - sm3_new
+            runoff_val -= shortage
+            sm3_new = res3
+        end
+        
+        runoff_val = max(runoff_val, zero)
 
         # ==================== WRITE BACK ====================
         soil_moisture[i,j,1] = sm1_new
@@ -282,13 +296,13 @@ end
         interlayer_drainage[i,j,1] = drain_1
         interlayer_drainage[i,j,2] = drain_2
         
-        subsurface_runoff[i,j] = runoff
+        subsurface_runoff[i,j] = runoff_val
     end
 end
 
 
 function solve_runoff_and_drainage!(
-    soil_moisture, subsurface_runoff, interlayer_drainage,
+    soil_moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
     surface_inflow, soil_evaporation, transpiration,
     soil_moisture_max, ksat, residual_moisture, expt,
     Dsmax, Ds, Ws, c_expt
@@ -297,7 +311,7 @@ function solve_runoff_and_drainage!(
     nx, ny = size(surface_inflow)
     
     kernel_launcher!(
-        soil_moisture, subsurface_runoff, interlayer_drainage,
+        soil_moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
         surface_inflow, soil_evaporation, transpiration,
         soil_moisture_max, ksat, residual_moisture, expt,
         Dsmax, Ds, Ws, c_expt;
