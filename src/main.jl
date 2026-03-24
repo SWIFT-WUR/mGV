@@ -21,7 +21,7 @@ end
 
 @timeit to "init_routing" begin
     # Conditionally initialize the routing state; if disabled, assign nothing to avoid undefined variable
-    const routing_state = enable_routing ? initialize_routing_model(routing_param_file) : nothing
+    const routing_state = enable_routing ? initialize_routing_model(routing_param_file, elev_cpu) : nothing
 end
 
 @timeit to "reshaping_inputs" begin
@@ -414,7 +414,7 @@ function process_year(year)
                     day, tsurf, tair_gpu, prec_gpu,
                     total_et, surface_runoff, total_runoff,
                     soil_evaporation, soil_moisture,
-                    potential_evaporation, net_radiation, transpiration, canopy_evaporation,
+                    potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
                     coverage_gpu, cv_gpu, fillvalue_threshold
                 )
             end

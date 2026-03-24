@@ -14,6 +14,7 @@ struct TransferBuffer
     nr_summed::Matrix{FloatType}
     tr_summed::Matrix{FloatType}
     ce_summed::Matrix{FloatType}
+    ws_summed::Matrix{FloatType}
     soil_evaporation::Array{FloatType, 3}
     soil_moisture::Array{FloatType, 3}
 end
@@ -38,6 +39,7 @@ function create_transfer_buffer(nx, ny, nlayers)
         make_pinned(nx, ny),       # nr_summed
         make_pinned(nx, ny),       # tr_summed
         make_pinned(nx, ny),       # ce_summed
+        make_pinned(nx, ny),       # ws_summed
         make_pinned(nx, ny, 1),    # soil_evaporation
         make_pinned(nx, ny, nlayers) # soil_moisture
     )
@@ -61,6 +63,7 @@ struct ZarrOutputStore{A3, A4}
     nr_summed::A3
     tr_summed::A3
     ce_summed::A3
+    ws_summed::A3
     Q12::A4
     soil_evaporation::A4
     soil_temperature::A4
@@ -82,6 +85,7 @@ struct NetCDFOutputStore
     nr_summed::Any
     tr_summed::Any
     ce_summed::Any
+    ws_summed::Any
     Q12::Any
     soil_evaporation::Any
     soil_temperature::Any
@@ -155,6 +159,7 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
         make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("water_storage_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         
         # 4D Variables
         make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, dim_3d_qlayer),
@@ -204,6 +209,7 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
         def_fast_var("net_radiation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("transpiration_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("canopy_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("water_storage_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("Q12_output", ("lon", "lat", "time", "qlayers"); chunks=chunk_3d_qlayer),
         def_fast_var("soil_evaporation_output", ("lon", "lat", "time", "top_layer"); chunks=chunk_3d_top),
         def_fast_var("soil_temperature_output", ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer),
@@ -237,6 +243,7 @@ function async_transfer!(processed_data, buf::TransferBuffer)
     dma!(buf.nr_summed,      processed_data.nr_summed)
     dma!(buf.tr_summed,      processed_data.tr_summed)
     dma!(buf.ce_summed,      processed_data.ce_summed)
+    dma!(buf.ws_summed,      processed_data.ws_summed)
     
     dma!(buf.soil_evaporation, processed_data.soil_evaporation)
     dma!(buf.soil_moisture,    processed_data.soil_moisture)
@@ -260,6 +267,7 @@ function write_slice!(day, buf::TransferBuffer, store::ZarrOutputStore)
         Threads.@spawn store.nr_summed[:, :, day]      = buf.nr_summed
         Threads.@spawn store.tr_summed[:, :, day]      = buf.tr_summed
         Threads.@spawn store.ce_summed[:, :, day]      = buf.ce_summed
+        Threads.@spawn store.ws_summed[:, :, day]      = buf.ws_summed
         Threads.@spawn store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
         Threads.@spawn store.soil_moisture[:, :, day, :]    = buf.soil_moisture
     end
@@ -280,6 +288,7 @@ function write_slice!(day, buf::TransferBuffer, store::NetCDFOutputStore)
     store.nr_summed[:, :, day]      = buf.nr_summed
     store.tr_summed[:, :, day]      = buf.tr_summed
     store.ce_summed[:, :, day]      = buf.ce_summed
+    store.ws_summed[:, :, day]      = buf.ws_summed
     store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
     store.soil_moisture[:, :, day, :]    = buf.soil_moisture
 end
@@ -296,9 +305,9 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
 # ============================================================================
 
 @kernel function fused_preprocess_kernel!(
-    pe_out, nr_out, tr_out, ce_out,     # 2D Outputs
+    pe_out, nr_out, tr_out, ce_out, ws_out, # 2D Outputs
     @Const(pe_in), @Const(nr_in),       # 4D Inputs
-    @Const(tr_in), @Const(ce_in),       # 4D Inputs
+    @Const(tr_in), @Const(ce_in), @Const(ws_in), # 4D Inputs
     @Const(coverage), @Const(cv),       # 4D Weights
     threshold, fill_val                 # Scalars
 )
@@ -310,6 +319,7 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
     acc_nr = zero(eltype(nr_out))
     acc_tr = zero(eltype(tr_out))
     acc_ce = zero(eltype(ce_out))
+    acc_ws = zero(eltype(ws_out))
 
     # 2. Iterate over Vegetation Tiles (4th Dimension)
     # We assume inputs are (nx, ny, 1, n_tiles)
@@ -345,6 +355,12 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
         if !isnan(val) && abs(val) <= threshold
             acc_ce += w_cv * w_cov * val
         end
+
+        # F. Water Storage (WS)
+        val = ws_in[i, j, 1, k]
+        if !isnan(val) && abs(val) <= threshold
+            acc_ws += w_cv * w_cov * val
+        end
     end
 
     # 3. Write Final Sums or NaN to Global Memory
@@ -353,11 +369,13 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
         nr_out[i, j] = fill_val
         tr_out[i, j] = fill_val
         ce_out[i, j] = fill_val
+        ws_out[i, j] = fill_val
     else
         pe_out[i, j] = acc_pe
         nr_out[i, j] = acc_nr
         tr_out[i, j] = acc_tr
         ce_out[i, j] = acc_ce
+        ws_out[i, j] = acc_ws
     end
 end
 
@@ -365,7 +383,7 @@ function preprocess_daily_outputs(
     day, tsurf, tair_gpu, prec_gpu, 
     total_et, surface_runoff, total_runoff,
     soil_evaporation, soil_moisture,
-    potential_evaporation, net_radiation, transpiration, canopy_evaporation,
+    potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
     coverage_gpu, cv_gpu, fillvalue_threshold
 )
     # 1. Allocate Output Arrays (2D)
@@ -375,14 +393,15 @@ function preprocess_daily_outputs(
     nr_summed = similar(tsurf, nx, ny)
     tr_summed = similar(tsurf, nx, ny)
     ce_summed = similar(tsurf, nx, ny)
+    ws_summed = similar(tsurf, nx, ny)
 
     # 2. Launch the Fused Kernel
     kernel_launcher! = fused_preprocess_kernel!(device_backend)
     
     # Launch with 2D range
     kernel_launcher!(
-        pe_summed, nr_summed, tr_summed, ce_summed,
-        potential_evaporation, net_radiation, transpiration, canopy_evaporation,
+        pe_summed, nr_summed, tr_summed, ce_summed, ws_summed,
+        potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
         coverage_gpu, cv_gpu,
         FloatType(fillvalue_threshold), FloatType(NaN);
         ndrange=(nx, ny)
@@ -412,6 +431,7 @@ function preprocess_daily_outputs(
         pe_summed = pe_summed,
         nr_summed = nr_summed,
         tr_summed = tr_summed,
-        ce_summed = ce_summed
+        ce_summed = ce_summed,
+        ws_summed = ws_summed
     )
 end

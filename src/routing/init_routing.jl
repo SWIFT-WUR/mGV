@@ -1,4 +1,4 @@
-function initialize_routing_model(param_file)
+function initialize_routing_model(param_file, elev)
     println("Initializing Kinematic Wave Routing...")
     println("  -> Source: $param_file")
 
@@ -78,8 +78,23 @@ function initialize_routing_model(param_file)
     # Handle NaNs by defaulting to minimum width
     flat_width = map(x -> isnan(x) ? ft(2.0) : clamp(ft(7.0) * sqrt(x), ft(2.0), ft(2000.0)), acc_km2)
 
-    # Slope defaults to MIN_SLOPE (defined in routing.jl)
+    # Slope is constructed from elevation difference over distance
+    flat_elev = FloatType.(vec(elev))
     flat_slope = fill(MIN_SLOPE, n_total)
+    
+    for i in 1:n_total
+        dest_idx = cpu_downstream[i]
+        
+        if dest_idx != -1
+            dist = flat_dist[i]
+            
+            # Simple downstream slope calculation bounded by minimum slope and missing data
+            if dist > ft(0) && !isnan(dist) && !isnan(flat_elev[i]) && !isnan(flat_elev[dest_idx])
+                s = (flat_elev[i] - flat_elev[dest_idx]) / dist
+                flat_slope[i] = max(s, MIN_SLOPE)
+            end
+        end
+    end
 
     # 4. Allocate GPU state 
     println("  -> Allocating Routing State on GPU...")
