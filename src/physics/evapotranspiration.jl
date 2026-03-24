@@ -158,9 +158,9 @@ function calculate_potential_evaporation!(
 end
 
 
-function calculate_max_water_storage!(max_water_storage, LAI_gpu)
+function calculate_max_water_storage!(max_water_storage, LAI_gpu, coverage_gpu)
 
-    @. max_water_storage = K_L * LAI_gpu 
+    @. max_water_storage = ifelse(coverage_gpu > ft(1.0e-5), (K_L * LAI_gpu) / coverage_gpu, ft(0.0))
 
     @. max_water_storage = ifelse(
         isnan(max_water_storage) | (abs(max_water_storage) > fillvalue_threshold), 
