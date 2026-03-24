@@ -14,3 +14,12 @@ const Ks_org = ft(0.25)  # Thermal conductivity of organic solid (W/mK)
 const organic_frac = ft(0.0)
 const bulk_dens_org = ft(0.0)
 const soil_dens_org = ft(0.0)
+
+# ==============================================================================
+# VIC SNOW SIMULATION CONSTANTS
+# ==============================================================================
+const SNOW_MIN_SWQ_EB_THRES      = ft(0.01)     # (m) minimum SWQ for energy balance calculation
+const SNOW_MAX_SURFACE_SWE       = ft(0.0125)   # (m) maximum surface layer SWE
+const SNOW_LIQUID_WATER_CAPACITY = ft(0.035)    # Maximum liquid water capacity of snowpack
+const MIN_RAIN_TEMP              = ft(-0.5)     # Temp below which precip is all snow
+const MAX_SNOW_TEMP              = ft(0.5)      # Temp above which precip is all rain

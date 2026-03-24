@@ -12,12 +12,20 @@ println("Loading parameter data and allocating memory...")
         quartz, bulk_dens, soil_dens, expt, coverage, b_infilt,
         Ds, Dsmax, Ws, dp, Tavg, c_expt
     )
+    if enable_snow
+        @load_params(snow_band_fract, snow_band_elev, snow_band_pfactor, snow_rough)
+    end
 end
 
-@timeit to "gpu_load_static_inputs" @time gpu_load_static_inputs(@vars(
-    rmin, rarc, cv, elev, ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp,
-    depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil, c_expt
-)...)
+@timeit to "gpu_load_static_inputs" begin
+    gpu_load_static_inputs(@vars(
+        rmin, rarc, cv, elev, ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp,
+        depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil, c_expt
+    )...)
+    if enable_snow
+        gpu_load_static_inputs(@vars(snow_band_fract, snow_band_elev, snow_band_pfactor, snow_rough)...)
+    end
+end
 
 @timeit to "init_routing" begin
     # Conditionally initialize the routing state; if disabled, assign nothing to avoid undefined variable
@@ -98,7 +106,26 @@ println("Allocating State Arrays on: $backend_name")
     const transpiration_layers = alloc(dim_grid[1], dim_grid[2], n_layers, dim_veg)
     const g_sw_veg_buf         = alloc(dim_grid[1], dim_grid[2], 1, dim_veg)
 
-    # --- 6. Initialization ---
+    # --- 6. Snow States ---
+    # Shape: (nx, ny, 1, nveg) tracking snow per vegetation tile
+    const snow_water_eq        = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_depth           = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_density_state   = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_surf_water      = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_pack_water      = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_surf_temp       = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_pack_temp       = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_coverage        = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_albedo_state    = enable_snow ? alloc(dim_tile...) : nothing
+    const snow_melt_out        = enable_snow ? alloc(dim_tile...) : nothing
+    
+    if enable_snow
+        # Snow constants init
+        fill!(snow_density_state, FloatType(50.0))
+        fill!(snow_albedo_state, FloatType(0.85))
+    end
+
+    # --- 7. Initialization ---
     # Initialize soil temperature with Tavg (broadcast across the ground layers, usually 3)
     for k in 1:n_layers
         view(soil_temperature, :, :, k) .= Tavg_gpu
@@ -234,11 +261,24 @@ function process_year(year)
                 calculate_max_water_storage!(max_water_storage, LAI_gpu, coverage_gpu)
             end
 
+            if enable_snow
+                @timeit to "calculate_snow_dynamics" begin
+                    calculate_snow_dynamics!(
+                        snow_water_eq, snow_depth, snow_density_state, snow_surf_water, snow_pack_water,
+                        snow_surf_temp, snow_pack_temp, snow_coverage, snow_albedo_state, snow_melt_out,
+                        prec_gpu, tair_gpu, wind_gpu, vp_gpu, swdown_gpu, lwdown_gpu, psurf_gpu,
+                        aerodynamic_resistance, elev_gpu, cv_gpu, day_sec
+                    )
+                end
+            end
+
+            active_precip = enable_snow ? snow_melt_out : prec_gpu
+
             @timeit to "calculate_canopy_evaporation" begin
                 calculate_canopy_evaporation!(
                     canopy_evaporation, f_n,
                     water_storage, max_water_storage, potential_evaporation,
-                    aerodynamic_resistance, rarc_gpu, prec_gpu, cv_gpu,
+                    aerodynamic_resistance, rarc_gpu, active_precip, cv_gpu,
                     rmin_gpu, LAI_gpu, tair_gpu, elev_gpu
                 )
             end
@@ -281,7 +321,7 @@ function process_year(year)
             @timeit to "update_water_canopy_storage" begin
                 update_water_canopy_storage!(
                     water_storage, throughfall,
-                    prec_gpu, cv_gpu, canopy_evaporation,
+                    active_precip, cv_gpu, canopy_evaporation,
                     max_water_storage, coverage_gpu
                 )
             end

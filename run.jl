@@ -25,6 +25,7 @@ include("src/io/parameter_reader.jl")
 include("src/init/init_calc.jl")
 
 # Physics modules
+include("src/snow/snow.jl")
 include("src/physics/physics.jl")
 include("src/physics/evapotranspiration.jl")
 include("src/physics/groundwater.jl")

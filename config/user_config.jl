@@ -10,6 +10,7 @@ if CASE == "global"
     global nveg = 14
     global fillvalue_threshold = ft(1e30)
     global enable_routing = true
+    global enable_snow = true
 
     # =========================== GLOBAL CONFIGURATION ===========================
         
@@ -50,6 +51,12 @@ if CASE == "global"
     Wpwp_var = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
     coverage_var = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
     quartz_var = "quartz" #quartz(nlayer, lat, lon)
+
+    # === Snow Parameters ===
+    snow_band_fract_var = "AreaFract"
+    snow_band_elev_var = "elevation"
+    snow_band_pfactor_var = "Pfactor"
+    snow_rough_var = "snow_rough"
 
     # === Extract Soil Parameters ===
     depth_var = "depth" #depth(nlayer, lat, lon)
@@ -92,6 +99,7 @@ elseif CASE == "indus"
     global nveg = 22
     global fillvalue_threshold = ft(1e30)
     global enable_routing = true
+    global enable_snow = true
 
     # ============================ INDUS CONFIGURATION ============================
    
@@ -132,6 +140,12 @@ elseif CASE == "indus"
     Wpwp_var = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
     coverage_var = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
     quartz_var = "quartz" #quartz(nlayer, lat, lon)
+
+    # === Snow Parameters ===
+    snow_band_fract_var = "AreaFract"
+    snow_band_elev_var = "elevation"
+    snow_band_pfactor_var = "Pfactor"
+    snow_rough_var = "snow_rough"
 
     # === Extract Soil Parameters ===
     depth_var = "depth" #depth(nlayer, lat, lon)
@@ -174,6 +188,7 @@ elseif CASE == "mekong"
     global nveg = 14
     global fillvalue_threshold = ft(9998.0)
     global enable_routing = true
+    global enable_snow = true
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
@@ -213,6 +228,12 @@ elseif CASE == "mekong"
     Wpwp_var = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
     coverage_var = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
     quartz_var = "quartz" #quartz(nlayer, lat, lon)
+
+    # === Snow Parameters ===
+    snow_band_fract_var = "AreaFract"
+    snow_band_elev_var = "elevation"
+    snow_band_pfactor_var = "Pfactor"
+    snow_rough_var = "snow_rough"
 
     # === Extract Soil Parameters ===
     depth_var = "depth" #depth(nlayer, lat, lon)

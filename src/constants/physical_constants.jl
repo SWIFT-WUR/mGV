@@ -30,4 +30,20 @@ const c_p_air = ft(1013.0)    # Specific heat of moist air (J/kg·K)
 
 # Unit Conversion Constants
 const day_sec = ft(86400.0)   # Seconds in a day 
-const mm_in_m = ft(1000.0)    # Conversion factor from mm to m 
+const mm_in_m = ft(1000.0)    # Conversion factor from mm to m
+
+# ==============================================================================
+# VIC SNOW PHYSICAL CONSTANTS
+# ==============================================================================
+const CONST_PI        = ft(3.14159265358979323846)
+const CONST_G         = ft(9.80616)
+const CONST_EPS       = ft(18.016 / 28.97)
+const CONST_TKFRZ     = ft(273.15)
+const CONST_RHOFW     = ft(1000.0)
+const CONST_RHOICE    = ft(917.0)
+const CONST_CPFW      = ft(4188.0)
+const CONST_CPICE     = ft(2117.27)
+const CONST_VCPICE_WQ = (CONST_CPICE * CONST_RHOFW)
+const CONST_LATICE    = ft(333700.0)
+const CONST_LATVAP    = ft(2.501e6)
+const CONST_LATSUB    = (CONST_LATICE + CONST_LATVAP)
