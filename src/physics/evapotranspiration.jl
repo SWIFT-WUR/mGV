@@ -160,7 +160,7 @@ end
 
 function calculate_max_water_storage!(max_water_storage, LAI_gpu)
 
-    @. max_water_storage = K * LAI_gpu 
+    @. max_water_storage = K_L * LAI_gpu 
 
     @. max_water_storage = ifelse(
         isnan(max_water_storage) | (abs(max_water_storage) > fillvalue_threshold), 
