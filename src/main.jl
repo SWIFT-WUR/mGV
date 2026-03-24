@@ -301,10 +301,8 @@ function process_year(year)
             # ============================================================
             # Soil moisture update
             # ============================================================
-            # Weight for soil water removal
             @timeit to "transpiration_grid" begin
-                transpiration_grid = sum(transpiration .* coverage_gpu, dims=4)
-                #transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+                transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
             end
 
             @timeit to "solve_runoff_and_drainage" begin
