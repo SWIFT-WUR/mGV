@@ -40,7 +40,7 @@ function compute_aerodynamic_resistance!(
     # This costs zero time if types are correct but saves you from Float64 lag.
     @assert eltype(ra)       == FloatType "Output 'ra' must be FloatType"
     @assert eltype(tsurf)    == FloatType "Input 'tsurf' must be FloatType"
-    @assert K                isa FloatType "Constant 'K' in SimConstants must be FloatType"
+    @assert von_karman       isa FloatType "Constant 'von_karman' in SimConstants must be FloatType"
     @assert g                isa FloatType "Constant 'g' in SimConstants must be FloatType"
 
     # --- 2. Local Constants ---
@@ -63,14 +63,14 @@ function compute_aerodynamic_resistance!(
     # ========================================================================
     # 1. SOIL TILES (Last Index)
     # ========================================================================
-    # We pass the global constants (K, g, t_freeze, Ri_cr) directly.
+    # We pass the global constants (von_karman, g, t_freeze, Ri_cr) directly.
     @views @. ra[:, :, :, N_all:N_all] = aerodynamic_kernel(
         z0soil_gpu,                
         d0_gpu[:,:,:,N_all:N_all], 
         tsurf,                     
         tair_gpu,                  
         wind_gpu,                  
-        z2T, K, g, t_freeze, Ri_cr, 
+        z2T, von_karman, g, t_freeze, Ri_cr, 
         z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
     )
 
@@ -84,7 +84,7 @@ function compute_aerodynamic_resistance!(
             tsurf,
             tair_gpu,
             wind_gpu,
-            z2T, K, g, t_freeze, Ri_cr, 
+            z2T, von_karman, g, t_freeze, Ri_cr, 
             z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
         )
     end
