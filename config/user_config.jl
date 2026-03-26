@@ -91,21 +91,21 @@ elseif CASE == "indus"
     println("Loading configuration for 'indus'...")
     global nveg = 22
     global fillvalue_threshold = ft(1e30)
-    global enable_routing = true
+    global enable_routing = false
 
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
-    input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus_f32.nc"
-    routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus_f32.nc"
+    input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
+    routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus.nc"
 
-    input_prec_prefix      = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_f32_"
-    input_tair_prefix      = "./input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_f32_"
-    input_wind_prefix      = "./input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_f32_"
-    input_vp_prefix        = "./input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_f32_"
-    input_swdown_prefix    = "./input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_f32_"
-    input_lwdown_prefix    = "./input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_f32_"
-    input_psurf_prefix     = "./input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_f32_"
+    input_prec_prefix      = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
+    input_tair_prefix      = "./input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_"
+    input_wind_prefix      = "./input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_"
+    input_vp_prefix        = "./input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_"
+    input_swdown_prefix    = "./input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_"
+    input_lwdown_prefix    = "./input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_"
+    input_psurf_prefix     = "./input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_"
     
     # Input variable names (as specified in the input files' metadata)
     d0_var = "displacement"

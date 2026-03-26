@@ -408,8 +408,15 @@ function preprocess_daily_outputs(
     )
     
     # 3. Handle reshapes (metadata only, instant)
-    discharge_2d = reshape(Main.routing_state.discharge_gpu, size(total_runoff))
-    travel_time_2d = reshape(Main.routing_state.travel_time_gpu, size(total_runoff)) 
+    if Main.enable_routing
+        discharge_2d = reshape(Main.routing_state.discharge_gpu, size(total_runoff))
+        travel_time_2d = reshape(Main.routing_state.travel_time_gpu, size(total_runoff)) 
+    else
+        discharge_2d = similar(total_runoff)
+        travel_time_2d = similar(total_runoff)
+        fill!(discharge_2d, FloatType(0.0))
+        fill!(travel_time_2d, FloatType(0.0))
+    end 
 
     # 4. Package and return
     return (
