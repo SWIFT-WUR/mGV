@@ -8,15 +8,17 @@ if CASE == "global"
 
     println("Loading configuration for 'global'...")
     global nveg = 14
-    global fillvalue_threshold = ft(1e30)
     global enable_routing = true
     global enable_snow = true
 
     # =========================== GLOBAL CONFIGURATION ===========================
         
     # Input file paths/names
-    input_param_file       = "./input_data/global/vic_global_5min_params_fix2_f32.nc"
+    params_file            = get(ENV, "MGV_PARAMS_FILE", "input_data/global/era5_0_25_vic_params_w_depth.nc")
+    coverage_file          = get(ENV, "MGV_COVERAGE_FILE", "input_data/global/global_0.25deg_coverage_reordered.nc")
     routing_param_file     = "./input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
+    enable_snow            = true # Default to true for global
+    fillvalue_threshold    = ft(1e15)
 
     input_prec_prefix      = "./input_data/global/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_f32_"
     input_tair_prefix      = "./input_data/global/forcing/tair/tair_WFDE5_v2.0_5arcmin_f32_"
@@ -98,22 +100,27 @@ elseif CASE == "indus"
     println("Loading configuration for 'indus'...")
     global nveg = 22
     global fillvalue_threshold = ft(1e30)
-    global enable_routing = true
+    global enable_routing = false
     global enable_snow = true
 
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
-    input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus_f32.nc"
-    routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus_f32.nc"
+    input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
+    routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus.nc"
+    coverage_file          = "input_data/indus/vic_indus_50km_coverage.nc"
+    # Enable snow
+    enable_snow            = true
+    fillvalue_threshold    = ft(1e15)
+    # -------------------------------------------------------------
 
-    input_prec_prefix      = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_f32_"
-    input_tair_prefix      = "./input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_f32_"
-    input_wind_prefix      = "./input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_f32_"
-    input_vp_prefix        = "./input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_f32_"
-    input_swdown_prefix    = "./input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_f32_"
-    input_lwdown_prefix    = "./input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_f32_"
-    input_psurf_prefix     = "./input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_f32_"
+    input_prec_prefix      = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
+    input_tair_prefix      = "./input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_"
+    input_wind_prefix      = "./input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_"
+    input_vp_prefix        = "./input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_"
+    input_swdown_prefix    = "./input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_"
+    input_lwdown_prefix    = "./input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_"
+    input_psurf_prefix     = "./input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_"
     
     # Input variable names (as specified in the input files' metadata)
     d0_var = "displacement"
@@ -186,14 +193,17 @@ elseif CASE == "mekong"
 
     println("Loading configuration for 'mekong'...")
     global nveg = 14
-    global fillvalue_threshold = ft(9998.0)
     global enable_routing = true
     global enable_snow = true
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
-    input_param_file       = "./input_data/mekong/vic_mekong_5min_params.nc"
+    params_file            = "input_data/mekong/vic_mekong_5min_params.nc"
+    coverage_file          = "input_data/mekong/vic_mekong_5min_coverage.nc"
     routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
+    # Disable snow for Mekong
+    enable_snow            = false
+    fillvalue_threshold    = ft(1e15)
 
     input_prec_prefix      = "./input_data/mekong/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"
     input_tair_prefix      = "./input_data/mekong/forcing/tair/tair_WFDE5_v2.0_5arcmin_"

@@ -301,43 +301,90 @@ end
             f1 = root_gpu[i,j,1,k]
             f2 = root_gpu[i,j,2,k]
             
+            # --- SHARE_LAYER_MOIST Logic ---
+            # VIC groups all upper root zones (Layers 1 and 2) into 'moist1'.
+            # Therefore, SHARE_LAYER_MOIST condition (moist1 >= Wcr1) is based on the sum.
+            W_root_sum = ZERO
+            Wcr_root_sum = ZERO
+            
+            if f1 > ZERO
+                W_root_sum += W1
+                Wcr_root_sum += Wcr1
+            end
+            if f2 > ZERO
+                W_root_sum += W2
+                Wcr_root_sum += Wcr2
+            end
+            
+            share_moist = (W_root_sum >= Wcr_root_sum) && (W_root_sum > ZERO)
+            
+            moist1_wet = W1 >= Wcr1
+            moist2_wet = W2 >= Wcr2
+            
             # --- Vegetation Conductance (g_sw_veg) ---
-            # Original: clamp((f1 * g1) / (f1 + EPS), 0, 1)
-            g_sw_veg = clamp((f1 * g1) / (f1 + EPS), ZERO, ONE)
+            if share_moist
+                g_sw_veg = ONE
+            else
+                g_sw_veg = clamp((f1 * g1 + f2 * g2) / (f1 + f2 + EPS), ZERO, ONE)
+            end
 
             # --- Canopy Wetness / Dry Time Factor ---
-            # Inputs are 4D (nx,ny,1,veg). Access [i,j,1,k]
             ws   = water_storage[i,j,1,k]
             max_ws = max_water_storage[i,j,1,k]
             cv   = cv_gpu[i,j,1,k]
             fn_val = f_n[i,j,1,k]
             pe   = potential_evaporation[i,j,1,k]
 
-            # Logic: clamp(1 - f_n * ( (Ws/Cv) / MaxWs )^(2/3), 0, 1)
-            # Be careful with parenthesis from original code
-            term_inner = (ws / max(cv, EPS)) / max(max_ws, EPS)
-            term_inner = clamp(term_inner, ZERO, ONE)
-            
+            term_inner = clamp((ws / max(cv, EPS)) / max(max_ws, EPS), ZERO, ONE)
             dry_time_factor = clamp(ONE - fn_val * (term_inner ^ (ft(2.0)/ft(3.0))), ZERO, ONE)
 
-            # Fix: Original code forced dry_time_factor to 1.0 for the last index (bare soil)
-            # We handle that generally by checking if we are at the last index
             if k == nveg
                 dry_time_factor = ONE
             end
 
             # --- Transpiration Calculation ---
-            # T = Cv * DryFactor * PotEvap * Conductance
             trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg, ZERO, ft(Inf))
             
-            # --- Layer Weighting (E1, E2) ---
-            # Original: trans * (f1*g1) / (f1*g1 + f2*g2 + EPS)
-            weight1 = f1 * g1
-            weight2 = f2 * g2
-            total_denom = weight1 + weight2 + EPS
-            
-            e1_val = trans_val * (weight1 / total_denom)
-            e2_val = trans_val * (weight2 / total_denom)
+            # --- Layer Apportionment (E1, E2) ---
+            if share_moist
+                root_sum = ZERO
+                spare_transp = ZERO
+                
+                # Layer 1 apportion
+                if moist1_wet
+                    e1_val = trans_val * f1
+                    root_sum += f1
+                else
+                    e1_val = trans_val * g1 * f1
+                    spare_transp += trans_val * f1 * (ONE - g1)
+                end
+                
+                # Layer 2 apportion
+                if moist2_wet
+                    e2_val = trans_val * f2
+                    root_sum += f2
+                else
+                    e2_val = trans_val * g2 * f2
+                    spare_transp += trans_val * f2 * (ONE - g2)
+                end
+                
+                # Distribute spare
+                if spare_transp > ZERO && root_sum > ZERO
+                    if moist1_wet
+                        e1_val += spare_transp * (f1 / root_sum)
+                    end
+                    if moist2_wet
+                        e2_val += spare_transp * (f2 / root_sum)
+                    end
+                end
+            else
+                weight1 = f1 * g1
+                weight2 = f2 * g2
+                total_denom = weight1 + weight2 + EPS
+                
+                e1_val = trans_val * (weight1 / total_denom)
+                e2_val = trans_val * (weight2 / total_denom)
+            end
 
             # --- Bare Soil Check ---
             # Original code zeros out the last index (Bare Soil)

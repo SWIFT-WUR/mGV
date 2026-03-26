@@ -328,8 +328,12 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
 
     for k in 1:n_tiles
         # A. Shared Weights
-        w_cv  = eltype(pe_out)(cv[i, j, 1, k])
-        w_cov = eltype(pe_out)(coverage[i, j, 1, k])
+        _cv_raw = cv[i, j, 1, k]
+        w_cv = isnan(_cv_raw) ? zero(eltype(pe_out)) : eltype(pe_out)(_cv_raw)
+        
+        _cov_raw = coverage[i, j, 1, k]
+        w_cov = isnan(_cov_raw) ? zero(eltype(pe_out)) : eltype(pe_out)(_cov_raw)
+        
         total_cv += w_cv
 
         # B. Potential Evaporation (PE)
@@ -408,8 +412,15 @@ function preprocess_daily_outputs(
     )
     
     # 3. Handle reshapes (metadata only, instant)
-    discharge_2d = reshape(Main.routing_state.discharge_gpu, size(total_runoff))
-    travel_time_2d = reshape(Main.routing_state.travel_time_gpu, size(total_runoff)) 
+    if Main.enable_routing
+        discharge_2d = reshape(Main.routing_state.discharge_gpu, size(total_runoff))
+        travel_time_2d = reshape(Main.routing_state.travel_time_gpu, size(total_runoff)) 
+    else
+        discharge_2d = similar(total_runoff)
+        travel_time_2d = similar(total_runoff)
+        fill!(discharge_2d, FloatType(0.0))
+        fill!(travel_time_2d, FloatType(0.0))
+    end 
 
     # 4. Package and return
     return (
