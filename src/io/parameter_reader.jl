@@ -5,9 +5,12 @@ function read_and_allocate_parameter(varname::String)
     dataset = NetCDF.open(input_param_file)
     var_dims = size(dataset[varname])
 
-    # 2) Read (landuse) parameter into CPU memory (RAM) for 1D/2D/3D/4D arrays
+    # 2) Read data sequentially into memory and format
     slicing_indices = repeat([:], length(var_dims))
     cpu_preload = dataset[varname][slicing_indices...]
+
+    # NetCDF.jl natively replaces _FillValue with Float NaN. This causes math corruption cascades. Re-cast to 0.0.
+    cpu_preload[isnan.(cpu_preload)] .= eltype(cpu_preload)(0.0)
 
     # 3) Print array sizes for diagnostics
     if length(var_dims) <= 4

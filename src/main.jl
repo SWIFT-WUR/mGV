@@ -103,6 +103,24 @@ println("Allocating State Arrays on: $backend_name")
     for k in 1:n_layers
         view(soil_temperature, :, :, k) .= Tavg_gpu
     end
+
+    # Explicitly initialize all allocated states to 0.0 to prevent propagating mem alloc() garbage (NaNs/Infs)
+    let arrays_to_zero = (
+        water_storage, max_water_storage, throughfall, canopy_evaporation,
+        f_n, net_radiation, potential_evaporation, aerodynamic_resistance,
+        transpiration, E_1_t, E_2_t, dry_time_factor, tsurf, Q_12,
+        soil_evaporation, total_et, infiltration, surface_runoff, asat,
+        subsurface_runoff, total_runoff, g1_buf, g2_buf,
+        soil_moisture_max, soil_moisture_critical,
+        kappa_array, cs_array, field_capacity, wilting_point,
+        residual_moisture, ice_frac, bulk_dens_min, soil_dens_min,
+        porosity, Lsum, interlayer_drainage, transpiration_layers,
+        g_sw_veg_buf
+    )
+        for arr in arrays_to_zero
+            fill!(arr, FloatType(0.0))
+        end
+    end
 end
 
 # ============================================================================
