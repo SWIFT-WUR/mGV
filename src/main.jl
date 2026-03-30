@@ -68,6 +68,7 @@ println("Allocating State Arrays on: $backend_name")
     # --- 3. Per-Pixel States (Grid Averages) ---
     # Shape: (nx, ny)
     const tsurf             = alloc(dim_grid...)
+    const tsurf_old         = alloc(dim_grid...)
     const Q_12              = alloc(dim_grid...)
     const soil_evaporation  = alloc(dim_grid...)
     const total_et          = alloc(dim_grid...)
@@ -107,23 +108,83 @@ println("Allocating State Arrays on: $backend_name")
     const g_sw_veg_buf         = alloc(dim_grid[1], dim_grid[2], 1, dim_veg)
 
     # --- 6. Snow States ---
-    # Shape: (nx, ny, 1, nveg) tracking snow per vegetation tile
-    const snow_water_eq        = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_depth           = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_density_state   = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_surf_water      = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_pack_water      = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_surf_temp       = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_pack_temp       = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_coverage        = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_albedo_state    = enable_snow ? alloc(dim_tile...) : nothing
-    const snow_melt_out        = enable_snow ? alloc(dim_tile...) : nothing
-    
     if enable_snow
+        const dim_snow = (dim_grid[1], dim_grid[2], 5, dim_veg)
+
+        # Zero initialization to clear out CUDA memory garbage
+        # And allocate with 5 bands
+        snow_water_eq      = alloc(dim_snow...)
+        fill!(snow_water_eq, FloatType(0.0))
+        
+        snow_depth         = alloc(dim_snow...)
+        fill!(snow_depth, FloatType(0.0))
+        
+        const snow_surf_water    = alloc(dim_snow...)
+        fill!(snow_surf_water, FloatType(0.0))
+        
+        const snow_pack_water    = alloc(dim_snow...)
+        fill!(snow_pack_water, FloatType(0.0))
+        
+        const snow_surf_temp     = alloc(dim_snow...)
+        fill!(snow_surf_temp, FloatType(0.0))
+        
+        const snow_pack_temp     = alloc(dim_snow...)
+        fill!(snow_pack_temp, FloatType(0.0))
+        
+        const snow_coverage      = alloc(dim_snow...)
+        fill!(snow_coverage, FloatType(0.0))
+        
+        const snow_melt_out      = alloc(dim_snow...)
+        fill!(snow_melt_out, FloatType(0.0))
+        
+        const snow_phase_melt    = alloc(dim_snow...)
+        fill!(snow_phase_melt, FloatType(0.0))
+        
+        const snow_evaporation   = alloc(dim_snow...)
+        fill!(snow_evaporation, FloatType(0.0))
+
         # Snow constants init
+        const snow_density_state = alloc(dim_snow...)
         fill!(snow_density_state, FloatType(50.0))
+        
+        const snow_albedo_state  = alloc(dim_snow...)
         fill!(snow_albedo_state, FloatType(0.85))
+
+        const snow_last_snow_days = alloc(dim_snow...)
+        fill!(snow_last_snow_days, FloatType(0.0))
+    else
+        # Define as nothing for Mekong to avoid UndefVarError
+        snow_water_eq = snow_depth = snow_density_state = snow_surf_water = nothing
+        snow_pack_water = snow_pack_temp = snow_evaporation = nothing
+
+        const dim_snow = (dim_grid[1], dim_grid[2], 5, dim_veg)
+        snow_surf_temp = alloc(dim_snow...)
+        fill!(snow_surf_temp, FloatType(0.0))
+        
+        snow_coverage = alloc(dim_snow...)
+        fill!(snow_coverage, FloatType(0.0))
+        
+        snow_melt_out = alloc(dim_snow...)
+        fill!(snow_melt_out, FloatType(0.0))
+
+        snow_phase_melt = alloc(dim_snow...)
+        fill!(snow_phase_melt, FloatType(0.0))
+
+        snow_albedo_state = alloc(dim_snow...)
+        fill!(snow_albedo_state, FloatType(0.0))
+
+        snow_last_snow_days = alloc(dim_snow...)
+        fill!(snow_last_snow_days, FloatType(0.0))
+
+        snow_band_fract_tmp = alloc(dim_grid[1], dim_grid[2], 5)
+        fill!(snow_band_fract_tmp, FloatType(1.0))
+        Main.eval(:(const snow_band_fract_gpu = $snow_band_fract_tmp))
     end
+    
+    const albedo_effective = alloc(dim_tile...)
+    const active_precip    = alloc(dim_tile...)
+    const active_snow_evap = alloc(dim_tile...)
+    const active_swe       = alloc(dim_tile...)
 
     # --- 7. Initialization ---
     # Initialize soil temperature with Tavg (broadcast across the ground layers, usually 3)
@@ -135,14 +196,14 @@ println("Allocating State Arrays on: $backend_name")
     let arrays_to_zero = (
         water_storage, max_water_storage, throughfall, canopy_evaporation,
         f_n, net_radiation, potential_evaporation, aerodynamic_resistance,
-        transpiration, E_1_t, E_2_t, dry_time_factor, tsurf, Q_12,
+        transpiration, E_1_t, E_2_t, dry_time_factor, tsurf, tsurf_old, Q_12,
         soil_evaporation, total_et, infiltration, surface_runoff, asat,
         subsurface_runoff, total_runoff, g1_buf, g2_buf,
         soil_moisture_max, soil_moisture_critical,
         kappa_array, cs_array, field_capacity, wilting_point,
         residual_moisture, ice_frac, bulk_dens_min, soil_dens_min,
         porosity, Lsum, interlayer_drainage, transpiration_layers,
-        g_sw_veg_buf
+        g_sw_veg_buf, albedo_effective
     )
         for arr in arrays_to_zero
             fill!(arr, FloatType(0.0))
@@ -258,9 +319,26 @@ function process_year(year)
                 )
             end
 
+            # ============================================================
+            # 1. Albedo and Radiation
+            # ============================================================
+            # Notice effective albedo is computed BEFORE snow_dynamics!
+            # It uses the PREVIOUS timestep's snow_albedo_state!
+            if enable_snow
+                @timeit to "compute_effective_albedo" begin
+                    calculate_effective_albedo!(
+                        albedo_effective, snow_coverage, snow_albedo_state, albedo_gpu, snow_band_fract_gpu
+                    )
+                end
+            else
+                @timeit to "compute_effective_albedo" begin
+                    albedo_effective .= albedo_gpu
+                end
+            end
+
             @timeit to "calculate_net_radiation" begin
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_effective, tsurf
                 )
             end
 
@@ -273,36 +351,54 @@ function process_year(year)
             end
 
             # ============================================================
-            # Canopy processes
+            # 2. Canopy Processes (Uses Raw Precipitation)
             # ============================================================
             @timeit to "calculate_max_water_storage" begin
                 calculate_max_water_storage!(max_water_storage, LAI_gpu, coverage_gpu)
             end
 
-            if enable_snow
-                @timeit to "calculate_snow_dynamics" begin
-                    calculate_snow_dynamics!(
-                        snow_water_eq, snow_depth, snow_density_state, snow_surf_water, snow_pack_water,
-                        snow_surf_temp, snow_pack_temp, snow_coverage, snow_albedo_state, snow_melt_out,
-                        prec_gpu, tair_gpu, wind_gpu, vp_gpu, swdown_gpu, lwdown_gpu, psurf_gpu,
-                        aerodynamic_resistance, elev_gpu, cv_gpu, day_sec
-                    )
-                end
-            end
-
-            active_precip = enable_snow ? snow_melt_out : prec_gpu
-
             @timeit to "calculate_canopy_evaporation" begin
                 calculate_canopy_evaporation!(
                     canopy_evaporation, f_n,
                     water_storage, max_water_storage, potential_evaporation,
-                    aerodynamic_resistance, rarc_gpu, active_precip, cv_gpu,
+                    aerodynamic_resistance, rarc_gpu, prec_gpu, cv_gpu,
                     rmin_gpu, LAI_gpu, tair_gpu, elev_gpu
                 )
             end
 
+            @timeit to "update_water_canopy_storage" begin
+                update_water_canopy_storage!(
+                    water_storage, throughfall,
+                    prec_gpu, cv_gpu, canopy_evaporation,
+                    max_water_storage, coverage_gpu
+                )
+            end
+
             # ============================================================
-            # Transpiration
+            # 3. Snow Dynamics (Uses Throughfall)
+            # ============================================================
+            if enable_snow
+                @timeit to "calculate_snow_dynamics" begin
+                    calculate_snow_dynamics!(
+                        snow_water_eq, snow_depth, snow_density_state, snow_surf_water, snow_pack_water,
+                        snow_surf_temp, snow_pack_temp, snow_coverage, snow_albedo_state, snow_last_snow_days, snow_melt_out,
+                        snow_phase_melt, snow_evaporation,
+                        throughfall, tair_gpu, wind_gpu, vp_gpu, swdown_gpu, lwdown_gpu, psurf_gpu,
+                        aerodynamic_resistance, elev_gpu, cv_gpu, day_sec, snow_rough_gpu,
+                        snow_band_fract_gpu, snow_band_elev_gpu, snow_band_pfactor_gpu, LAI_gpu
+                    )
+                end
+                
+                @timeit to "compute_weighted_snow_precipitation" begin
+                    calculate_band_weighted_fluxes!(active_precip, active_snow_evap, active_swe, snow_melt_out, snow_evaporation, snow_water_eq, snow_band_fract_gpu)
+                end
+            else
+                active_precip .= throughfall
+                fill!(active_swe, FloatType(0.0))
+            end
+
+            # ============================================================
+            # 4. Transpiration & Soil
             # ============================================================
             @timeit to "calculate_transpiration" begin
                 calculate_transpiration!(
@@ -310,11 +406,11 @@ function process_year(year)
                     transpiration,
                     transpiration_layers,
                     # Inputs
-                    potential_evaporation, 
-                    water_storage, 
-                    max_water_storage, 
+                    potential_evaporation,
+                    water_storage,
+                    max_water_storage,
                     soil_moisture,
-                    soil_moisture_critical, 
+                    soil_moisture_critical,
                     wilting_point, 
                     root_gpu, 
                     cv_gpu, 
@@ -322,38 +418,25 @@ function process_year(year)
                 )
             end
 
-            # ============================================================
-            # Soil evaporation
-            # ============================================================
             @timeit to "calculate_soil_evaporation" begin
                 calculate_soil_evaporation!(
                     soil_evaporation,
                     soil_moisture, soil_moisture_max, potential_evaporation,
-                    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
-                )
-            end
-
-            # ============================================================
-            # Water balance: throughfall and runoff
-            # ============================================================
-            @timeit to "update_water_canopy_storage" begin
-                update_water_canopy_storage!(
-                    water_storage, throughfall,
-                    active_precip, cv_gpu, canopy_evaporation,
-                    max_water_storage, coverage_gpu
+                    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture,
+                    snow_coverage
                 )
             end
 
             @timeit to "calculate_surface_runoff" begin
                 calculate_surface_runoff!(
                     surface_runoff, asat,
-                    throughfall, soil_moisture,
+                    active_precip, soil_moisture,
                     soil_moisture_max, b_infilt_gpu, cv_gpu
                 )
             end
 
             @timeit to "calculate_infiltration" begin
-                calculate_infiltration!(infiltration, throughfall, surface_runoff, cv_gpu)
+                calculate_infiltration!(infiltration, active_precip, surface_runoff, cv_gpu)
             end
 
             # ============================================================
@@ -375,12 +458,20 @@ function process_year(year)
             # ============================================================
             # Total fluxes
             # ============================================================
-            @timeit to "compute_total_fluxes" begin
-                calculate_total_evapotranspiration!(
-                    total_et,
-                    canopy_evaporation, transpiration, soil_evaporation,
-                    cv_gpu, coverage_gpu
-                )
+            if enable_snow
+                @timeit to "calculate_total_evapotranspiration" begin
+                    calculate_total_evapotranspiration!(
+                        total_et, canopy_evaporation, transpiration, soil_evaporation, cv_gpu, coverage_gpu, active_snow_evap
+                    )
+                end
+            else
+                @timeit to "calculate_total_evapotranspiration" begin
+                    calculate_total_evapotranspiration!(
+                        total_et, canopy_evaporation, transpiration, soil_evaporation, cv_gpu, coverage_gpu, snow_evaporation
+                    )
+                end
+            end
+            @timeit to "calculate_total_runoff" begin
                 calculate_total_runoff!(
                     total_runoff,
                     surface_runoff,
@@ -431,8 +522,8 @@ function process_year(year)
             if day == 1 && year == start_year
                 @timeit to "solve_surface_temperature_init" begin
                     solve_surface_temperature!(
-                        tsurf,
-                        soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+                        tsurf, tsurf_old,
+                        soil_temperature, albedo_effective, swdown_gpu, lwdown_gpu,
                         aerodynamic_resistance,
                         kappa_array, depth_gpu, day_sec, cs_array, total_et,
                         tair_gpu, cv_gpu, psurf_gpu
@@ -449,7 +540,7 @@ function process_year(year)
 
             @timeit to "solve_surface_temperature" begin
                 solve_surface_temperature!(
-                    tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+                    tsurf, tsurf_old, soil_temperature, albedo_effective, swdown_gpu, lwdown_gpu,
                     aerodynamic_resistance,
                     kappa_array, depth_gpu, day_sec, cs_array, total_et,
                     tair_gpu, cv_gpu, psurf_gpu
@@ -462,7 +553,7 @@ function process_year(year)
             # Correct logging outputs by recalculating Radiation dynamically closing the explicit current-day temperature offset mirroring the VIC closures.
             @timeit to "calculate_net_radiation_post_closure" begin
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_effective, tsurf
                 )
             end
             @timeit to "preprocess_daily_data" begin
@@ -470,8 +561,9 @@ function process_year(year)
                     day, tsurf, tair_gpu, prec_gpu,
                     total_et, surface_runoff, total_runoff,
                     soil_evaporation, soil_moisture,
-                    potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
-                    coverage_gpu, cv_gpu, fillvalue_threshold
+                    potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage, (enable_snow ? snow_water_eq : active_swe),
+                    snow_albedo_state, snow_surf_temp, snow_coverage, (enable_snow ? snow_phase_melt : snow_melt_out),
+                    coverage_gpu, cv_gpu, snow_band_fract_gpu, fillvalue_threshold
                 )
             end
 

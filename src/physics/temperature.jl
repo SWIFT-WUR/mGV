@@ -78,37 +78,39 @@
 end
 
 function solve_surface_temperature!(
-    tsurf, 
+    tsurf, tsurf_old,
     soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
     aerodynamic_resistance, 
     kappa, depth_gpu, delta_t, Cs, total_et, 
     T_a, cv_gpu, psurf_gpu
 )
-    # 1. Calculate weighted Albedo correctly across ALL tiles (Veg + Soil)
-    # This ensures the bare soil albedo is included 
-    albedo_grid = sum(cv_gpu .* albedo_gpu, dims=4) 
+    # Store the previous timestep's tsurf for the Newton-Raphson initial guess
+    tsurf_old .= tsurf
     
-    # 2. Calculate ra_eff correctly (Inverse weighted sum)
-    ra_eff_inv = sum(cv_gpu ./ max.(aerodynamic_resistance, ft(1.0e-9)), dims=4)
-    ra_eff = ft(1.0) ./ max.(ra_eff_inv, ft(1.0e-9))
-
-    # 3. Call the mega-broadcast
-    @views @. tsurf = surface_temp_kernel(
-        tsurf,                      
-        soil_temperature[:,:,2],    
-        soil_temperature[:,:,3],    
-        albedo_grid,                
-        swdown_gpu, lwdown_gpu, ra_eff,
-        kappa[:,:,1],               
-        depth_gpu[:,:,1],           
-        depth_gpu[:,:,2],           
-        depth_gpu[:,:,3],           
-        Cs[:,:,1],                  
-        total_et,                   
-        T_a,                        
-        psurf_gpu,       
-        delta_t             
-    )
+    # Zero out the accumulator array
+    fill!(tsurf, eltype(tsurf)(0.0))
+    
+    nveg = size(cv_gpu, 4)
+    
+    # Compute tsurf iteratively for each vegetation tile and accumulate the area-weighted average
+    for v in 1:nveg
+        @views @. tsurf += cv_gpu[:, :, 1, v] * surface_temp_kernel(
+            tsurf_old,                      
+            soil_temperature[:,:,2],    
+            soil_temperature[:,:,3],    
+            albedo_gpu[:,:,1,v],                
+            swdown_gpu, lwdown_gpu, aerodynamic_resistance[:,:,1,v],
+            kappa[:,:,1],               
+            depth_gpu[:,:,1],           
+            depth_gpu[:,:,2],           
+            depth_gpu[:,:,3],           
+            Cs[:,:,1],                  
+            total_et,                   
+            T_a,                        
+            psurf_gpu,       
+            delta_t             
+        )
+    end
 end
 
 

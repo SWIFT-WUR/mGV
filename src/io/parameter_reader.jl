@@ -1,8 +1,9 @@
 function read_and_allocate_parameter(varname::String)
     println("Loading $varname parameter input...")
+    println("MAPPING FILE: ", landsurface_param_file)
 
     # 1) Open netCDF file 
-    dataset = NetCDF.open(input_param_file)
+    dataset = NetCDF.open(landsurface_param_file)
     var_dims = size(dataset[varname])
 
     # 2) Read data sequentially into memory and format

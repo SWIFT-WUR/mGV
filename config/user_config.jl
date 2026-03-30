@@ -14,7 +14,7 @@ if CASE == "global"
     # =========================== GLOBAL CONFIGURATION ===========================
         
     # Input file paths/names
-    params_file            = get(ENV, "MGV_PARAMS_FILE", "input_data/global/era5_0_25_vic_params_w_depth.nc")
+    landsurface_param_file       = get(ENV, "MGV_PARAMS_FILE", "input_data/global/era5_0_25_vic_params_w_depth.nc")
     coverage_file          = get(ENV, "MGV_COVERAGE_FILE", "input_data/global/global_0.25deg_coverage_reordered.nc")
     routing_param_file     = "./input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
     enable_snow            = true # Default to true for global
@@ -106,12 +106,9 @@ elseif CASE == "indus"
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
-    input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
+    landsurface_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
     routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus.nc"
     coverage_file          = "input_data/indus/vic_indus_50km_coverage.nc"
-    # Enable snow
-    enable_snow            = true
-    fillvalue_threshold    = ft(1e15)
     # -------------------------------------------------------------
 
     input_prec_prefix      = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
@@ -198,7 +195,7 @@ elseif CASE == "mekong"
     # ============================ INDUS CONFIGURATION ============================
    
     # Input file paths/names
-    params_file            = "input_data/mekong/vic_mekong_5min_params.nc"
+    landsurface_param_file       = "input_data/mekong/vic_mekong_5min_params.nc"
     coverage_file          = "input_data/mekong/vic_mekong_5min_coverage.nc"
     routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
     # Disable snow for Mekong

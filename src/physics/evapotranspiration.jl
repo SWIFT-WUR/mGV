@@ -131,7 +131,8 @@ function calculate_potential_evaporation!(
     # Array 4: Air Density Term [J/m3/s * Pa]
     # FUSED: We calculate VPD *inside* this kernel.
     # Note: calculate_vpd returns [Pa] now, so no extra conversion needed.
-    air_dens_term = @. ((AIR_C * psurf_gpu * pa_per_kpa) / (t_freeze + tair_gpu)) * c_p_air * calculate_vpd(tair_gpu, vp_gpu) * day_sec
+    # FIX: psurf_gpu is in array structure measured in kPa, multiple by 1000 to cast to Pa
+    air_dens_term = @. ((AIR_C * (psurf_gpu * ft(1000.0))) / (t_freeze + tair_gpu)) * c_p_air * calculate_vpd(tair_gpu, vp_gpu) * day_sec
 
     # 3. Apply Logic (Tile Level)
     # Define the range for vegetation tiles
@@ -203,8 +204,9 @@ end
     canopy_evap_star = (Wratio ^ (ft(2.0) / ft(3.0))) * E_p_wet * ra_ratio
 
     # --- 5. Fraction Calculation (f_n) ---
+    # If the denominator canopy_evap_star is 0 or tiny, the wet fraction bounds to exactly 0 natively to prevent inverse fractional explosions
     f_n_val = clamp((ws + prec) / max(canopy_evap_star, ft(1e-6)), ft(0.0), ft(1.0))
-    f_n_val = ifelse(canopy_evap_star <= ft(1e-6), ft(1.0), f_n_val)
+    f_n_val = ifelse(canopy_evap_star <= ft(1e-6), ft(0.0), f_n_val)
 
     # --- 6. Final Evaporation ---
     evap = f_n_val * canopy_evap_star
@@ -451,7 +453,8 @@ end
 function calculate_soil_evaporation!(
     soil_evap, # <--- Output array (Modified in-place, 2D Grid)
     soil_moisture, soil_moisture_max, potential_evaporation, 
-    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
+    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture,
+    snow_coverage = nothing
 )
     T = eltype(soil_evap)
     
@@ -459,7 +462,7 @@ function calculate_soil_evaporation!(
     fill!(soil_evap, ft(0.0))
 
     # --- 1. The Scalar Physics Kernel (Inner Function) ---
-    function soil_evap_kernel(sm_top, sm_max_top, resid_top, pe, b_i, cv, cov)
+    function soil_evap_kernel(sm_top, sm_max_top, resid_top, pe, b_i, cv, cov, snow_frac_val)
         # 1. Calculate Max Infiltration
         max_infil = (ft(1.0) + b_i) * sm_max_top
         
@@ -504,7 +507,7 @@ function calculate_soil_evaporation!(
         esoil = is_saturated ? pe : pe * beta_asp
         
         # Apply weights
-        esoil = esoil * (ft(1.0) - cov) * cv
+        esoil = esoil * (ft(1.0) - cov) * cv * max(ft(0.0), ft(1.0) - snow_frac_val)
         
         # 8. Cap at Available Moisture
         avail = max(sm_top - resid_top, ft(0.0))
@@ -519,15 +522,29 @@ function calculate_soil_evaporation!(
     for i in 1:N_veg
         # FIX: Slice 4D arrays down to 2D (nx, ny) using [:,:,1,i]
         # FIX: Pass b_infilt_gpu directly (It is 2D, don't slice it!)
-        @views @. soil_evap += soil_evap_kernel(
-            soil_moisture[:,:,1],           
-            soil_moisture_max[:,:,1],       
-            residual_moisture[:,:,1],       
-            potential_evaporation[:,:,1,i], # <--- Slice dim 3 to ensure 2D
-            b_infilt_gpu,                   # <--- CORRECTED: No slicing!
-            cv_gpu[:,:,1,i],                # <--- Slice dim 3
-            coverage_gpu[:,:,1,i]           # <--- Slice dim 3
-        )
+        if snow_coverage === nothing
+            @views @. soil_evap += soil_evap_kernel(
+                soil_moisture[:,:,1],           
+                soil_moisture_max[:,:,1],       
+                residual_moisture[:,:,1],       
+                potential_evaporation[:,:,1,i], # <--- Slice dim 3 to ensure 2D
+                b_infilt_gpu,                   # <--- CORRECTED: No slicing!
+                cv_gpu[:,:,1,i],                # <--- Slice dim 3
+                coverage_gpu[:,:,1,i],          # <--- Slice dim 3
+                ft(0.0)
+            )
+        else
+            @views @. soil_evap += soil_evap_kernel(
+                soil_moisture[:,:,1],           
+                soil_moisture_max[:,:,1],       
+                residual_moisture[:,:,1],       
+                potential_evaporation[:,:,1,i], # <--- Slice dim 3 to ensure 2D
+                b_infilt_gpu,                   # <--- CORRECTED: No slicing!
+                cv_gpu[:,:,1,i],                # <--- Slice dim 3
+                coverage_gpu[:,:,1,i],          # <--- Slice dim 3
+                snow_coverage[:,:,1,i]
+            )
+        end
     end
     
     return nothing
@@ -560,7 +577,7 @@ end
 # Eq. (23): Total evapotranspiration
 function calculate_total_evapotranspiration!(
     total_et,    # Mutated Output
-    canopy_evap, transp, soil_evap, cv, coverage
+    canopy_evap, transp, soil_evap, cv, coverage, snow_evaporation = nothing
 )
     # 1. Initialize with Soil Evaporation
     @. total_et = soil_evap
@@ -568,8 +585,14 @@ function calculate_total_evapotranspiration!(
     # 2. Accumulate Vegetation Fluxes
     # We loop over tiles to avoid allocating massive 4D intermediate arrays.
     # The @views macro ensures slicing (e.g., [:,:,:,i]) is zero-allocation.
-    for i in 1:size(canopy_evap, 4)
-        @views @. total_et += (canopy_evap[:,:,:,i] * cv[:,:,:,i] + transp[:,:,:,i]) * coverage[:,:,:,i]
+    if snow_evaporation === nothing
+        for i in 1:size(canopy_evap, 4)
+            @views @. total_et += (canopy_evap[:,:,:,i] * cv[:,:,:,i] + transp[:,:,:,i]) * coverage[:,:,:,i]
+        end
+    else
+        for i in 1:size(canopy_evap, 4)
+            @views @. total_et += (canopy_evap[:,:,:,i] * cv[:,:,:,i] + transp[:,:,:,i] + snow_evaporation[:,:,:,i] * cv[:,:,:,i]) * coverage[:,:,:,i]
+        end
     end
     
     return nothing
