@@ -3,6 +3,12 @@ function read_and_allocate_parameter(varname::String)
 
     # 1) Open netCDF file 
     dataset = NetCDF.open(input_param_file)
+    
+    if !haskey(dataset.vars, varname)
+        println("  -> WARNING: Variable $varname not found in $input_param_file. Returning nothing.")
+        return nothing, nothing
+    end
+
     var_dims = size(dataset[varname])
 
     # 2) Read data sequentially into memory and format
@@ -117,7 +123,9 @@ end
 
 function gpu_load_static_inputs(cpu_vars, gpu_vars)
     for (cpu, gpu) in zip(cpu_vars, gpu_vars)
-        copyto!(gpu, cpu)
+        if !isnothing(cpu) && !isnothing(gpu)
+            copyto!(gpu, cpu)
+        end
     end
 end
 

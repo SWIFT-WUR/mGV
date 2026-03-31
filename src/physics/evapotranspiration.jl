@@ -101,7 +101,7 @@ end
 
 function calculate_potential_evaporation!(
     pe,
-    tair_gpu, psurf_gpu, vp_gpu, elev_gpu,
+    tair_gpu, tair_grid, psurf_gpu, vp_gpu, elev_gpu,
     net_radiation, aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
 )
     # 1. Setup Type
@@ -131,7 +131,8 @@ function calculate_potential_evaporation!(
     # Array 4: Air Density Term [J/m3/s * Pa]
     # FUSED: We calculate VPD *inside* this kernel.
     # Note: calculate_vpd returns [Pa] now, so no extra conversion needed.
-    air_dens_term = @. ((AIR_C * psurf_gpu * pa_per_kpa) / (t_freeze + tair_gpu)) * c_p_air * calculate_vpd(tair_gpu, vp_gpu) * day_sec
+    # We use tair_grid instead of tair_gpu so our VPD mimics VIC's unlapsed VPD parity exactly.
+    air_dens_term = @. ((AIR_C * psurf_gpu * pa_per_kpa) / (t_freeze + tair_gpu)) * c_p_air * calculate_vpd(tair_grid, vp_gpu) * day_sec
 
     # 3. Apply Logic (Tile Level)
     # Define the range for vegetation tiles
@@ -261,7 +262,8 @@ end
     wilting_point,           
     root_gpu, 
     cv_gpu, 
-    f_n 
+    f_n,
+    AreaFract
 )
     i, j = @index(Global, NTuple)
 
@@ -289,21 +291,14 @@ end
         g2 = clamp((W2 - Wwp2) / (Wcr2 - Wwp2 + EPS), ZERO, ONE)
 
         # --- 2. VEGETATION LOOP ---
-        # Loop over the 4th dimension (vegetation tiles)
         nveg = size(root_gpu, 4)
-        
-        # Determine actual vegetation limit (exclude bare soil if needed)
-        # Original code implied bare soil is the last index and should be zeroed.
-        # We loop through all, but apply zero logic at the end.
+        nbands = size(transpiration_full, 3)
         
         for k in 1:nveg
             # Load Root Fractions
             f1 = root_gpu[i,j,1,k]
             f2 = root_gpu[i,j,2,k]
             
-            # --- SHARE_LAYER_MOIST Logic ---
-            # VIC groups all upper root zones (Layers 1 and 2) into 'moist1'.
-            # Therefore, SHARE_LAYER_MOIST condition (moist1 >= Wcr1) is based on the sum.
             W_root_sum = ZERO
             Wcr_root_sum = ZERO
             
@@ -321,88 +316,88 @@ end
             moist1_wet = W1 >= Wcr1
             moist2_wet = W2 >= Wcr2
             
-            # --- Vegetation Conductance (g_sw_veg) ---
             if share_moist
                 g_sw_veg = ONE
             else
                 g_sw_veg = clamp((f1 * g1 + f2 * g2) / (f1 + f2 + EPS), ZERO, ONE)
             end
 
-            # --- Canopy Wetness / Dry Time Factor ---
-            ws   = water_storage[i,j,1,k]
-            max_ws = max_water_storage[i,j,1,k]
-            cv   = cv_gpu[i,j,1,k]
-            fn_val = f_n[i,j,1,k]
-            pe   = potential_evaporation[i,j,1,k]
+            e1_total = ZERO
+            e2_total = ZERO
 
-            term_inner = clamp((ws / max(cv, EPS)) / max(max_ws, EPS), ZERO, ONE)
-            dry_time_factor = clamp(ONE - fn_val * (term_inner ^ (ft(2.0)/ft(3.0))), ZERO, ONE)
+            for b in 1:nbands
+                # --- Canopy Wetness / Dry Time Factor ---
+                ws   = water_storage[i,j,b,k]
+                max_ws = max_water_storage[i,j,b,k]
+                cv   = cv_gpu[i,j,1,k]
+                fn_val = f_n[i,j,b,k]
+                pe   = potential_evaporation[i,j,b,k]
 
-            if k == nveg
-                dry_time_factor = ONE
-            end
+                term_inner = clamp((ws / max(cv, EPS)) / max(max_ws, EPS), ZERO, ONE)
+                dry_time_factor = clamp(ONE - fn_val * (term_inner ^ (ft(2.0)/ft(3.0))), ZERO, ONE)
 
-            # --- Transpiration Calculation ---
-            trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg, ZERO, ft(Inf))
-            
-            # --- Layer Apportionment (E1, E2) ---
-            if share_moist
-                root_sum = ZERO
-                spare_transp = ZERO
-                
-                # Layer 1 apportion
-                if moist1_wet
-                    e1_val = trans_val * f1
-                    root_sum += f1
-                else
-                    e1_val = trans_val * g1 * f1
-                    spare_transp += trans_val * f1 * (ONE - g1)
+                if k == nveg
+                    dry_time_factor = ONE
                 end
+
+                # --- Transpiration Calculation ---
+                trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg, ZERO, ft(Inf))
                 
-                # Layer 2 apportion
-                if moist2_wet
-                    e2_val = trans_val * f2
-                    root_sum += f2
-                else
-                    e2_val = trans_val * g2 * f2
-                    spare_transp += trans_val * f2 * (ONE - g2)
-                end
-                
-                # Distribute spare
-                if spare_transp > ZERO && root_sum > ZERO
+                # --- Layer Apportionment (E1, E2) ---
+                if share_moist
+                    root_sum = ZERO
+                    spare_transp = ZERO
+                    
                     if moist1_wet
-                        e1_val += spare_transp * (f1 / root_sum)
+                        e1_val = trans_val * f1
+                        root_sum += f1
+                    else
+                        e1_val = trans_val * g1 * f1
+                        spare_transp += trans_val * f1 * (ONE - g1)
                     end
+                    
                     if moist2_wet
-                        e2_val += spare_transp * (f2 / root_sum)
+                        e2_val = trans_val * f2
+                        root_sum += f2
+                    else
+                        e2_val = trans_val * g2 * f2
+                        spare_transp += trans_val * f2 * (ONE - g2)
                     end
+                    
+                    if spare_transp > ZERO && root_sum > ZERO
+                        if moist1_wet
+                            e1_val += spare_transp * (f1 / root_sum)
+                        end
+                        if moist2_wet
+                            e2_val += spare_transp * (f2 / root_sum)
+                        end
+                    end
+                else
+                    weight1 = f1 * g1
+                    weight2 = f2 * g2
+                    total_denom = weight1 + weight2 + EPS
+                    
+                    e1_val = trans_val * (weight1 / total_denom)
+                    e2_val = trans_val * (weight2 / total_denom)
                 end
-            else
-                weight1 = f1 * g1
-                weight2 = f2 * g2
-                total_denom = weight1 + weight2 + EPS
+
+                if k == nveg
+                     trans_val = ZERO
+                     e1_val = ZERO
+                     e2_val = ZERO
+                end
+
+                # --- WRITE OUTPUTS ---
+                transpiration_full[i,j,b,k] = trans_val
                 
-                e1_val = trans_val * (weight1 / total_denom)
-                e2_val = trans_val * (weight2 / total_denom)
+                # Accumulate layers
+                e1_total += e1_val * AreaFract[i,j,b]
+                e2_total += e2_val * AreaFract[i,j,b]
             end
-
-            # --- Bare Soil Check ---
-            # Original code zeros out the last index (Bare Soil)
-            # "if nveg > veg_dim ... end:end .= 0"
-            # Assuming the last index is always bare soil in this context:
-            if k == nveg
-                 trans_val = ZERO
-                 e1_val = ZERO
-                 e2_val = ZERO
-            end
-
-            # --- WRITE OUTPUTS ---
-            # 1. Total Transpiration
-            transpiration_full[i,j,1,k] = trans_val
             
             # 2. Layer distributed transpiration
-            transpiration_layers[i,j,1,k] = e1_val
-            transpiration_layers[i,j,2,k] = e2_val
+            transpiration_layers[i,j,1,k] = e1_total
+            transpiration_layers[i,j,2,k] = e2_total
             transpiration_layers[i,j,3,k] = ZERO
         end
     end
@@ -421,7 +416,8 @@ function calculate_transpiration!(
     wilting_point, 
     root_gpu, 
     cv_gpu, 
-    f_n
+    f_n,
+    AreaFract
 )
     # 1. Configuration
     kernel_launcher! = transpiration_kernel!(device_backend)    
@@ -439,7 +435,8 @@ function calculate_transpiration!(
         wilting_point, 
         root_gpu, 
         cv_gpu, 
-        f_n;
+        f_n,
+        AreaFract;
         ndrange = (nx, ny)
     )
 
@@ -451,7 +448,7 @@ end
 function calculate_soil_evaporation!(
     soil_evap, # <--- Output array (Modified in-place, 2D Grid)
     soil_moisture, soil_moisture_max, potential_evaporation, 
-    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
+    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
 )
     T = eltype(soil_evap)
     
@@ -513,21 +510,23 @@ function calculate_soil_evaporation!(
         return esoil
     end
 
-    # --- 2. Apply Logic (Accumulate over Veg Types) ---
+    # --- 2. Apply Logic (Accumulate over Veg Types and Bands) ---
     N_veg = size(cv_gpu, 4)
+    N_bands = size(AreaFract_gpu, 3)
     
     for i in 1:N_veg
-        # FIX: Slice 4D arrays down to 2D (nx, ny) using [:,:,1,i]
-        # FIX: Pass b_infilt_gpu directly (It is 2D, don't slice it!)
-        @views @. soil_evap += soil_evap_kernel(
-            soil_moisture[:,:,1],           
-            soil_moisture_max[:,:,1],       
-            residual_moisture[:,:,1],       
-            potential_evaporation[:,:,1,i], # <--- Slice dim 3 to ensure 2D
-            b_infilt_gpu,                   # <--- CORRECTED: No slicing!
-            cv_gpu[:,:,1,i],                # <--- Slice dim 3
-            coverage_gpu[:,:,1,i]           # <--- Slice dim 3
-        )
+        for b in 1:N_bands
+            # FIX: Slice 4D arrays appropriately, and pass b_infilt_gpu directly
+            @views @. soil_evap += soil_evap_kernel(
+                soil_moisture[:,:,1],           
+                soil_moisture_max[:,:,1],       
+                residual_moisture[:,:,1],       
+                potential_evaporation[:,:,b,i], # loop over band b
+                b_infilt_gpu,                   
+                cv_gpu[:,:,1,i] * AreaFract_gpu[:,:,b], # Weight by band fraction
+                coverage_gpu[:,:,1,i]           
+            )
+        end
     end
     
     return nothing
@@ -560,16 +559,17 @@ end
 # Eq. (23): Total evapotranspiration
 function calculate_total_evapotranspiration!(
     total_et,    # Mutated Output
-    canopy_evap, transp, soil_evap, cv, coverage
+    canopy_evap, transp, soil_evap, cv, coverage, AreaFract
 )
     # 1. Initialize with Soil Evaporation
     @. total_et = soil_evap
 
     # 2. Accumulate Vegetation Fluxes
-    # We loop over tiles to avoid allocating massive 4D intermediate arrays.
-    # The @views macro ensures slicing (e.g., [:,:,:,i]) is zero-allocation.
+    # We loop over tiles to avoid allocating massive intermediate arrays.
     for i in 1:size(canopy_evap, 4)
-        @views @. total_et += (canopy_evap[:,:,:,i] * cv[:,:,:,i] + transp[:,:,:,i]) * coverage[:,:,:,i]
+        for b in 1:size(canopy_evap, 3)
+            @views @. total_et += (canopy_evap[:,:,b,i] * cv[:,:,1,i] + transp[:,:,b,i]) * coverage[:,:,1,i] * AreaFract[:,:,b]
+        end
     end
     
     return nothing

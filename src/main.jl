@@ -10,13 +10,15 @@ println("Loading parameter data and allocating memory...")
         lat, lon, d0, z0, z0soil, LAI, albedo, rmin, rarc, cv, elev,
         ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp, depth,
         quartz, bulk_dens, soil_dens, expt, coverage, b_infilt,
-        Ds, Dsmax, Ws, dp, Tavg, c_expt
+        Ds, Dsmax, Ws, dp, Tavg, c_expt,
+        AreaFract, elevation, Pfactor
     )
 end
 
 @timeit to "gpu_load_static_inputs" @time gpu_load_static_inputs(@vars(
     rmin, rarc, cv, elev, ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp,
-    depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil, c_expt
+    depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil, c_expt,
+    AreaFract, elevation, Pfactor
 )...)
 
 @timeit to "init_routing" begin
@@ -37,7 +39,19 @@ println("Allocating State Arrays on: $backend_name")
     
     # --- 1. Define shapes for readability and consistency ---
     dim_grid = size(Tavg_gpu)                        # (nx, ny)
-    dim_tile = size(coverage_gpu)                    # (nx, ny, 1, nveg)
+    
+    global AreaFract_gpu, elevation_gpu, Pfactor_gpu
+    if isnothing(AreaFract_gpu)
+        AreaFract_gpu = alloc(dim_grid..., 1)
+        fill!(AreaFract_gpu, FloatType(1.0))
+        elevation_gpu = alloc(dim_grid..., 1)
+        @. elevation_gpu = elev_gpu
+        Pfactor_gpu = alloc(dim_grid..., 1)
+        fill!(Pfactor_gpu, FloatType(1.0))
+    end
+    
+    nbands = size(AreaFract_gpu, 3)
+    dim_tile = (size(coverage_gpu, 1), size(coverage_gpu, 2), nbands, size(coverage_gpu, 4))
     dim_soil = size(soil_dens_gpu)                   # (nx, ny, nlayers)
     dim_veg  = size(root_gpu, 4)                     # Number of vegetation tiles: nveg
     n_layers = dim_soil[3]                           # Extract layer count (usually 3)
@@ -70,6 +84,10 @@ println("Allocating State Arrays on: $backend_name")
     const total_runoff      = alloc(dim_grid...)
     const g1_buf            = alloc(dim_grid...)
     const g2_buf            = alloc(dim_grid...)
+
+    # --- 3. Forcings Buffers ---
+    const tair_band              = alloc(dim_grid[1], dim_grid[2], nbands)
+    const prec_band              = alloc(dim_grid[1], dim_grid[2], nbands)
 
     # --- 4. Soil Properties & States ---
     # Shape: (nx, ny, 3) or matched to soil density
@@ -224,10 +242,15 @@ function process_year(year)
             # ============================================================
             # Energy balance and atmospheric calculations
             # ============================================================
+            @timeit to "calculate_band_forcings" begin
+                @. tair_band = tair_gpu + FloatType(-0.0065) * (elevation_gpu - elev_gpu)
+                @. prec_band = prec_gpu * Pfactor_gpu
+            end
+
             @timeit to "compute_aerodynamic_resistance" begin
                 compute_aerodynamic_resistance!(
                     aerodynamic_resistance,
-                    z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
+                    z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
                 )
             end
 
@@ -240,7 +263,7 @@ function process_year(year)
             @timeit to "calculate_potential_evaporation" begin
                 calculate_potential_evaporation!(
                     potential_evaporation,
-                    tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
+                    tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
                     aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                 )
             end
@@ -256,8 +279,8 @@ function process_year(year)
                 calculate_canopy_evaporation!(
                     canopy_evaporation, f_n,
                     water_storage, max_water_storage, potential_evaporation,
-                    aerodynamic_resistance, rarc_gpu, prec_gpu, cv_gpu,
-                    rmin_gpu, LAI_gpu, tair_gpu, elev_gpu
+                    aerodynamic_resistance, rarc_gpu, prec_band, cv_gpu,
+                    rmin_gpu, LAI_gpu, tair_band, elev_gpu
                 )
             end
 
@@ -278,7 +301,8 @@ function process_year(year)
                     wilting_point, 
                     root_gpu, 
                     cv_gpu, 
-                    f_n
+                    f_n,
+                    AreaFract_gpu
                 )
             end
 
@@ -289,7 +313,7 @@ function process_year(year)
                 calculate_soil_evaporation!(
                     soil_evaporation,
                     soil_moisture, soil_moisture_max, potential_evaporation,
-                    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture
+                    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
                 )
             end
 
@@ -299,7 +323,7 @@ function process_year(year)
             @timeit to "update_water_canopy_storage" begin
                 update_water_canopy_storage!(
                     water_storage, throughfall,
-                    prec_gpu, cv_gpu, canopy_evaporation,
+                    prec_band, cv_gpu, canopy_evaporation,
                     max_water_storage, coverage_gpu
                 )
             end
@@ -308,7 +332,7 @@ function process_year(year)
                 calculate_surface_runoff!(
                     surface_runoff, asat,
                     throughfall, soil_moisture,
-                    soil_moisture_max, b_infilt_gpu, cv_gpu
+                    soil_moisture_max, b_infilt_gpu, cv_gpu, AreaFract_gpu
                 )
             end
 
@@ -339,7 +363,7 @@ function process_year(year)
                 calculate_total_evapotranspiration!(
                     total_et,
                     canopy_evaporation, transpiration, soil_evaporation,
-                    cv_gpu, coverage_gpu
+                    cv_gpu, coverage_gpu, AreaFract_gpu
                 )
                 calculate_total_runoff!(
                     total_runoff,
@@ -395,14 +419,14 @@ function process_year(year)
                         soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                         aerodynamic_resistance,
                         kappa_array, depth_gpu, day_sec, cs_array, total_et,
-                        tair_gpu, cv_gpu, psurf_gpu
+                        tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
                     )
                 end
 
                 @timeit to "compute_aerodynamic_resistance" begin
                     compute_aerodynamic_resistance!(
                         aerodynamic_resistance,
-                        z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
+                        z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
                     )
                 end
             end
@@ -412,7 +436,7 @@ function process_year(year)
                     tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                     aerodynamic_resistance,
                     kappa_array, depth_gpu, day_sec, cs_array, total_et,
-                    tair_gpu, cv_gpu, psurf_gpu
+                    tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
                 )
             end
 

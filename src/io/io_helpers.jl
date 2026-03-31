@@ -8,7 +8,7 @@ function reshape_static_inputs!()
                            size(rmin_gpu, 2), 
                            1, 
                            size(rmin_gpu, 3))
-        println("rmin_gpu reshaped to: ", size(rmin_gpu))
+        println("rmin_gpu reshaped to broadcast across bands: ", size(rmin_gpu))
     else
         println("rmin_gpu already has ", ndims(rmin_gpu), " dimensions; no reshape needed.")
     end
@@ -20,7 +20,7 @@ function reshape_static_inputs!()
                            size(rarc_gpu, 2), 
                            1, 
                            size(rarc_gpu, 3))
-        println("rarc_gpu reshaped to: ", size(rarc_gpu))
+        println("rarc_gpu reshaped to broadcast across bands: ", size(rarc_gpu))
     else
         println("rarc_gpu already has ", ndims(rarc_gpu), " dimensions; no reshape needed.")
     end
@@ -32,7 +32,7 @@ function reshape_static_inputs!()
                          size(cv_gpu, 2), 
                          1, 
                          size(cv_gpu, 3))
-        println("cv_gpu reshaped to: ", size(cv_gpu))
+        println("cv_gpu reshaped to broadcast across bands: ", size(cv_gpu))
     else
         println("cv_gpu already has ", ndims(cv_gpu), " dimensions; no reshape needed.")
     end

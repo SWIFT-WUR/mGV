@@ -5,7 +5,8 @@
     soil_moisture_max,
     b_i_grid,
     throughfall,
-    cv_grid
+    cv_grid,
+    AreaFract
 )
     i, j = @index(Global, NTuple)
 
@@ -47,16 +48,19 @@
         A_sat[i,j] = asat_val
         
         # --- 4. Inflow Summation (Reduction) ---
-        # Sum 4D throughfall (nx, ny, 1, n_veg) -> Scalar Inflow
+        # Sum 4D throughfall (nx, ny, nbands, n_veg) -> Scalar Inflow
         # We loop over dim 4 manually to avoid allocating a reduction array
         inflow_sum = zero
+        n_bands = size(AreaFract, 3)
         n_veg = size(throughfall, 4)
         
         for k in 1:n_veg
-            val = throughfall[i,j,1,k] * cv_grid[i,j,1,k]
-            # Handle NaN check inline
-            if !isnan(val)
-                inflow_sum += val
+            for b in 1:n_bands
+                val = throughfall[i,j,b,k] * cv_grid[i,j,1,k] * AreaFract[i,j,b]
+                # Handle NaN check inline
+                if !isnan(val)
+                    inflow_sum += val
+                end
             end
         end
 
@@ -101,7 +105,7 @@ function calculate_surface_runoff!(
     surface_runoff, A_sat, 
     throughfall, 
     soil_moisture, soil_moisture_max, 
-    b_i, cv_grid
+    b_i, cv_grid, AreaFract
 )
 
     kernel_launcher! = surface_runoff_kernel!(device_backend)    
@@ -110,7 +114,7 @@ function calculate_surface_runoff!(
     kernel_launcher!(
         surface_runoff, A_sat, 
         soil_moisture, soil_moisture_max, 
-        b_i, throughfall, cv_grid;
+        b_i, throughfall, cv_grid, AreaFract;
         ndrange = (nx, ny)
     )
 

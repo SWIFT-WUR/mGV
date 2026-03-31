@@ -82,14 +82,14 @@ function solve_surface_temperature!(
     soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
     aerodynamic_resistance, 
     kappa, depth_gpu, delta_t, Cs, total_et, 
-    T_a, cv_gpu, psurf_gpu
+    T_a, cv_gpu, psurf_gpu, AreaFract_gpu
 )
     # 1. Calculate weighted Albedo correctly across ALL tiles (Veg + Soil)
     # This ensures the bare soil albedo is included 
-    albedo_grid = sum(cv_gpu .* albedo_gpu, dims=4) 
+    albedo_grid = sum(AreaFract_gpu .* cv_gpu .* albedo_gpu, dims=(3,4)) 
     
     # 2. Calculate ra_eff correctly (Inverse weighted sum)
-    ra_eff_inv = sum(cv_gpu ./ max.(aerodynamic_resistance, ft(1.0e-9)), dims=4)
+    ra_eff_inv = sum(AreaFract_gpu .* cv_gpu ./ max.(aerodynamic_resistance, ft(1.0e-9)), dims=(3,4))
     ra_eff = ft(1.0) ./ max.(ra_eff_inv, ft(1.0e-9))
 
     # 3. Call the mega-broadcast

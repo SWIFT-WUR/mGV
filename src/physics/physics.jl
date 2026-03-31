@@ -1,5 +1,4 @@
-# Vapor Pressure Deficit calculation
-function calculate_vpd(tair, vp)
+@inline function calculate_svp(tair)
     # 1. Tetens Equation (standard over water)
     svp = svp_a * exp((svp_b * tair) / (svp_c + tair))
 
@@ -8,9 +7,14 @@ function calculate_vpd(tair, vp)
     if tair < ft(0.0)
         svp = svp * (ft(1.0) + ft(0.00972) * tair + ft(0.000042) * tair^2)
     end
+    return svp
+end
 
+# Vapor Pressure Deficit calculation
+function calculate_vpd(tair, vp)
+    svp_val = calculate_svp(tair)
     # 3. Calculate VPD
-    return max(svp - vp, ft(0.0)) * pa_per_kpa # [Pa]
+    return max(svp_val - vp, ft(0.0)) * pa_per_kpa # [Pa]
 end
 
 # Calculates the slope of the SVP curve
