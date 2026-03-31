@@ -179,10 +179,10 @@ elseif CASE == "mekong"
     println("Loading configuration for 'mekong'...")
     global nveg = 14
     global enable_routing = true
-    # ============================ INDUS CONFIGURATION ============================
+    # ============================ MEKONG CONFIGURATION ============================
    
     # Input file paths/names
-    params_file            = "input_data/mekong/vic_mekong_5min_params.nc"
+    input_param_file       = "input_data/mekong/vic_mekong_5min_params.nc"
     coverage_file          = "input_data/mekong/vic_mekong_5min_coverage.nc"
     routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
     # Disable snow for Mekong
