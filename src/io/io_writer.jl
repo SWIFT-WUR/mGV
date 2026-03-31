@@ -15,6 +15,11 @@ struct TransferBuffer
     tr_summed::Matrix{FloatType}
     ce_summed::Matrix{FloatType}
     ws_summed::Matrix{FloatType}
+    swe_summed::Matrix{FloatType}
+    snow_albedo::Matrix{FloatType}
+    snow_surf_temp::Matrix{FloatType}
+    snow_coverage::Matrix{FloatType}
+    snow_melt::Matrix{FloatType}
     soil_evaporation::Array{FloatType, 3}
     soil_moisture::Array{FloatType, 3}
 end
@@ -40,6 +45,11 @@ function create_transfer_buffer(nx, ny, nlayers)
         make_pinned(nx, ny),       # tr_summed
         make_pinned(nx, ny),       # ce_summed
         make_pinned(nx, ny),       # ws_summed
+        make_pinned(nx, ny),       # swe_summed
+        make_pinned(nx, ny),       # snow_albedo
+        make_pinned(nx, ny),       # snow_surf_temp
+        make_pinned(nx, ny),       # snow_coverage
+        make_pinned(nx, ny),       # snow_melt
         make_pinned(nx, ny, 1),    # soil_evaporation
         make_pinned(nx, ny, nlayers) # soil_moisture
     )
@@ -64,6 +74,11 @@ struct ZarrOutputStore{A3, A4}
     tr_summed::A3
     ce_summed::A3
     ws_summed::A3
+    swe_summed::A3
+    snow_albedo::A3
+    snow_surf_temp::A3
+    snow_coverage::A3
+    snow_melt::A3
     Q12::A4
     soil_evaporation::A4
     soil_temperature::A4
@@ -86,6 +101,11 @@ struct NetCDFOutputStore
     tr_summed::Any
     ce_summed::Any
     ws_summed::Any
+    swe_summed::Any
+    snow_albedo::Any
+    snow_surf_temp::Any
+    snow_coverage::Any
+    snow_melt::Any
     Q12::Any
     soil_evaporation::Any
     soil_temperature::Any
@@ -160,6 +180,11 @@ function create_output_zarr(output_path::String, nx, ny, nt, nlayers, lat_cpu, l
         make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
         make_zarr("water_storage_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("swe_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("snow_albedo_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("snow_surf_temp_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("snow_coverage_output", (nx, ny, nt), chunk_2d, dim_2d),
+        make_zarr("snow_melt_output", (nx, ny, nt), chunk_2d, dim_2d),
         
         # 4D Variables
         make_zarr("Q12_output", (nx, ny, nt, 2), chunk_3d_qlayer, dim_3d_qlayer),
@@ -210,6 +235,11 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
         def_fast_var("transpiration_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("canopy_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("water_storage_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("swe_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("snow_albedo_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("snow_surf_temp_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("snow_coverage_output", ("lon", "lat", "time"); chunks=chunk_2d),
+        def_fast_var("snow_melt_output", ("lon", "lat", "time"); chunks=chunk_2d),
         def_fast_var("Q12_output", ("lon", "lat", "time", "qlayers"); chunks=chunk_3d_qlayer),
         def_fast_var("soil_evaporation_output", ("lon", "lat", "time", "top_layer"); chunks=chunk_3d_top),
         def_fast_var("soil_temperature_output", ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer),
@@ -244,6 +274,11 @@ function async_transfer!(processed_data, buf::TransferBuffer)
     dma!(buf.tr_summed,      processed_data.tr_summed)
     dma!(buf.ce_summed,      processed_data.ce_summed)
     dma!(buf.ws_summed,      processed_data.ws_summed)
+    dma!(buf.swe_summed,     processed_data.swe_summed)
+    dma!(buf.snow_albedo,    processed_data.snow_albedo)
+    dma!(buf.snow_surf_temp, processed_data.snow_surf_temp)
+    dma!(buf.snow_coverage,  processed_data.snow_coverage)
+    dma!(buf.snow_melt,      processed_data.snow_melt)
     
     dma!(buf.soil_evaporation, processed_data.soil_evaporation)
     dma!(buf.soil_moisture,    processed_data.soil_moisture)
@@ -268,6 +303,11 @@ function write_slice!(day, buf::TransferBuffer, store::ZarrOutputStore)
         Threads.@spawn store.tr_summed[:, :, day]      = buf.tr_summed
         Threads.@spawn store.ce_summed[:, :, day]      = buf.ce_summed
         Threads.@spawn store.ws_summed[:, :, day]      = buf.ws_summed
+        Threads.@spawn store.swe_summed[:, :, day]     = buf.swe_summed
+        Threads.@spawn store.snow_albedo[:, :, day]    = buf.snow_albedo
+        Threads.@spawn store.snow_surf_temp[:, :, day] = buf.snow_surf_temp
+        Threads.@spawn store.snow_coverage[:, :, day]  = buf.snow_coverage
+        Threads.@spawn store.snow_melt[:, :, day]      = buf.snow_melt
         Threads.@spawn store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
         Threads.@spawn store.soil_moisture[:, :, day, :]    = buf.soil_moisture
     end
@@ -289,6 +329,11 @@ function write_slice!(day, buf::TransferBuffer, store::NetCDFOutputStore)
     store.tr_summed[:, :, day]      = buf.tr_summed
     store.ce_summed[:, :, day]      = buf.ce_summed
     store.ws_summed[:, :, day]      = buf.ws_summed
+    store.swe_summed[:, :, day]     = buf.swe_summed
+    store.snow_albedo[:, :, day]    = buf.snow_albedo
+    store.snow_surf_temp[:, :, day] = buf.snow_surf_temp
+    store.snow_coverage[:, :, day]  = buf.snow_coverage
+    store.snow_melt[:, :, day]      = buf.snow_melt
     store.soil_evaporation[:, :, day, :] = buf.soil_evaporation
     store.soil_moisture[:, :, day, :]    = buf.soil_moisture
 end
@@ -388,7 +433,8 @@ function preprocess_daily_outputs(
     total_et, surface_runoff, total_runoff,
     soil_evaporation, soil_moisture,
     potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
-    coverage_gpu, cv_gpu, fillvalue_threshold
+    coverage_gpu, cv_gpu, fillvalue_threshold,
+    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu
 )
     # 1. Allocate Output Arrays (2D)
     nx, ny = size(tsurf)[1:2]
@@ -443,6 +489,13 @@ function preprocess_daily_outputs(
         nr_summed = nr_summed,
         tr_summed = tr_summed,
         ce_summed = ce_summed,
-        ws_summed = ws_summed
+        ws_summed = ws_summed,
+        
+        # Direct Snow Overrides
+        swe_summed = swe_gpu,
+        snow_albedo = snow_albedo_gpu,
+        snow_surf_temp = snow_surf_temp_gpu,
+        snow_coverage = snow_coverage_gpu,
+        snow_melt = snow_melt_gpu
     )
 end

@@ -84,6 +84,16 @@ println("Allocating State Arrays on: $backend_name")
     const total_runoff      = alloc(dim_grid...)
     const g1_buf            = alloc(dim_grid...)
     const g2_buf            = alloc(dim_grid...)
+    const swe_gpu           = alloc(dim_grid...)
+    const snow_depth_gpu    = alloc(dim_grid...)
+    const snow_albedo_gpu   = alloc(dim_grid...)
+    const snow_surf_temp_gpu= alloc(dim_grid...)
+    const snow_coverage_gpu = alloc(dim_grid...)
+    const snow_melt_gpu     = alloc(dim_grid...)
+    const snow_age_gpu      = alloc(dim_grid...)
+    const rainfall          = alloc(dim_grid...)
+    const snowfall          = alloc(dim_grid...)
+    const ppt_gpu           = alloc(dim_grid...)
 
     # --- 3. Forcings Buffers ---
     const tair_band              = alloc(dim_grid[1], dim_grid[2], nbands)
@@ -133,7 +143,9 @@ println("Allocating State Arrays on: $backend_name")
         kappa_array, cs_array, field_capacity, wilting_point,
         residual_moisture, ice_frac, bulk_dens_min, soil_dens_min,
         porosity, Lsum, interlayer_drainage, transpiration_layers,
-        g_sw_veg_buf
+        g_sw_veg_buf,
+        swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
+        snow_coverage_gpu, snow_melt_gpu, snow_age_gpu, rainfall, snowfall, ppt_gpu
     )
         for arr in arrays_to_zero
             fill!(arr, FloatType(0.0))
@@ -307,6 +319,34 @@ function process_year(year)
             end
 
             # ============================================================
+            # Snow Dynamics
+            # ============================================================
+            @timeit to "calculate_snow_dynamics!" begin
+                if enable_snow
+                    partition_precipitation!(
+                        rainfall, snowfall,
+                        throughfall, tair_gpu, cv_gpu, g1_buf
+                    )
+                    
+                    calculate_snow_dynamics!(
+                        swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu, 
+                        snow_coverage_gpu, snow_melt_gpu, snow_age_gpu,
+                        snowfall, tair_gpu, swdown_gpu, lwdown_gpu, 
+                        AreaFract_gpu
+                    )
+                    
+                    # Compute total influx for soil
+                    @. ppt_gpu = rainfall + snow_melt_gpu
+                    # Re-broadcast into the 4D array to preserve dimensionality compatibility
+                    @. throughfall = ppt_gpu
+                else
+                    @. ppt_gpu = sum(throughfall, dims=(3,4))
+                end
+            end
+
+            # Removed erroneous 13-argument calculate_infiltration! block
+
+            # ============================================================
             # Soil evaporation
             # ============================================================
             @timeit to "calculate_soil_evaporation" begin
@@ -455,7 +495,8 @@ function process_year(year)
                     total_et, surface_runoff, total_runoff,
                     soil_evaporation, soil_moisture,
                     potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
-                    coverage_gpu, cv_gpu, fillvalue_threshold
+                    coverage_gpu, cv_gpu, fillvalue_threshold,
+                    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu
                 )
             end
 

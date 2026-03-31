@@ -30,6 +30,7 @@ include("src/physics/evapotranspiration.jl")
 include("src/physics/groundwater.jl")
 include("src/physics/runoff.jl")
 include("src/physics/temperature.jl")
+include("src/snow/snow.jl")
 
 # Routing module
 include("src/routing/routing.jl")
