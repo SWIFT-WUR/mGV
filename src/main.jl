@@ -268,7 +268,8 @@ function process_year(year)
 
             @timeit to "calculate_net_radiation" begin
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
                 )
             end
 
@@ -486,7 +487,8 @@ function process_year(year)
             # Correct logging outputs by recalculating Radiation dynamically closing the explicit current-day temperature offset mirroring the VIC closures.
             @timeit to "calculate_net_radiation_post_closure" begin
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
                 )
             end
             @timeit to "preprocess_daily_data" begin

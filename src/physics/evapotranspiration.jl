@@ -93,8 +93,16 @@ function compute_aerodynamic_resistance!(
 end
 
 
-function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf)
-    @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + ft(273.15))^4
+function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+                                  snow_coverage_gpu=nothing, snow_albedo_gpu=nothing, snow_surf_temp_gpu=nothing)
+    if snow_coverage_gpu === nothing
+        @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + ft(273.15))^4
+    else
+        eff_alb(alb, sc, s_alb) = (isnan(sc) || sc <= ft(0.0)) ? alb : (sc * s_alb + (ft(1.0) - sc) * alb)
+        eff_t(ts, sc, s_ts) = (isnan(sc) || sc <= ft(0.0)) ? ts : (sc * s_ts + (ft(1.0) - sc) * ts)
+        
+        @. net_rad = (ft(1.0) - eff_alb(albedo_gpu, snow_coverage_gpu, snow_albedo_gpu)) * swdown_gpu + lwdown_gpu - emissivity * sigma * (eff_t(tsurf, snow_coverage_gpu, snow_surf_temp_gpu) + ft(273.15))^4
+    end
     
     return nothing
 end
