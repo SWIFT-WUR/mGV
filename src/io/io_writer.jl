@@ -371,6 +371,12 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
     n_tiles = size(pe_in, 4)
     total_cv = zero(eltype(pe_out))
 
+    # Pre-read bare soil PE (last tile = bare soil, k=n_tiles)
+    # Used for VIC's within-tile fcanopy blending:
+    # VIC: pe_tile = fcanopy * pe_veg + (1-fcanopy) * pe_soil
+    _pe_soil_raw = pe_in[i, j, 1, n_tiles]
+    pe_soil = isnan(_pe_soil_raw) || abs(_pe_soil_raw) > threshold ? zero(eltype(pe_out)) : eltype(pe_out)(_pe_soil_raw)
+
     for k in 1:n_tiles
         # A. Shared Weights
         _cv_raw = cv[i, j, 1, k]
@@ -381,7 +387,7 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
         
         total_cv += w_cv
 
-        # B. Potential Evaporation (PE)
+        # B. Potential Evaporation (PE) - simple Cv-weighted sum matching VIC's OUT_PET.
         val = pe_in[i, j, 1, k]
         if !isnan(val) && abs(val) <= threshold
             acc_pe += w_cv * val

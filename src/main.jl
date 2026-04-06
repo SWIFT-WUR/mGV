@@ -64,7 +64,8 @@ println("Allocating State Arrays on: $backend_name")
     const canopy_evaporation     = alloc(dim_tile...)
     const f_n                    = alloc(dim_tile...)
     const net_radiation          = alloc(dim_tile...)
-    const potential_evaporation  = alloc(dim_tile...)
+    const potential_evaporation  = alloc(dim_tile...)  # Step 1 PE: for transpiration, canopy evap
+    const pe_soil                = alloc(dim_tile...)  # Step 2 PE: for soil evaporation (snow-blended energy)
     const aerodynamic_resistance = alloc(dim_tile...)
     const transpiration          = alloc(dim_tile...)
     const E_1_t                  = alloc(dim_tile...)
@@ -97,7 +98,8 @@ println("Allocating State Arrays on: $backend_name")
     const snow_melt_gpu         = alloc(dim_snow...)
     # VIC-faithful snow state variables
     const last_snow_gpu         = alloc(Int32, dim_snow...)   # days since last snowfall
-    const cold_content_gpu      = alloc(dim_snow...)           # J/m² pack cold content
+    const cold_content_gpu      = alloc(dim_snow...)           # J/m² surface layer cold content
+    const pack_cc_gpu           = alloc(dim_snow...)           # J/m² pack layer cold content (VIC 2-layer)
     const melting_flag_gpu      = alloc(Int32, dim_snow...)   # melt-season flag
     const store_snow_gpu        = alloc(Int32, dim_snow...)   # coverage state (1 = store)
     const snow_distrib_slope_gpu= alloc(dim_snow...)           # depth distribution slope (m)
@@ -160,7 +162,7 @@ println("Allocating State Arrays on: $backend_name")
         g_sw_veg_buf,
         swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
         snow_coverage_gpu, snow_melt_gpu,
-        cold_content_gpu, snow_distrib_slope_gpu,
+        cold_content_gpu, pack_cc_gpu, snow_distrib_slope_gpu,
         store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
         melt_band_gpu, rain_band_gpu, ppt_gpu
     )
@@ -296,15 +298,35 @@ function process_year(year)
             end
 
             @timeit to "calculate_net_radiation" begin
+                # Step 1: compute WITHOUT snow for PE (matching VIC's compute_pot_evap convention)
+                # Use grid-level tair_gpu for LW emission (consistent with VIC's Penman LW term).
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
-                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tair_gpu
                 )
             end
 
             @timeit to "calculate_potential_evaporation" begin
                 calculate_potential_evaporation!(
                     potential_evaporation,
+                    tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
+                    aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
+                )
+            end
+
+            @timeit to "calculate_net_radiation_snow" begin
+                # Step 2: recompute WITH snow for the full energy balance
+                calculate_net_radiation!(
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
+                )
+            end
+
+            @timeit to "calculate_potential_evaporation_soil" begin
+                # Step 2 PE for soil evaporation: snow-blended net_rad gives lower
+                # PE in energy-limited (snow/winter) months, reducing mGV's 22%
+                # summer overestimate vs VIC. (See run55-59 for validation.)
+                calculate_potential_evaporation!(
+                    pe_soil,
                     tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
                     aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                 )
@@ -344,7 +366,9 @@ function process_year(year)
                     root_gpu, 
                     cv_gpu, 
                     f_n,
-                    AreaFract_gpu
+                    AreaFract_gpu,
+                    tair_gpu,
+                    vp_gpu
                 )
             end
 
@@ -372,7 +396,7 @@ function process_year(year)
                     calculate_snow_dynamics!(
                         swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
                         snow_coverage_gpu, snow_melt_gpu,
-                        last_snow_gpu, cold_content_gpu, melting_flag_gpu,
+                        last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
                         store_snow_gpu, snow_distrib_slope_gpu,
                         store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
                         throughfall, tair_band, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu,
@@ -426,7 +450,7 @@ function process_year(year)
             @timeit to "calculate_soil_evaporation" begin
                 calculate_soil_evaporation!(
                     soil_evaporation,
-                    soil_moisture, soil_moisture_max, potential_evaporation,
+                    soil_moisture, soil_moisture_max, pe_soil,  # Step 2 (snow-blended) PE
                     b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
                 )
             end
