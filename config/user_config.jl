@@ -194,7 +194,7 @@ elseif CASE == "mekong"
     coverage_file          = "input_data/mekong/vic_mekong_5min_coverage.nc"
     routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
     # Enable snow for Mekong
-    enable_snow            = true
+    enable_snow            = false
     fillvalue_threshold    = ft(1e15)
 
     input_prec_prefix      = "./input_data/mekong/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"

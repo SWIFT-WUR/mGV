@@ -173,7 +173,10 @@ end
         organic_frac, bulk_dens_org, soil_dens_org
     )
 
-    soil_moisture .= clamp.(init_moist_gpu, residual_moisture, soil_moisture_max)
+    # VIC does NOT clamp to residual_moisture - it allows sub-residual initialization.
+    # The sub-step runoff loop then enforces the residual floor during physics.
+    # Matching this exactly: clamp to [0, max_moist] during initialization.
+    soil_moisture .= clamp.(init_moist_gpu, ft(0), soil_moisture_max)
     
     # Translate baseflow parameters from NIJSSEN2001 to ARNO format
     convert_nijssen2001_to_arno!(Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu, soil_moisture_max)
@@ -340,7 +343,7 @@ function process_year(year)
                     # Re-broadcast into the 4D array to preserve dimensionality compatibility
                     @. throughfall = ppt_gpu
                 else
-                    @. ppt_gpu = sum(throughfall, dims=(3,4))
+                    ppt_gpu .= dropdims(sum(throughfall, dims=(3,4)), dims=(3,4))
                 end
             end
 

@@ -214,10 +214,11 @@ end
 
         # ==========================================================
         # Fractional Sub-Daily State Discretization
-        # Using 6 steps per day (dt=4h) matching explicit VIC config
+        # VIC config: RUNOFF_STEPS_PER_DAY = 24 (hourly runoff sub-steps)
+        # MODEL_STEPS_PER_DAY = 1 (daily meteo) -> runoff_steps_per_dt = 24/1 = 24
         # ==========================================================
-        N_STEPS = 6
-        INV_STEPS = ft(1.0 / 6.0)
+        N_STEPS = 24
+        INV_STEPS = ft(1.0 / 24.0)
         
         inflow_sub = inflow * INV_STEPS
         evap_sub   = evap * INV_STEPS
@@ -245,6 +246,17 @@ end
             d_2 = min(dpot_2, max(eff_sm2 - res2, zero))
             
             sm2 = sm2 + d_1 - t2_sub - d_2
+            
+            # VIC residual floor for L2 (runoff.c line ~295):
+            # "moisture cannot fall below minimum"
+            # Q12[lindex] += (liq[lindex] + ice[lindex]) - resid_moist[lindex]  <- makes Q12 negative
+            # liq[lindex] = resid_moist  <- clamps to resid
+            # This negative Q12 flows into L3 as negative inflow (upward redistribution).
+            if sm2 < res2
+                deficit_2 = res2 - sm2
+                d_2 = d_2 - deficit_2      # d_2 goes negative = upward flow from L3
+                sm2 = res2
+            end
 
             # ==================== LAYER 3 ====================
             sm3_avail = max(sm3 + d_2 - t3_sub, zero)
@@ -252,6 +264,17 @@ end
             b = min(base_pot * INV_STEPS, max(sm3_avail - res3, zero))
             
             sm3 = sm3 + d_2 - t3_sub - b
+            
+            # VIC residual floor for L3 (runoff.c line ~320):
+            # If baseflow caused L3 to go below resid, reduce baseflow to compensate.
+            if sm3 < res3
+                deficit_3 = res3 - sm3
+                b = b - deficit_3         # reduce baseflow (can go negative)
+                sm3 = res3
+            end
+            # VIC: negative baseflow -> reduce evap (layer[lindex].evap += baseflow[fidx])
+            # then set baseflow = 0. We clamp b to 0 here.
+            b = max(b, zero)
             
             # Upward Spill (Cascading vertically upwards)
             sp_3 = max(sm3 - max3, zero)
