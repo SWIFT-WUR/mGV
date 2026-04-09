@@ -1,0 +1,153 @@
+#######################################################################
+# VIC Model Parameters
+#######################################################################
+
+#######################################################################
+# Time Options
+#######################################################################
+MODEL_STEPS_PER_DAY     1               # number of model time steps in 24 hour period
+SNOW_STEPS_PER_DAY      1               # number of snow model time steps in 24 hour period
+RUNOFF_STEPS_PER_DAY    24              # number of runoff time steps in 24 hour period
+ROUT_STEPS_PER_DAY		24				# number of routing time steps in 24 hour period
+
+STARTYEAR               1979
+STARTMONTH               1
+STARTDAY               1
+#ENDYEAR               1980
+#ENDMONTH               2
+#ENDDAY               28
+ENDYEAR               1979
+ENDMONTH               12
+ENDDAY               31
+BASEFLOW                NIJSSEN2001     # ARNO = columns 5-8 are the standard VIC baseflow parameters; NIJSSEN2001 = columns 5-8 of soil file are baseflow parameters from Nijssen et al (2001) 
+
+#######################################################################
+# State Options
+#######################################################################
+#INIT_STATE               /lustre/nobackup/WUR/ESG/liu297/vic_global/01oc_natural/06vic_state/nat_poc_state_file_.19790201_00000.nc
+#STATENAME               /lustre/nobackup/WUR/ESG/liu297/vic_global/01oc_natural/06vic_state/nat_poc_state_file_
+#STATEYEAR               1979
+#STATEMONTH               3
+#STATEDAY               1
+#STATESEC    00000                               
+#STATE_FORMAT           NETCDF4                   
+#######################################################################
+# Simulation Options
+#######################################################################
+FULL_ENERGY             	TRUE          		# TRUE = calculate energy balance; FALSE = calculate water balance; Default = FALSE
+CLOSE_ENERGY				FALSE				# TRUE = close energy balance; Default = FALSE
+FROZEN_SOIL             	FALSE          		# TRUE = calculate frozen soils;  Default = FALSE
+EXP_TRANS					FALSE				# TRUE = exponential thermal nodes in soil;  Default = FALSE
+SNOW_BAND					TRUE          		# TRUE = calculate snow bands;  Default = FALSE
+#GWM                         FALSE 
+# Plugins (routing)
+ROUTING						FALSE			    # TRUE = calculate routing; Default = FALSE
+DECOMPOSITION				BASIN				# RANDOM, BASIN or FILE; Default = RANDOM
+EFR							FALSE				# TRUE = calculate enviromental flow requirements;  Default = FALSE
+DAMS						FALSE				# TRUE = calculate dam operation;  Default = FALSE
+WATERUSE					FALSE				# TRUE = calculate water use;  Default = FALSE
+IRRIGATION					FALSE				# TRUE = calculate irrigation;  Default = FALSE
+ROUTING_FORCE               FALSE
+
+#######################################################################
+# Domain Files and Info
+#######################################################################
+DOMAIN          		        ../../input_data/mekong/vic_mekong_5min_domain.nc
+DOMAIN_TYPE    	LAT     		lat
+DOMAIN_TYPE    	LON     		lon
+DOMAIN_TYPE    	MASK    		mask
+DOMAIN_TYPE    	AREA    		area
+DOMAIN_TYPE    	FRAC    		frac
+DOMAIN_TYPE    	YDIM    		lat
+DOMAIN_TYPE    	XDIM    		lon
+
+#######################################################################
+# Forcing Files and Info
+# netcdf forcing files will be of the form: FILE.YYYY.nc
+#######################################################################
+# Metreorological forcing
+# FORCE_TYPE	TYPE			VARIABLE NAME		FILE
+FORCE_TYPE    	AIR_TEMP		tair				../../input_data/mekong/forcing/tair/tair_WFDE5_v2.0_5arcmin_
+FORCE_TYPE    	PREC			prec				../../input_data/mekong/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_
+FORCE_TYPE    	PRESSURE		psurf    			../../input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_
+FORCE_TYPE    	SWDOWN			swdown				../../input_data/mekong/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_
+FORCE_TYPE    	LWDOWN			lwdown				../../input_data/mekong/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_
+FORCE_TYPE    	VP				vp  			../../input_data/mekong/forcing/vp/vp_WFDE5_v2.0_5arcmin_
+FORCE_TYPE    	WIND			wind				../../input_data/mekong/forcing/wind/wind_WFDE5_v2.0_5arcmin_
+
+#######################################################################
+# Land Surface Files and Info
+#######################################################################
+PARAMETERS              ../../input_data/mekong/vic_mekong_5min_params.nc
+#ROUTING_PARAMETERS		/lustre/nobackup/WUR/ESG/liu297/vic_global/00pre_analysis/downscaling5min/07TestRun/param/vic_global_5min_routing_param_wbt.nc
+FCAN_SRC				FROM_VEGPARAM  
+LAI_SRC					FROM_VEGPARAM   
+ALB_SRC				    FROM_VEGPARAM   
+NBARE                   1 
+WFC_SRC                 FROM_VEGPARAM  
+#######################################################################
+# Output Options
+#######################################################################
+#LOG_DIR						
+RESULT_DIR           ./results
+OUTFILE               mekong_test
+OUT_FORMAT						NETCDF4
+COMPRESS						5
+AGGFREQ							NDAYS	1
+
+# Water balance
+OUTVAR							OUT_PREC 
+OUTVAR							OUT_BASEFLOW
+OUTVAR							OUT_RUNOFF
+OUTVAR							OUT_EVAP
+OUTVAR                         OUT_TRANSP_VEG
+OUTVAR                         OUT_PET
+OUTVAR							OUT_SOIL_MOIST
+OUTVAR                         OUT_RECHARGE
+#OUTVAR                          OUT_GWRECHARGE
+#OUTVAR                         OUT_INFLOW
+OUTVAR                         OUT_ROOTMOIST
+#OUTVAR                         OUT_SOIL_ICE
+OUTVAR                         OUT_EVAP_BARE
+OUTVAR                         OUT_EVAP_CANOP
+#OUTVAR                         OUT_RAINF
+OUTVAR                          OUT_WATER_ERROR
+OUTVAR                         OUT_ENERGY_ERROR
+OUTVAR                         OUT_RAD_TEMP
+#OUTVAR                         OUT_BARESOILT
+#OUTVAR                         OUT_SOIL_TEMP
+#OUTVAR                         OUT_SOIL_TNODE
+OUTVAR                         OUT_SURF_TEMP
+OUTVAR                         OUT_AIR_TEMP
+OUTVAR OUT_R_NET
+OUTVAR OUT_LWNET
+OUTVAR OUT_SWNET
+
+# ROUTING
+OUTVAR						   OUT_DISCHARGE
+
+# ---
+OUTVAR                         OUT_WDEW
+OUTVAR                         OUT_DELINTERCEPT
+OUTVAR                         OUT_INFLOW
+OUTVAR                         OUT_RAINF
+
+OUTVAR                         OUT_AERO_RESIST        
+# OUTVAR                       OUT_AERO_RESIST1
+# OUTVAR                       OUT_AERO_RESIST2
+
+OUTVAR                         OUT_SURFSTOR
+OUTVAR                         OUT_DELSURFSTOR
+OUTVAR                         OUT_DELSOILMOIST
+OUTVAR                         OUT_ASAT
+
+OUTVAR                         OUT_LATENT
+OUTVAR                         OUT_SENSIBLE
+OUTVAR                         OUT_GRND_FLUX
+
+OUTVAR                         OUT_VP
+OUTVAR                         OUT_VPD
+OUTVAR                         OUT_SURF_COND
+OUTVAR                         OUT_DENSITY
+OUTVAR                         OUT_SOIL_WET
+OUTVAR                         OUT_SOIL_WSTRESS
