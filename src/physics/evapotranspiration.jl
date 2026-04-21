@@ -211,7 +211,7 @@ end
     evap = f_n_val * canopy_evap_star
     
     # Sanitize
-    evap = ifelse(isnan(evap) || abs(evap) > ft(1e15), ft(0.0), evap)
+    evap = ifelse(isnan(evap) | (abs(evap) > ft(1e15)), ft(0.0), evap)
 
     return evap, f_n_val
 end
@@ -299,28 +299,16 @@ end
             f1 = root_gpu[i,j,1,k]
             f2 = root_gpu[i,j,2,k]
             
-            W_root_sum = ZERO
-            Wcr_root_sum = ZERO
+            # Branchless root-fraction accumulation
+            W_root_sum   = ifelse(f1 > ZERO, W1, ZERO) + ifelse(f2 > ZERO, W2, ZERO)
+            Wcr_root_sum = ifelse(f1 > ZERO, Wcr1, ZERO) + ifelse(f2 > ZERO, Wcr2, ZERO)
             
-            if f1 > ZERO
-                W_root_sum += W1
-                Wcr_root_sum += Wcr1
-            end
-            if f2 > ZERO
-                W_root_sum += W2
-                Wcr_root_sum += Wcr2
-            end
-            
-            share_moist = (W_root_sum >= Wcr_root_sum) && (W_root_sum > ZERO)
+            share_moist = (W_root_sum >= Wcr_root_sum) & (W_root_sum > ZERO)
             
             moist1_wet = W1 >= Wcr1
             moist2_wet = W2 >= Wcr2
             
-            if share_moist
-                g_sw_veg = ONE
-            else
-                g_sw_veg = clamp((f1 * g1 + f2 * g2) / (f1 + f2 + EPS), ZERO, ONE)
-            end
+            g_sw_veg = ifelse(share_moist, ONE, clamp((f1 * g1 + f2 * g2) / (f1 + f2 + EPS), ZERO, ONE))
 
             e1_total = ZERO
             e2_total = ZERO
@@ -336,56 +324,61 @@ end
                 term_inner = clamp((ws / max(cv, EPS)) / max(max_ws, EPS), ZERO, ONE)
                 dry_time_factor = clamp(ONE - fn_val * (term_inner ^ (ft(2.0)/ft(3.0))), ZERO, ONE)
 
-                if k == nveg
-                    dry_time_factor = ONE
-                end
+                dry_time_factor = ifelse(k == nveg, ONE, dry_time_factor)
 
                 # --- Transpiration Calculation ---
                 trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg, ZERO, ft(Inf))
                 
-                # --- Layer Apportionment (E1, E2) ---
-                if share_moist
-                    root_sum = ZERO
-                    spare_transp = ZERO
-                    
-                    if moist1_wet
-                        e1_val = trans_val * f1
-                        root_sum += f1
-                    else
-                        e1_val = trans_val * g1 * f1
-                        spare_transp += trans_val * f1 * (ONE - g1)
-                    end
-                    
-                    if moist2_wet
-                        e2_val = trans_val * f2
-                        root_sum += f2
-                    else
-                        e2_val = trans_val * g2 * f2
-                        spare_transp += trans_val * f2 * (ONE - g2)
-                    end
-                    
-                    if spare_transp > ZERO && root_sum > ZERO
-                        if moist1_wet
-                            e1_val += spare_transp * (f1 / root_sum)
-                        end
-                        if moist2_wet
-                            e2_val += spare_transp * (f2 / root_sum)
-                        end
-                    end
-                else
-                    weight1 = f1 * g1
-                    weight2 = f2 * g2
-                    total_denom = weight1 + weight2 + EPS
-                    
-                    e1_val = trans_val * (weight1 / total_denom)
-                    e2_val = trans_val * (weight2 / total_denom)
-                end
+                # =========================================================
+                # --- Layer Apportionment (E1, E2) without branching ---
+                # =========================================================
+                # VIC apportions the total transpiration demand (trans_val)
+                # across soil layers according to root depth and soil moisture.
+                # If moisture is limited in one layer, roots can pull from another.
+                
+                # Setup base root + moisture weights
+                weight1      = f1 * g1  # root fraction * moisture stress factor
+                weight2      = f2 * g2
+                total_weight = weight1 + weight2 + EPS
 
-                if k == nveg
-                     trans_val = ZERO
-                     e1_val = ZERO
-                     e2_val = ZERO
-                end
+                # Option A: Standard Weighted Apportionment
+                # Used when moisture is severely limited (share_moist is false)
+                e1_weighted_demand = trans_val * (weight1 / total_weight)
+                e2_weighted_demand = trans_val * (weight2 / total_weight)
+
+                # Option B: Shared Moisture Apportionment (Roots redistribute uptake)
+                # Used when at least one layer has sufficient moisture
+                
+                # 1. Base uptake demand under shared moisture:
+                # If layer is "wet", it demands full ET for its root fraction.
+                # If "dry", it takes a stress-reduced amount.
+                e1_shared_base = ifelse(moist1_wet, trans_val * f1, trans_val * g1 * f1)
+                e2_shared_base = ifelse(moist2_wet, trans_val * f2, trans_val * g2 * f2)
+                
+                # 2. Calculate "Spare" ET demand:
+                # The unmet demand from dry layers (which roots will try to pull from wet layers)
+                spare_demand_from_1 = ifelse(moist1_wet, ZERO, trans_val * f1 * (ONE - g1))
+                spare_demand_from_2 = ifelse(moist2_wet, ZERO, trans_val * f2 * (ONE - g2))
+                total_spare_demand  = spare_demand_from_1 + spare_demand_from_2
+                
+                # 3. Calculate wet-layer capacity to receive the spare demand
+                wet_root_frac_sum    = ifelse(moist1_wet, f1, ZERO) + ifelse(moist2_wet, f2, ZERO)
+                can_distribute_spare = (total_spare_demand > ZERO) & (wet_root_frac_sum > ZERO)
+                
+                # 4. Add the redistributed spare demand back into the wet layers proportionately
+                spare_share_e1 = ifelse(moist1_wet & can_distribute_spare, total_spare_demand * (f1 / max(wet_root_frac_sum, EPS)), ZERO)
+                spare_share_e2 = ifelse(moist2_wet & can_distribute_spare, total_spare_demand * (f2 / max(wet_root_frac_sum, EPS)), ZERO)
+                
+                e1_shared_total = e1_shared_base + spare_share_e1
+                e2_shared_total = e2_shared_base + spare_share_e2
+                
+                # Finally, select between Option A and Option B using our pre-calculated mask
+                e1_val = ifelse(share_moist, e1_shared_total, e1_weighted_demand)
+                e2_val = ifelse(share_moist, e2_shared_total, e2_weighted_demand)
+
+                trans_val = ifelse(k == nveg, ZERO, trans_val)
+                e1_val    = ifelse(k == nveg, ZERO, e1_val)
+                e2_val    = ifelse(k == nveg, ZERO, e2_val)
 
                 # --- WRITE OUTPUTS ---
                 transpiration_full[i,j,b,k] = trans_val
@@ -463,13 +456,9 @@ function calculate_soil_evaporation!(
         # 2. Moisture Ratio
         ratio = clamp(ft(1.0) - sm_top / sm_max_top, ft(0.0), ft(1.0))
         
-        # 3. Handle b_i == -1.0 case
-        ratio_adj = (b_i == -ft(1.0)) ? ratio : ratio ^ (ft(1.0) / (b_i + ft(1.0)))
-        
-        tmp = max_infil * (ft(1.0) - ratio_adj)
-        if b_i == -ft(1.0)
-            tmp = max_infil
-        end
+        # 3. Handle b_i == -1.0 case — branchless
+        ratio_adj = b_i == -ft(1.0) ? ratio : ratio ^ (ft(1.0) / (b_i + ft(1.0)))
+        tmp = b_i == -ft(1.0) ? max_infil : max_infil * (ft(1.0) - ratio_adj)
 
         # 4. Saturation Check
         is_saturated = tmp >= max_infil
@@ -477,10 +466,9 @@ function calculate_soil_evaporation!(
         # 5. ARNO Evaporation Logic
         ratio_unsat = clamp(ft(1.0) - (tmp / max_infil), ft(0.0), ft(1.0))
         
-        ratio_powered = (ratio_unsat > ft(0.0)) ? ratio_unsat ^ b_i : ft(0.0)
+        ratio_powered = ratio_unsat > ft(0.0) ? ratio_unsat ^ b_i : ft(0.0)
         as_val = ft(1.0) - ratio_powered
-        
-        ratio_beta = (ratio_powered > ft(0.0)) ? ratio_powered ^ (ft(1.0) / b_i) : ft(0.0)
+        ratio_beta = ratio_powered > ft(0.0) ? ratio_powered ^ (ft(1.0) / b_i) : ft(0.0)
         
         # 6. Series Expansion (Replaces the 40 lines of unrolled code)
         # Using a simple loop here uses registers, not VRAM arrays!
