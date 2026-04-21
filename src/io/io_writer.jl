@@ -374,58 +374,41 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
     for k in 1:n_tiles
         # A. Shared Weights
         _cv_raw = cv[i, j, 1, k]
-        w_cv = isnan(_cv_raw) ? zero(eltype(pe_out)) : eltype(pe_out)(_cv_raw)
+        w_cv = ifelse(isnan(_cv_raw),  zero(eltype(pe_out)), eltype(pe_out)(_cv_raw))
         
         _cov_raw = coverage[i, j, 1, k]
-        w_cov = isnan(_cov_raw) ? zero(eltype(pe_out)) : eltype(pe_out)(_cov_raw)
+        w_cov = ifelse(isnan(_cov_raw), zero(eltype(pe_out)), eltype(pe_out)(_cov_raw))
         
         total_cv += w_cv
 
         # B. Potential Evaporation (PE)
         val = pe_in[i, j, 1, k]
-        if !isnan(val) && abs(val) <= threshold
-            acc_pe += w_cv * val
-        end
+        acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_cv * val)
 
         # C. Net Radiation (NR)
         val = nr_in[i, j, 1, k]
-        if !isnan(val) && abs(val) <= threshold
-            acc_nr += w_cv * val
-        end
+        acc_nr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(nr_out)), w_cv * val)
 
         # D. Transpiration (TR)
         val = tr_in[i, j, 1, k]
-        if !isnan(val) && abs(val) <= threshold
-            acc_tr += w_cov * val
-        end
+        acc_tr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(tr_out)), w_cov * val)
 
         # E. Canopy Evaporation (CE)
         val = ce_in[i, j, 1, k]
-        if !isnan(val) && abs(val) <= threshold
-            acc_ce += w_cv * w_cov * val
-        end
+        acc_ce += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ce_out)), w_cv * w_cov * val)
 
         # F. Water Storage (WS)
         val = ws_in[i, j, 1, k]
-        if !isnan(val) && abs(val) <= threshold
-            acc_ws += w_cv * w_cov * val
-        end
+        acc_ws += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ws_out)), w_cv * w_cov * val)
     end
 
     # 3. Write Final Sums or NaN to Global Memory
-    if isnan(total_cv) || total_cv < eltype(pe_out)(1e-6)
-        pe_out[i, j] = fill_val
-        nr_out[i, j] = fill_val
-        tr_out[i, j] = fill_val
-        ce_out[i, j] = fill_val
-        ws_out[i, j] = fill_val
-    else
-        pe_out[i, j] = acc_pe
-        nr_out[i, j] = acc_nr
-        tr_out[i, j] = acc_tr
-        ce_out[i, j] = acc_ce
-        ws_out[i, j] = acc_ws
-    end
+    active = !isnan(total_cv) & (total_cv >= eltype(pe_out)(1e-6))
+    pe_out[i, j] = ifelse(active, acc_pe, fill_val)
+    nr_out[i, j] = ifelse(active, acc_nr, fill_val)
+    tr_out[i, j] = ifelse(active, acc_tr, fill_val)
+    ce_out[i, j] = ifelse(active, acc_ce, fill_val)
+    ws_out[i, j] = ifelse(active, acc_ws, fill_val)
 end
 
 function preprocess_daily_outputs(
