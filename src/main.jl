@@ -11,14 +11,14 @@ println("Loading parameter data and allocating memory...")
         ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp, depth,
         quartz, bulk_dens, soil_dens, expt, coverage, b_infilt,
         Ds, Dsmax, Ws, dp, Tavg, c_expt,
-        AreaFract, elevation, Pfactor
+        AreaFract, elevation, Pfactor, annual_prec
     )
 end
 
 @timeit to "gpu_load_static_inputs" @time gpu_load_static_inputs(@vars(
     rmin, rarc, cv, elev, ksat, residmoist, init_moist, root, Wcr, Wfc, Wpwp,
     depth, quartz, bulk_dens, soil_dens, expt, b_infilt, Ds, Dsmax, Ws, dp, Tavg, z0soil, c_expt,
-    AreaFract, elevation, Pfactor
+    AreaFract, elevation, Pfactor, annual_prec
 )...)
 
 @timeit to "init_routing" begin
@@ -64,7 +64,8 @@ println("Allocating State Arrays on: $backend_name")
     const canopy_evaporation     = alloc(dim_tile...)
     const f_n                    = alloc(dim_tile...)
     const net_radiation          = alloc(dim_tile...)
-    const potential_evaporation  = alloc(dim_tile...)
+    const potential_evaporation  = alloc(dim_tile...)  # Step 1 PE: for transpiration, canopy evap
+    const pe_soil                = alloc(dim_tile...)  # Step 2 PE: for soil evaporation (snow-blended energy)
     const aerodynamic_resistance = alloc(dim_tile...)
     const transpiration          = alloc(dim_tile...)
     const E_1_t                  = alloc(dim_tile...)
@@ -84,16 +85,31 @@ println("Allocating State Arrays on: $backend_name")
     const total_runoff      = alloc(dim_grid...)
     const g1_buf            = alloc(dim_grid...)
     const g2_buf            = alloc(dim_grid...)
-    const swe_gpu           = alloc(dim_grid...)
-    const snow_depth_gpu    = alloc(dim_grid...)
-    const snow_albedo_gpu   = alloc(dim_grid...)
-    const snow_surf_temp_gpu= alloc(dim_grid...)
-    const snow_coverage_gpu = alloc(dim_grid...)
-    const snow_melt_gpu     = alloc(dim_grid...)
-    const snow_age_gpu      = alloc(dim_grid...)
-    const rainfall          = alloc(dim_grid...)
-    const snowfall          = alloc(dim_grid...)
-    const ppt_gpu           = alloc(dim_grid...)
+    
+    # --- 3b. Snow Per-(Band × Veg) States — 4D to match VIC architecture ---
+    # Shape: (nx, ny, nbands, nveg)  — one snowpack per (elevation band × vegetation tile)
+    # VIC's collect_wb_terms accumulates: OUT_SWE += snow.swq * Cv[veg] * AreaFract[band]
+    const dim_snow          = (dim_grid[1], dim_grid[2], nbands, dim_veg)
+    const swe_gpu               = alloc(dim_snow...)
+    const snow_depth_gpu        = alloc(dim_snow...)
+    const snow_albedo_gpu       = alloc(dim_snow...)
+    const snow_surf_temp_gpu    = alloc(dim_snow...)
+    const snow_coverage_gpu     = alloc(dim_snow...)
+    const snow_melt_gpu         = alloc(dim_snow...)
+    # VIC-faithful snow state variables
+    const last_snow_gpu         = alloc(Int32, dim_snow...)   # days since last snowfall
+    const cold_content_gpu      = alloc(dim_snow...)           # J/m² surface layer cold content
+    const pack_cc_gpu           = alloc(dim_snow...)           # J/m² pack layer cold content (VIC 2-layer)
+    const melting_flag_gpu      = alloc(Int32, dim_snow...)   # melt-season flag
+    const store_snow_gpu        = alloc(Int32, dim_snow...)   # coverage state (1 = store)
+    const snow_distrib_slope_gpu= alloc(dim_snow...)           # depth distribution slope (m)
+    const store_swq_gpu         = alloc(dim_snow...)           # stored SWE for coverage (mm)
+    const store_coverage_gpu    = alloc(dim_snow...)           # stored coverage fraction
+    const max_snow_depth_gpu    = alloc(dim_snow...)           # max depth for coverage (m)
+    # Per-band (3D) buffer for melt aggregated across veg tiles (for soil input)
+    const melt_band_gpu         = alloc(dim_grid[1], dim_grid[2], nbands)
+    const rain_band_gpu         = alloc(dim_grid[1], dim_grid[2], nbands)
+    const ppt_gpu               = alloc(dim_grid[1], dim_grid[2], nbands)
 
     # --- 3. Forcings Buffers ---
     const tair_band              = alloc(dim_grid[1], dim_grid[2], nbands)
@@ -145,13 +161,19 @@ println("Allocating State Arrays on: $backend_name")
         porosity, Lsum, interlayer_drainage, transpiration_layers,
         g_sw_veg_buf,
         swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
-        snow_coverage_gpu, snow_melt_gpu, snow_age_gpu, rainfall, snowfall, ppt_gpu
+        snow_coverage_gpu, snow_melt_gpu,
+        cold_content_gpu, pack_cc_gpu, snow_distrib_slope_gpu,
+        store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
+        melt_band_gpu, rain_band_gpu, ppt_gpu
     )
         for arr in arrays_to_zero
             fill!(arr, FloatType(0.0))
         end
     end
+    # Initialize store_snow to 0 (VIC default: store_snow = false)
+    # store_coverage and store_swq stay at 0.0 (already zeroed above)
 end
+
 
 # ============================================================================
 # CALCULATE SOIL PROPERTIES
@@ -259,7 +281,16 @@ function process_year(year)
             # ============================================================
             @timeit to "calculate_band_forcings" begin
                 @. tair_band = tair_gpu + FloatType(-0.0065) * (elevation_gpu - elev_gpu)
-                @. prec_band = prec_gpu * Pfactor_gpu
+                # VIC Pfactor fix: NC file stores precipitation FRACTIONS, not multipliers.
+                # VIC divides by AreaFract to get the true per-band precipitation multiplier.
+                # When Pfactor_nc[b] == AreaFract[b] (common case: uniform precip per unit area),
+                # the true multiplier = 1.0, so each band gets the FULL grid-cell precipitation.
+                # prec_band[b] = prec * (Pfactor_nc[b] / AreaFract[b])
+                @. prec_band = prec_gpu * ifelse(
+                    AreaFract_gpu > FloatType(1e-6),
+                    Pfactor_gpu / AreaFract_gpu,
+                    FloatType(0.0)
+                )
             end
 
             @timeit to "compute_aerodynamic_resistance" begin
@@ -270,14 +301,35 @@ function process_year(year)
             end
 
             @timeit to "calculate_net_radiation" begin
+                # Step 1: compute WITHOUT snow for PE (matching VIC's compute_pot_evap convention)
+                # Use grid-level tair_gpu for LW emission (consistent with VIC's Penman LW term).
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tair_gpu
                 )
             end
 
             @timeit to "calculate_potential_evaporation" begin
                 calculate_potential_evaporation!(
                     potential_evaporation,
+                    tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
+                    aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
+                )
+            end
+
+            @timeit to "calculate_net_radiation_snow" begin
+                # Step 2: recompute WITH snow for the full energy balance
+                calculate_net_radiation!(
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
+                )
+            end
+
+            @timeit to "calculate_potential_evaporation_soil" begin
+                # Step 2 PE for soil evaporation: snow-blended net_rad gives lower
+                # PE in energy-limited (snow/winter) months, reducing mGV's 22%
+                # summer overestimate vs VIC. (See run55-59 for validation.)
+                calculate_potential_evaporation!(
+                    pe_soil,
                     tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
                     aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
                 )
@@ -317,31 +369,77 @@ function process_year(year)
                     root_gpu, 
                     cv_gpu, 
                     f_n,
-                    AreaFract_gpu
+                    AreaFract_gpu,
+                    tair_gpu,
+                    vp_gpu
                 )
             end
 
             # ============================================================
-            # Snow Dynamics
+            # Water balance: throughfall (must run BEFORE snow dynamics so
+            # the snow kernel sees today's precipitation, not yesterday's)
+            # ============================================================
+            @timeit to "update_water_canopy_storage" begin
+                update_water_canopy_storage!(
+                    water_storage, throughfall,
+                    prec_band, cv_gpu, canopy_evaporation,
+                    max_water_storage, coverage_gpu
+                )
+            end
+
+            # ============================================================
+            # Snow Dynamics — 4D per-(band × veg) tile, matching VIC architecture
             # ============================================================
             @timeit to "calculate_snow_dynamics!" begin
                 if enable_snow
-                    partition_precipitation!(
-                        rainfall, snowfall,
-                        throughfall, tair_gpu, cv_gpu, g1_buf
-                    )
-                    
+                    # Compute mean latitude for hemisphere detection
+                    lat_mean_val = mean(lat_cpu)
+
+                    # 4D snow kernel: partitions throughfall[b,v] per tile internally
                     calculate_snow_dynamics!(
-                        swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu, 
-                        snow_coverage_gpu, snow_melt_gpu, snow_age_gpu,
-                        snowfall, tair_gpu, swdown_gpu, lwdown_gpu, 
-                        AreaFract_gpu
+                        swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
+                        snow_coverage_gpu, snow_melt_gpu,
+                        last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
+                        store_snow_gpu, snow_distrib_slope_gpu,
+                        store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
+                        throughfall, tair_band, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu,
+                        AreaFract_gpu, cv_gpu, annual_prec_gpu,
+                        day, Float64(lat_mean_val)
                     )
-                    
-                    # Compute total influx for soil
-                    @. ppt_gpu = rainfall + snow_melt_gpu
-                    # Re-broadcast into the 4D array to preserve dimensionality compatibility
-                    @. throughfall = ppt_gpu
+
+                    # Aggregate 4D→3D for soil model input:
+                    # ppt_gpu[i,j,b] = sum_v( (rain[b,v] + melt[b,v]) * Cv[v] )
+                    # where rain[b,v] = throughfall_pre_snow[b,v] * rain_frac(tair_band[b])
+                    # We saved throughfall BEFORE snow (it was already overwritten above
+                    # by the canopy step), so rain = throughfall * rain_frac
+                    ft = FloatType
+
+                    # rain_frac per band (3D): same formula as inside kernel
+                    _rf_3d = clamp.(
+                        (tair_band .- ft(-0.5)) ./ ft(1.0),
+                        ft(0.0), ft(1.0)
+                    )
+
+                    # rain 4D: throughfall[b,v] * rain_frac[b]  (broadcast last dim)
+                    _rain_4d = throughfall .* reshape(_rf_3d, size(_rf_3d, 1), size(_rf_3d, 2), size(_rf_3d, 3), 1)
+
+                    # Cv-weighted aggregation over veg dim (dim=4)
+                    # cv_gpu is (nx,ny,1,nveg), broadcasts over band dim automatically
+                    rain_band_gpu .= dropdims(
+                        sum(ifelse.(isnan.(_rain_4d .* cv_gpu), ft(0.0), _rain_4d .* cv_gpu), dims=4),
+                        dims=4)
+                    melt_band_gpu .= dropdims(
+                        sum(ifelse.(isnan.(snow_melt_gpu .* cv_gpu), ft(0.0), snow_melt_gpu .* cv_gpu), dims=4),
+                        dims=4)
+
+                    # Total per-band soil influx: rain + melt
+                    ppt_gpu .= rain_band_gpu .+ melt_band_gpu
+
+                    # Broadcast back to 4D throughfall for downstream soil/runoff modules
+                    # (they expect throughfall[b,v] = same water input for all veg tiles)
+                    nx_s, ny_s, nb_s = size(ppt_gpu)
+                    nv_s = size(throughfall, 4)
+                    throughfall .= repeat(reshape(ppt_gpu, nx_s, ny_s, nb_s, 1), 1, 1, 1, nv_s)
                 else
                     ppt_gpu .= dropdims(sum(throughfall, dims=(3,4)), dims=(3,4))
                 end
@@ -355,21 +453,12 @@ function process_year(year)
             @timeit to "calculate_soil_evaporation" begin
                 calculate_soil_evaporation!(
                     soil_evaporation,
-                    soil_moisture, soil_moisture_max, potential_evaporation,
+                    soil_moisture, soil_moisture_max, pe_soil,  # Step 2 (snow-blended) PE
                     b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
                 )
             end
 
-            # ============================================================
-            # Water balance: throughfall and runoff
-            # ============================================================
-            @timeit to "update_water_canopy_storage" begin
-                update_water_canopy_storage!(
-                    water_storage, throughfall,
-                    prec_band, cv_gpu, canopy_evaporation,
-                    max_water_storage, coverage_gpu
-                )
-            end
+            # (update_water_canopy_storage! already ran before snow dynamics above)
 
             @timeit to "calculate_surface_runoff" begin
                 calculate_surface_runoff!(
@@ -489,7 +578,8 @@ function process_year(year)
             # Correct logging outputs by recalculating Radiation dynamically closing the explicit current-day temperature offset mirroring the VIC closures.
             @timeit to "calculate_net_radiation_post_closure" begin
                 calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf
+                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
                 )
             end
             @timeit to "preprocess_daily_data" begin
@@ -499,7 +589,8 @@ function process_year(year)
                     soil_evaporation, soil_moisture,
                     potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
                     coverage_gpu, cv_gpu, fillvalue_threshold,
-                    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu
+                    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
+                    AreaFract_gpu
                 )
             end
 

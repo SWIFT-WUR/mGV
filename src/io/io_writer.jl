@@ -371,6 +371,12 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
     n_tiles = size(pe_in, 4)
     total_cv = zero(eltype(pe_out))
 
+    # Pre-read bare soil PE (last tile = bare soil, k=n_tiles)
+    # Used for VIC's within-tile fcanopy blending:
+    # VIC: pe_tile = fcanopy * pe_veg + (1-fcanopy) * pe_soil
+    _pe_soil_raw = pe_in[i, j, 1, n_tiles]
+    pe_soil = isnan(_pe_soil_raw) || abs(_pe_soil_raw) > threshold ? zero(eltype(pe_out)) : eltype(pe_out)(_pe_soil_raw)
+
     for k in 1:n_tiles
         # A. Shared Weights
         _cv_raw = cv[i, j, 1, k]
@@ -381,7 +387,7 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
         
         total_cv += w_cv
 
-        # B. Potential Evaporation (PE)
+        # B. Potential Evaporation (PE) - simple Cv-weighted sum matching VIC's OUT_PET.
         val = pe_in[i, j, 1, k]
         acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_cv * val)
 
@@ -417,7 +423,8 @@ function preprocess_daily_outputs(
     soil_evaporation, soil_moisture,
     potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
     coverage_gpu, cv_gpu, fillvalue_threshold,
-    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu
+    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
+    AreaFract_gpu
 )
     # 1. Allocate Output Arrays (2D)
     nx, ny = size(tsurf)[1:2]
@@ -452,7 +459,7 @@ function preprocess_daily_outputs(
     end 
 
     # 4. Package and return
-    return (
+    gpu_results = (
         # Direct 2D
         tsurf          = tsurf,
         tair           = tair_gpu,
@@ -474,11 +481,78 @@ function preprocess_daily_outputs(
         ce_summed = ce_summed,
         ws_summed = ws_summed,
         
-        # Direct Snow Overrides
-        swe_summed = swe_gpu,
-        snow_albedo = snow_albedo_gpu,
-        snow_surf_temp = snow_surf_temp_gpu,
-        snow_coverage = snow_coverage_gpu,
-        snow_melt = snow_melt_gpu
+        # 4D Snow Aggregation: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
+        # Matching VIC's collect_wb_terms: OUT_SWE += snow.swq * Cv * AreaFract
+        # CRITICAL: AreaFract_gpu is (nx,ny,nbands) — reshape to (nx,ny,nbands,1)
+        # so it outer-products correctly with cv_gpu (nx,ny,1,nveg) → (nx,ny,nbands,nveg)
+        swe_summed = let
+            af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
+            w4 = ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
+            dropdims(sum(ifelse.(isnan.(swe_gpu), ft(0.0), swe_gpu) .* w4, dims=(3,4)), dims=(3,4))
+        end,
+        snow_coverage = let
+            af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
+            w4 = ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
+            dropdims(sum(ifelse.(isnan.(snow_coverage_gpu), ft(0.0), snow_coverage_gpu) .* w4, dims=(3,4)), dims=(3,4))
+        end,
+        snow_melt = let
+            af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
+            w4 = ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
+            dropdims(sum(ifelse.(isnan.(snow_melt_gpu), ft(0.0), snow_melt_gpu) .* w4, dims=(3,4)), dims=(3,4))
+        end
     )
+    
+    # Land mask: cells with no active bands/veg → NaN (ocean cells)
+    af_sum = dropdims(sum(ifelse.(isnan.(AreaFract_gpu), ft(0.0), AreaFract_gpu), dims=3), dims=3)
+    land_mask = af_sum .> ft(1e-6)
+
+    swe_masked      = ifelse.(land_mask, gpu_results.swe_summed,    ft(NaN))
+    coverage_masked = ifelse.(land_mask, gpu_results.snow_coverage,  ft(NaN))
+    melt_masked     = ifelse.(land_mask, gpu_results.snow_melt,      ft(NaN))
+
+    # Snow-presence mask: cells with meaningful snow coverage
+    snow_present = coverage_masked .> ft(1e-4)
+
+    # Albedo/surf_temp: weighted by coverage*Cv*AreaFract, normalized by total coverage.
+    # NaN for cells with no snow present (matches 3D behavior and VIC's OUT_SALBEDO)
+    coverage_norm = max.(ifelse.(land_mask, gpu_results.snow_coverage, ft(0.0)),
+                         eltype(coverage_masked)(1e-6))
+    
+    _w4_cov = let
+        af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
+        w4 = ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
+        ifelse.(isnan.(snow_coverage_gpu), ft(0.0), snow_coverage_gpu) .* w4
+    end
+
+    # Compute 2D snow_albedo and snow_surf_temp before tsurf blend
+    snow_albedo_2d = let
+        num = dropdims(sum(ifelse.(isnan.(snow_albedo_gpu), ft(0.0), snow_albedo_gpu) .* _w4_cov, dims=(3,4)), dims=(3,4))
+        ifelse.(snow_present, num ./ coverage_norm, ft(NaN))
+    end
+
+    snow_surf_temp_2d = let
+        num = dropdims(sum(ifelse.(isnan.(snow_surf_temp_gpu), ft(0.0), snow_surf_temp_gpu) .* _w4_cov, dims=(3,4)), dims=(3,4))
+        ifelse.(snow_present, num ./ coverage_norm, ft(NaN))
+    end
+
+    # -----------------------------------------------------------------------
+    # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
+    # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported  
+    # surface temperature is cold (near 0°C) over snow, not the bare-soil temp.
+    # mGV's tsurf is solved from the vegetation/soil energy balance; it stays
+    # warm even when the cell is snow-covered. We correct this by blending:
+    #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf
+    # -----------------------------------------------------------------------
+    snow_cov_safe = ifelse.(snow_present, coverage_masked, ft(0.0))
+    snow_t_safe   = ifelse.(snow_present, snow_surf_temp_2d, tsurf)
+    tsurf_blended = snow_cov_safe .* snow_t_safe .+ (ft(1.0) .- snow_cov_safe) .* tsurf
+
+    return merge(gpu_results, (
+        tsurf         = tsurf_blended,
+        swe_summed    = swe_masked,
+        snow_coverage = coverage_masked,
+        snow_melt     = melt_masked,
+        snow_albedo   = snow_albedo_2d,
+        snow_surf_temp = snow_surf_temp_2d,
+    ))
 end
