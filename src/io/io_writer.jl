@@ -423,7 +423,7 @@ function preprocess_daily_outputs(
     soil_evaporation, soil_moisture,
     potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
     coverage_gpu, cv_gpu, fillvalue_threshold,
-    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
+    swe_gpu, surf_water_gpu, pack_water_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
     AreaFract_gpu
 )
     # 1. Allocate Output Arrays (2D)
@@ -511,28 +511,28 @@ function preprocess_daily_outputs(
     melt_masked     = ifelse.(land_mask, gpu_results.snow_melt,      ft(NaN))
 
     # Snow-presence mask: cells with meaningful snow coverage
-    snow_present = coverage_masked .> ft(1e-4)
+    snow_present = swe_masked .> ft(0.0)
 
-    # Albedo/surf_temp: weighted by coverage*Cv*AreaFract, normalized by total coverage.
-    # NaN for cells with no snow present (matches 3D behavior and VIC's OUT_SALBEDO)
-    coverage_norm = max.(ifelse.(land_mask, gpu_results.snow_coverage, ft(0.0)),
-                         eltype(coverage_masked)(1e-6))
+    # Albedo/surf_temp: weighted by Cv*AreaFract ONLY where snow is present, normalized by that same sum!
+    # Matches VIC's put_data.c handling of intensive snow variables.
     
-    _w4_cov = let
+    _w4_base = let
         af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
-        w4 = ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
-        ifelse.(isnan.(snow_coverage_gpu), ft(0.0), snow_coverage_gpu) .* w4
+        ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
     end
+    
+    _w4_active_snow = ifelse.(swe_gpu .> ft(0.0), _w4_base, ft(0.0))
+    cv_snow_sum = max.(dropdims(sum(_w4_active_snow, dims=(3,4)), dims=(3,4)), ft(1e-6))
 
     # Compute 2D snow_albedo and snow_surf_temp before tsurf blend
     snow_albedo_2d = let
-        num = dropdims(sum(ifelse.(isnan.(snow_albedo_gpu), ft(0.0), snow_albedo_gpu) .* _w4_cov, dims=(3,4)), dims=(3,4))
-        ifelse.(snow_present, num ./ coverage_norm, ft(NaN))
+        num = dropdims(sum(ifelse.(isnan.(snow_albedo_gpu), ft(0.0), snow_albedo_gpu) .* _w4_active_snow, dims=(3,4)), dims=(3,4))
+        ifelse.(snow_present, num ./ cv_snow_sum, ft(NaN))
     end
 
     snow_surf_temp_2d = let
-        num = dropdims(sum(ifelse.(isnan.(snow_surf_temp_gpu), ft(0.0), snow_surf_temp_gpu) .* _w4_cov, dims=(3,4)), dims=(3,4))
-        ifelse.(snow_present, num ./ coverage_norm, ft(NaN))
+        num = dropdims(sum(ifelse.(isnan.(snow_surf_temp_gpu), ft(0.0), snow_surf_temp_gpu) .* _w4_active_snow, dims=(3,4)), dims=(3,4))
+        ifelse.(snow_present, num ./ cv_snow_sum, ft(NaN))
     end
 
     # -----------------------------------------------------------------------

@@ -192,20 +192,34 @@ end
 
     E_p_wet = pot_evap * (den_rc / max(den_w, ft(1e-6)))
 
-    # --- 4. VIC Equations ---
+    # --- 4. VIC Evaporative Scaling (Branchless) ---
+    # The original VIC model uses conditional logic to evaluate if the canopy is fully wet or dry.
+    # We replace that with a continuous mathematical formulation:
+    # 
+    #   Wratio: Evaluates the current canopy water storage as a fraction of its maximum capacity.
+    #           It is safely clamped between 0.0 (completely dry) and 1.0 (fully wet).
+    #
+    #   ra_ratio: Computes the aerodynamic resistance modifier.
+    # 
+    #   canopy_evap_star: Calculates the potential canopy evaporation scaled non-linearly 
+    #                     (to the 2/3rds power) based on how much water is currently present.
     Wratio = clamp(ws / max(max_ws, ft(1e-6)), ft(0.0), ft(1.0))
     ra_ratio = ra / max(ra + rarc, ft(1e-6))
     
     canopy_evap_star = (Wratio ^ (ft(2.0) / ft(3.0))) * E_p_wet * ra_ratio
 
     # --- 5. Fraction Calculation (f_n) ---
+    # Determines what fraction of the timestep the canopy will be evaporating.
+    # If the available water (storage + new precipitation) is less than the theoretical 
+    # evaporation amount (canopy_evap_star), the canopy will dry out partway through the timestep (f_n_val < 1.0).
     f_n_val = clamp((ws + prec) / max(canopy_evap_star, ft(1e-6)), ft(0.0), ft(1.0))
     f_n_val = ifelse(canopy_evap_star <= ft(1e-6), ft(1.0), f_n_val)
 
     # --- 6. Final Evaporation ---
+    # The physical evaporation that occurs during the wet fraction of the timestep.
     evap = f_n_val * canopy_evap_star
     
-    # Sanitize
+    # Sanitize outputs to prevent NaN propagation
     evap = ifelse(isnan(evap) | (abs(evap) > ft(1e15)), ft(0.0), evap)
 
     return evap, f_n_val
@@ -354,37 +368,42 @@ end
                 total_weight = weight1 + weight2 + EPS
 
                 # Option A: Standard Weighted Apportionment
-                # Used when moisture is severely limited (share_moist is false)
+                # Used when moisture is severely limited (share_moist is false).
+                # Demand is strictly partitioned by the available moisture weight.
                 e1_weighted_demand = trans_val * (weight1 / total_weight)
                 e2_weighted_demand = trans_val * (weight2 / total_weight)
 
                 # Option B: Shared Moisture Apportionment (Roots redistribute uptake)
-                # Used when at least one layer has sufficient moisture
+                # Used when at least one layer has sufficient moisture (above critical point).
                 
                 # 1. Base uptake demand under shared moisture:
-                # If layer is "wet", it demands full ET for its root fraction.
-                # If "dry", it takes a stress-reduced amount.
+                # If a layer is fully "wet", it fulfills its entire root fraction demand.
+                # If a layer is "dry", it only fulfills a stress-reduced fraction.
                 e1_shared_base = ifelse(moist1_wet, trans_val * f1, trans_val * g1 * f1)
                 e2_shared_base = ifelse(moist2_wet, trans_val * f2, trans_val * g2 * f2)
                 
                 # 2. Calculate "Spare" ET demand:
-                # The unmet demand from dry layers (which roots will try to pull from wet layers)
+                # This is the unmet demand from dry layers. Because roots are connected,
+                # the plant will try to pull this missing water from the wet layers instead.
                 spare_demand_from_1 = ifelse(moist1_wet, ZERO, trans_val * f1 * (ONE - g1))
                 spare_demand_from_2 = ifelse(moist2_wet, ZERO, trans_val * f2 * (ONE - g2))
                 total_spare_demand  = spare_demand_from_1 + spare_demand_from_2
                 
                 # 3. Calculate wet-layer capacity to receive the spare demand
+                # We identify which layers have surplus moisture capacity to fulfill the spare demand.
                 wet_root_frac_sum    = ifelse(moist1_wet, f1, ZERO) + ifelse(moist2_wet, f2, ZERO)
                 can_distribute_spare = (total_spare_demand > ZERO) & (wet_root_frac_sum > ZERO)
                 
                 # 4. Add the redistributed spare demand back into the wet layers proportionately
+                # The spare demand is sliced up according to the root mass present in the wet layers.
                 spare_share_e1 = ifelse(moist1_wet & can_distribute_spare, total_spare_demand * (f1 / max(wet_root_frac_sum, EPS)), ZERO)
                 spare_share_e2 = ifelse(moist2_wet & can_distribute_spare, total_spare_demand * (f2 / max(wet_root_frac_sum, EPS)), ZERO)
                 
                 e1_shared_total = e1_shared_base + spare_share_e1
                 e2_shared_total = e2_shared_base + spare_share_e2
                 
-                # Finally, select between Option A and Option B using our pre-calculated mask
+                # Finally, select between Option A and Option B seamlessly using a branchless ternary.
+                # This eliminates massive GPU thread divergence caused by unpredictable if/else block stalling.
                 e1_val = ifelse(share_moist, e1_shared_total, e1_weighted_demand)
                 e2_val = ifelse(share_moist, e2_shared_total, e2_weighted_demand)
 
@@ -470,9 +489,11 @@ function calculate_soil_evaporation!(
         max_infil = (ft(1.0) + b_i) * sm_max_top
         
         # 2. Moisture Ratio
+        # This fraction determines how full the theoretical soil column is.
         ratio = clamp(ft(1.0) - sm_top / sm_max_top, ft(0.0), ft(1.0))
         
-        # 3. Handle b_i == -1.0 case — branchless
+        # 3. Handle b_i == -1.0 case without explicit branching
+        # In VIC, if the shape parameter b_i is exactly -1.0, it denotes a linear storage limit.
         ratio_adj = b_i == -ft(1.0) ? ratio : ratio ^ (ft(1.0) / (b_i + ft(1.0)))
         tmp = b_i == -ft(1.0) ? max_infil : max_infil * (ft(1.0) - ratio_adj)
 
@@ -480,13 +501,14 @@ function calculate_soil_evaporation!(
         is_saturated = tmp >= max_infil
         
         # 5. ARNO Evaporation Logic (matching VIC's soil evaporation beta)
+        # We replace the recursive if/else thresholds with branchless ternary expressions to compute the beta scaler.
         ratio_unsat = clamp(ft(1.0) - (tmp / max_infil), ft(0.0), ft(1.0))
         
         ratio_powered = ratio_unsat > ft(0.0) ? ratio_unsat ^ b_i : ft(0.0)
         as_val = ft(1.0) - ratio_powered
         ratio_beta = ratio_powered > ft(0.0) ? ratio_powered ^ (ft(1.0) / b_i) : ft(0.0)
         
-        # 6. Series Expansion
+        # 6. Series Expansion for exact curve integration
         dummy = ft(1.0)
         ratio_pow_term = ratio_beta
         for k in 1:40
@@ -496,7 +518,9 @@ function calculate_soil_evaporation!(
 
         beta_asp = as_val + (ft(1.0) - as_val) * (ft(1.0) - ratio_beta) * dummy
         
-        # 7. Final Calculation
+        # 7. Final Calculation 
+        # Apply the mathematically selected multiplier (beta_asp) directly 
+        # unless full saturation naturally demands maximum potential evaporation.
         esoil = is_saturated ? pe : pe * beta_asp
         esoil = esoil * (ft(1.0) - cov) * cv
         

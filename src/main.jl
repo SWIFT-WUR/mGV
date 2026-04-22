@@ -91,6 +91,8 @@ println("Allocating State Arrays on: $backend_name")
     # VIC's collect_wb_terms accumulates: OUT_SWE += snow.swq * Cv[veg] * AreaFract[band]
     const dim_snow          = (dim_grid[1], dim_grid[2], nbands, dim_veg)
     const swe_gpu               = alloc(dim_snow...)
+    const surf_water_gpu        = alloc(dim_snow...)
+    const pack_water_gpu        = alloc(dim_snow...)
     const snow_depth_gpu        = alloc(dim_snow...)
     const snow_albedo_gpu       = alloc(dim_snow...)
     const snow_surf_temp_gpu    = alloc(dim_snow...)
@@ -160,7 +162,7 @@ println("Allocating State Arrays on: $backend_name")
         residual_moisture, ice_frac, bulk_dens_min, soil_dens_min,
         porosity, Lsum, interlayer_drainage, transpiration_layers,
         g_sw_veg_buf,
-        swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
+        swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
         snow_coverage_gpu, snow_melt_gpu,
         cold_content_gpu, pack_cc_gpu, snow_distrib_slope_gpu,
         store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
@@ -397,7 +399,7 @@ function process_year(year)
 
                     # 4D snow kernel: partitions throughfall[b,v] per tile internally
                     calculate_snow_dynamics!(
-                        swe_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
+                        swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
                         snow_coverage_gpu, snow_melt_gpu,
                         last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
                         store_snow_gpu, snow_distrib_slope_gpu,
@@ -414,26 +416,11 @@ function process_year(year)
                     # by the canopy step), so rain = throughfall * rain_frac
                     ft = FloatType
 
-                    # rain_frac per band (3D): same formula as inside kernel
-                    _rf_3d = clamp.(
-                        (tair_band .- ft(-0.5)) ./ ft(1.0),
-                        ft(0.0), ft(1.0)
-                    )
-
-                    # rain 4D: throughfall[b,v] * rain_frac[b]  (broadcast last dim)
-                    _rain_4d = throughfall .* reshape(_rf_3d, size(_rf_3d, 1), size(_rf_3d, 2), size(_rf_3d, 3), 1)
-
-                    # Cv-weighted aggregation over veg dim (dim=4)
-                    # cv_gpu is (nx,ny,1,nveg), broadcasts over band dim automatically
-                    rain_band_gpu .= dropdims(
-                        sum(ifelse.(isnan.(_rain_4d .* cv_gpu), ft(0.0), _rain_4d .* cv_gpu), dims=4),
-                        dims=4)
+                    # Total per-band soil influx: snow_melt_gpu contains ALL outflow (pack drainage + bare rain)
                     melt_band_gpu .= dropdims(
                         sum(ifelse.(isnan.(snow_melt_gpu .* cv_gpu), ft(0.0), snow_melt_gpu .* cv_gpu), dims=4),
                         dims=4)
-
-                    # Total per-band soil influx: rain + melt
-                    ppt_gpu .= rain_band_gpu .+ melt_band_gpu
+                    ppt_gpu .= melt_band_gpu
 
                     # Broadcast back to 4D throughfall for downstream soil/runoff modules
                     # (they expect throughfall[b,v] = same water input for all veg tiles)
@@ -589,7 +576,7 @@ function process_year(year)
                     soil_evaporation, soil_moisture,
                     potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
                     coverage_gpu, cv_gpu, fillvalue_threshold,
-                    swe_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
+                    swe_gpu, surf_water_gpu, pack_water_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
                     AreaFract_gpu
                 )
             end
