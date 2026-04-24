@@ -107,14 +107,19 @@ const SNW_DENSITY            = FloatType(250.0)    # kg/m³ — typical snow den
     ts_no_melt = min(ts, zero(T_Type))
     is_melting = ts > zero(T_Type)
 
-    # Sublimation mass: computed at NIGHTTIME proxy temperature to prevent the
-    # daytime-biased daily mean ts (from T-dep LE NR) from driving excessive sublimation.
-    # VIC computes sublimation at each 3-hr step; nocturnal condensation largely offsets daytime
-    # sublimation. Using Ta-10°C approximates the minimum nighttime surface temperature.
-    ts_for_sub    = min(ts_no_melt, Ta - T_Type(10.0))  # Nighttime proxy: ~10°C below Ta
-    es_ts_sub     = T_Type(611.0) * exp(T_Type(21.87) * ts_for_sub / max(T_Type(265.5) + ts_for_sub, T_Type(1.0)))
-    sub_flux_Wm2  = max(Ls_Ra * (es_ts_sub - EactAir_raw), zero(T_Type))
+    # Sublimation mass: computed from the energy balance residual at ts_no_melt.
+    # VIC (latent_heat_from_snow.c): VaporMassFlux = ErrorE / Ls where ErrorE is the LE
+    # component of the energy balance. Computing sub from VPD × Ls_Ra independently
+    # can give unrealistically large values (14+ mm/day) when es(ts) ≈ ea at high elevation.
+    # Correct approach: LE = rhs_base - LW_out(ts) - ha*ts (total EB residual at ts_no_melt).
+    # When NR has converged, LE is exactly what the energy balance requires.
+    # Sub occurs when LE > 0; condensation when LE < 0 (net moisture flux onto pack).
+    Ts0_no_melt_K   = ts_no_melt + T_Type(273.15)
+    lw_out_no_melt  = sig_eps * (Ts0_no_melt_K ^ T_Type(4.0))
+    le_eb_no_melt   = rhs_base - lw_out_no_melt - ha * ts_no_melt  # LE from energy balance
+    sub_flux_Wm2    = max(le_eb_no_melt, zero(T_Type))  # positive LE = sublimation
     sub_mass_mm_cold = sub_flux_Wm2 / L_sub * T_Type(86400.0) * T_Type(1000.0)
+
 
 
 
@@ -202,7 +207,7 @@ end
     ln_z_z0 = log((T_Type(2.0) + z0_snow) / z0_snow)  # ln(4001) ≈ 8.294
     u_2m    = max(wind, T_Type(0.1)) * T_Type(0.8375)  # scale 10m → 2m
     ra = (ln_z_z0 * ln_z_z0) / (T_Type(0.16) * u_2m)  # s/m, neutral stability
-    ra = clamp(ra, T_Type(50.0), T_Type(300.0))        # clip: 300 s/m min wind
+    ra = clamp(ra, T_Type(50.0), T_Type(300.0))        # clip: 300 s/m neutral stability
 
     ann_prec = annual_prec_2d[i, j]
     max_distrib_slope = ifelse(isnan(ann_prec) | (ann_prec <= zero(T_Type)), T_Type(0.4), ann_prec / T_Type(500.0))
@@ -210,15 +215,24 @@ end
     # 1. Add snowfall and rain to SWE and update cold content (Branchless)
     old_swq_pre = current_swe
     current_swe += p_snow + p_rain_snowpack
-    sf_cc = ifelse((p_snow > zero(T_Type)) & (t_avg < zero(T_Type)), SNW_VCPICE_WQ * p_snow * t_avg, zero(T_Type))  # p_snow in mm, VCPICE in J/(kg·K) per mm
+    # VIC: CC from snowfall = VCPICE * snowfall * Tair (at each 3-hourly sub-step)
+    # mGV uses daily-mean Ta, which is often near 0°C for autumn/spring events.
+    # VIC's nighttime steps (Ta 5-8°C below daily mean) give fresh snow significant CC.
+    # Correction: use min(t_avg - SNW_DTR_HALF, 0) as effective snowfall temp so autumn
+    # snow arriving at Ta=+2°C still gets CC from the nighttime cold (effective T=-2°C).
+    # SNW_DTR_HALF = 4°C = assumed half-amplitude of the diurnal temperature range.
+    SNW_DTR_HALF = T_Type(4.0)
+    sf_temp = min(t_avg - SNW_DTR_HALF, zero(T_Type))  # nighttime-adjusted temp for CC
+    sf_cc = ifelse(p_snow > zero(T_Type), SNW_VCPICE_WQ * p_snow * sf_temp, zero(T_Type))
     current_cc = min(current_cc + sf_cc, zero(T_Type))
 
     rain_heat = ifelse((p_rain > zero(T_Type)) & (current_swe > zero(T_Type)) & (t_avg > zero(T_Type)), T_Type(4186.0) * (p_rain / T_Type(1000.0)) * t_avg, zero(T_Type))
     current_cc = min(current_cc + rain_heat, zero(T_Type))
 
     # 2. Albedo (Branchless)
-    is_trace = p_snow > SNW_NEW_SNOW_THRESH_MM  # VIC: resets albedo only for 30mm+ new snow
-    is_new = is_trace & (current_cc < zero(T_Type))
+    is_trace = p_snow > SNW_NEW_SNOW_THRESH_MM  # VIC: resets albedo for snowfall > TRACESNOW = 0.03mm
+    # VIC snow_utility.c: reset albedo whenever snowfall > TRACESNOW (no CC condition!)
+    is_new = is_trace   # albedo reset on any significant new snowfall
     has_swe = current_swe > zero(T_Type)
 
     lsnow = ifelse(is_new, Int32(0), ifelse(has_swe, lsnow + Int32(1), Int32(0)))
@@ -236,11 +250,16 @@ end
                             (day_of_year > Int32(60)) & (day_of_year < Int32(273)),
                             (day_of_year < Int32(60)) | (day_of_year > Int32(273)))
     # VIC: melt_flag triggers when CC >= 0 in melt season.
-    # flag_cond1: direct CC≥ 0 trigger (same as VIC)
+    # Add VIC-faithful snowfall reset (solve_snow.c:384-386):
+    #   if (snowfall > TRACESNOW && MELTING) MELTING = FALSE
+    # Reset melt_flag when significant new snowfall falls on a melting pack.
     flag_cond1 = (current_cc >= zero(T_Type)) & in_melt_season
-    melt_flag = ifelse(has_swe, ifelse(flag_cond1, Int32(1), melt_flag), Int32(0))
-
-
+    # Snowfall reset: new snowfall > trace AND currently in melt mode → reset to ACCUM
+    snow_reset = is_trace & (melt_flag == Int32(1))
+    # Apply: set flag=1 if flag_cond1; reset to 0 if snowfall; otherwise retain
+    melt_flag = ifelse(has_swe,
+        ifelse(snow_reset, Int32(0), ifelse(flag_cond1, Int32(1), melt_flag)),
+        Int32(0))
 
 
     # 4. Surface temp / melt (Branchless)
@@ -259,6 +278,18 @@ end
     t_s = ifelse(has_swe, ts_solved, T_Type(NaN))
     
     melt_J = ifelse(has_swe & (melt_energy_at_zero > zero(T_Type)), melt_energy_at_zero * T_Type(86400.0), zero(T_Type))
+    
+    # Diurnal melt fraction (seasonal): VIC's 3-hourly steps show melt only during
+    # daytime hours at marginal Ta. Outside the main melt season (DOY 60-250), thin
+    # autumn/spring snow is at risk of being over-melted by daily-mean SW.
+    # We apply a daytime fraction correction ONLY in the off-season (DOY <60 or DOY>250).
+    # During peak melt season (DOY 60-250), full melt rate applies.
+    # f_day at Ta=0°C → 0.71 (29% reduction); at Ta>+DTR_half → 1.0; at Ta<-DTR_half → 0.
+    SNW_DTR_HALF_MELT   = T_Type(3.0)
+    in_off_season = (day_of_year < Int32(60)) | (day_of_year > Int32(250))
+    f_day = sqrt(clamp((t_avg + SNW_DTR_HALF_MELT) / (T_Type(2.0) * SNW_DTR_HALF_MELT), zero(T_Type), one(T_Type)))
+    f_melt = ifelse(in_off_season, f_day, one(T_Type))
+    melt_J = melt_J * f_melt
     
     # Pack CC satisfying
     energy_needed_sfc = max(-current_cc, zero(T_Type))
@@ -345,15 +376,36 @@ end
     pcc_nomelt_branch = current_pcc
 
     is_melting_step = melt > zero(T_Type)
-    current_cc = ifelse(is_melting_step, cc_melt_branch, ifelse(t_s < zero(T_Type), cc_nomelt_branch, current_cc))
+    
+    # Cold content after a melt step:
+    # VIC (3-hourly): after daytime melt, nighttime cooling restores negative CC.
+    # mGV (daily): using prior_cc * 0.01 ≈ 0 causes immediate melt_flag=1 on next step.
+    # Fix: use nighttime-proxy temperature to set CC post-melt (prevents spurious THAW mode).
+    # Deep packs (swe_surf > 100mm) have internally-generated CC from compression — use 0.01×.
+    # Thin packs (< 100mm) need nighttime CC to prevent runaway melt from albedo feedback.
+    SNW_DEEP_SWE_MM   = T_Type(100.0)
+    SNW_DTR_HALF_CC   = T_Type(4.0)
+    sf_temp_night     = min(t_avg - SNW_DTR_HALF_CC, zero(T_Type))  # proxy nighttime T
+    cc_melt_night     = min(SNW_VCPICE_WQ * (swe_surf_m * T_Type(1000.0)) * sf_temp_night, zero(T_Type))
+    # Blend: deep pack uses cc_melt_branch (near-zero); thin pack uses nighttime CC
+    f_deep = clamp(current_swe / SNW_DEEP_SWE_MM, zero(T_Type), one(T_Type))
+    cc_melt_eff = f_deep * cc_melt_branch + (one(T_Type) - f_deep) * cc_melt_night
+    
+    current_cc = ifelse(is_melting_step, cc_melt_eff, ifelse(t_s < zero(T_Type), cc_nomelt_branch, current_cc))
     current_pcc = ifelse(is_melting_step, pcc_melt_branch, ifelse(t_s < zero(T_Type), pcc_nomelt_branch, current_pcc))
 
-    # Update melt_flag post-NR: VIC-exact logic
-    # Set MELTING=true only when actual melt occurred AND in melt season.
-    # VIC solve_snow.c:376-386: MELTING set from coldcontent>=0 (pre-NR);
-    # also carried forward from is_melting_step.
+    # Update melt_flag post-NR: based on FINAL cold content (post energy-balance update).
+    # VIC (3-hourly): recalculates MELTING from coldcontent >= 0 at EACH sub-step.
+    # In the off-season (DOY < 60 or DOY > 250): if CC is restored negative by nighttime fix,
+    # reset melt_flag → 0 (ACCUM mode). This prevents THAW-albedo decay from small autumn
+    # melt events at marginal temperatures (matching VIC's nighttime CC behavior).
+    # In the main melt season (DOY 60-250): use original is_melting_step logic to allow
+    # genuine spring melt season THAW-mode progression.
+    cc_reset_flag = in_off_season & (current_cc < zero(T_Type))
     melt_flag = ifelse(has_swe,
-        ifelse(is_melting_step & in_melt_season, Int32(1), melt_flag),
+        ifelse(cc_reset_flag,
+            Int32(0),  # Off-season + CC negative → ACCUM mode
+            ifelse(is_melting_step & in_melt_season & !snow_reset, Int32(1), melt_flag)),
         Int32(0))
 
 
@@ -376,59 +428,10 @@ end
     # 5. Snow Depth
     current_depth_m = (current_swe / T_Type(1000.0)) * (SNW_RHOFW / SNW_DENSITY)
 
-    # 6. Branchless Coverage Update
-    is_p_snow = p_snow > zero(T_Type)
-    is_melt = (melt > zero(T_Type)) & (!is_p_snow)
-    
-    # Path A:
-    cov_snw = one(T_Type)
-    st_snow_cond1 = old_coverage < one(T_Type)
-    new_st_snow_A = ifelse(st_snow == Int32(0), ifelse(st_snow_cond1, Int32(1), st_snow), st_snow)
-    new_st_swq_A = ifelse(st_snow == Int32(0), ifelse(st_snow_cond1, current_swe - old_swq_pre, st_swq), st_swq)
-    new_st_cov_A = ifelse(st_snow == Int32(0), ifelse(st_snow_cond1, old_coverage, st_cov), st_cov)
-
-    st_snow_cond2 = (st_snow != Int32(0)) & (st_swq == zero(T_Type))
-    new_st_cov_A2 = ifelse(st_snow_cond2, ifelse(old_coverage < one(T_Type), old_coverage, one(T_Type)), new_st_cov_A)
-    
-    st_swq_A2_add = current_swe - old_swq_pre
-    new_st_swq_A2 = ifelse(st_snow != Int32(0), st_swq + st_swq_A2_add, new_st_swq_A)
-
-    st_snow_cond3 = (current_depth_m >= max_distrib_slope / T_Type(2.0)) & (st_snow != Int32(0))
-    new_st_snow_A3 = ifelse(st_snow_cond3, Int32(0), new_st_snow_A)
-    new_st_swq_A3 = ifelse(st_snow_cond3, zero(T_Type), new_st_swq_A2)
-    new_dslope_A3 = ifelse(st_snow_cond3, zero(T_Type), dslope)
-    new_st_cov_A3 = ifelse(st_snow_cond3, one(T_Type), new_st_cov_A2)
-
-    # Path B:
-    st_swq_cond1 = (st_swq > zero(T_Type)) & (current_swe < old_swq_pre)
-    st_swq_B1 = ifelse(st_swq_cond1, st_swq + (current_swe - old_swq_pre), st_swq)
-    st_swq_cond2 = st_swq_B1 <= zero(T_Type)
-    new_st_swq_B  = ifelse(st_swq_cond1 & st_swq_cond2, zero(T_Type), st_swq_B1)
-    new_old_cov_B = ifelse(st_swq_cond1 & st_swq_cond2, st_cov, old_coverage)
-    new_st_cov_B  = ifelse(st_swq_cond1 & st_swq_cond2, one(T_Type), st_cov)
-
-    dslope_cond1 = (new_st_swq_B == zero(T_Type)) & (dslope == zero(T_Type))
-    cap_depth = min(max_distrib_slope, T_Type(2.0) * old_depth_m)
-    new_dslope_B = ifelse(dslope_cond1, -cap_depth, dslope)
-    mx_depth_B   = ifelse(dslope_cond1, cap_depth, mx_depth)
-    new_st_snow_B = ifelse(dslope_cond1, Int32(1), st_snow)
-
-    old_mx_depth_B = mx_depth_B
-    new_mx_depth_B2 = ifelse(new_st_swq_B == zero(T_Type), T_Type(2.0) * current_depth_m, mx_depth_B)
-
-    cov_cond_B = (new_mx_depth_B2 < old_mx_depth_B) | (old_mx_depth_B == zero(T_Type))
-    raw_cov = ifelse(new_dslope_B != zero(T_Type), -new_mx_depth_B2 / new_dslope_B, one(T_Type))
-    cov_snw_B = ifelse((new_st_swq_B == zero(T_Type)) & cov_cond_B, clamp(raw_cov, zero(T_Type), one(T_Type)), new_old_cov_B)
-
-    # Combine A and B
-    new_coverage = ifelse(is_p_snow, cov_snw, ifelse(is_melt, cov_snw_B, old_coverage))
-    st_snow = ifelse(is_p_snow, new_st_snow_A3, ifelse(is_melt, new_st_snow_B, st_snow))
-    st_swq  = ifelse(is_p_snow, new_st_swq_A3, ifelse(is_melt, new_st_swq_B, st_swq))
-    st_cov  = ifelse(is_p_snow, new_st_cov_A3, ifelse(is_melt, new_st_cov_B, st_cov))
-    dslope  = ifelse(is_p_snow, new_dslope_A3, ifelse(is_melt, new_dslope_B, dslope))
-    mx_depth = ifelse(is_p_snow, mx_depth, ifelse(is_melt, new_mx_depth_B2, mx_depth))
-    
-    new_coverage = ifelse(current_swe <= zero(T_Type), zero(T_Type), new_coverage)
+    # 6. Coverage: VIC binary model (options.SPATIAL_SNOW = false)
+    # VIC solve_snow.c:402-408: if swq > 0 → coverage = 1; else coverage = 0
+    # No sub-grid distribution needed; entire cell is covered when snow is present.
+    new_coverage = ifelse(current_swe > SNW_TRACESNOW_MM, one(T_Type), zero(T_Type))
 
     # 7. Write outputs (Branchless Masked)
     swe[i, j, b, v]                  = ifelse(active, current_swe, zero(T_Type))

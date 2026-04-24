@@ -404,7 +404,7 @@ function process_year(year)
                         last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
                         store_snow_gpu, snow_distrib_slope_gpu,
                         store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
-                        throughfall, tair_band, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu,
+                        throughfall, tair_band, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
                         AreaFract_gpu, cv_gpu, annual_prec_gpu,
                         day, Float64(lat_mean_val)
                     )
