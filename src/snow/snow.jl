@@ -15,7 +15,9 @@ const SNW_ALB_ACCUM_B        = FloatType(0.58)    # accumulation-season decay B
 const SNW_ALB_THAW_A         = FloatType(0.82)    # melt-season decay A
 const SNW_ALB_THAW_B         = FloatType(0.46)    # melt-season decay B
 const SNW_TRACESNOW_MM       = FloatType(0.001)   # mm — minimum SWE for active snowpack pruning
-const SNW_NEW_SNOW_THRESH_MM = FloatType(0.03)    # mm — new snowfall threshold for albedo reset (VIC: SNOW_TRACESNOW = 0.03 mm)
+# VIC: albedo resets to new_snow_alb on ANY snowfall (store_snowfall > 0 in solve_snow.c).
+# Use TRACESNOW threshold to catch tiny snowfall events that sub-daily VIC accumulates.
+const SNW_NEW_SNOW_THRESH_MM = FloatType(0.001)   # mm — match VIC SNOW_TRACESNOW (not 0.03mm)
 const SNW_LIQUID_WATER_CAP   = FloatType(0.035)   # fraction liquid water capacity
 const SNW_MAX_SURFACE_SWE_MM = FloatType(125.0)   # mm — surface layer limit
 const SNW_VCPICE_WQ          = FloatType(2117.27)  # J/(kg·K) per water-equiv: VIC CONST_CPICE × CONST_RHOFW/1000
@@ -229,34 +231,52 @@ end
     rain_heat = ifelse((p_rain > zero(T_Type)) & (current_swe > zero(T_Type)) & (t_avg > zero(T_Type)), T_Type(4186.0) * (p_rain / T_Type(1000.0)) * t_avg, zero(T_Type))
     current_cc = min(current_cc + rain_heat, zero(T_Type))
 
-    # 2. Albedo (Branchless)
-    is_trace = p_snow > SNW_NEW_SNOW_THRESH_MM  # VIC: resets albedo for snowfall > TRACESNOW = 0.03mm
-    # VIC snow_utility.c: reset albedo whenever snowfall > TRACESNOW (no CC condition!)
-    is_new = is_trace   # albedo reset on any significant new snowfall
-    has_swe = current_swe > zero(T_Type)
+    # 2. Albedo — VIC-faithful (snow_utility.c lines 264-283, solve_snow.c lines 311-327)
+    is_trace  = p_snow > SNW_NEW_SNOW_THRESH_MM   # any snowfall > TRACESNOW
+    has_swe   = current_swe > zero(T_Type)
 
-    lsnow = ifelse(is_new, Int32(0), ifelse(has_swe, lsnow + Int32(1), Int32(0)))
-    ls_f = T_Type(lsnow)
-    
+    # lsnow counter: reset on any snowfall (VIC solve_snow.c line 324: last_snow=0 on snowfall)
+    lsnow = ifelse(is_trace, Int32(0), ifelse(has_swe, lsnow + Int32(1), Int32(0)))
+    ls_f  = T_Type(lsnow)
+
     alb_accum = SNW_NEW_SNOW_ALB * (SNW_ALB_ACCUM_A ^ (ls_f ^ SNW_ALB_ACCUM_B))
-    alb_thaw = SNW_NEW_SNOW_ALB * (SNW_ALB_THAW_A  ^ (ls_f ^ SNW_ALB_THAW_B))
-    is_accum = (current_cc < zero(T_Type)) & (melt_flag == Int32(0))
+    alb_thaw  = SNW_NEW_SNOW_ALB * (SNW_ALB_THAW_A  ^ (ls_f ^ SNW_ALB_THAW_B))
+    is_accum  = (current_cc < zero(T_Type)) & (melt_flag == Int32(0))
 
     alb_age = ifelse(is_accum, alb_accum, alb_thaw)
+
+    # VIC snow_utility.c line 265: hard-reset to 0.85 ONLY when new_snow > TRACESNOW AND CC < 0.
+    # If CC >= 0 (warm/melting pack) with fresh snowfall: continue aging from lsnow=0 (no 0.85 reset).
+    # This prevents spurious albedo spikes during summer melt when daily-mean temperature
+    # partitions rain as snow but VIC's sub-daily steps classify it mostly as rain.
+    pack_is_cold = current_cc < zero(T_Type)
+    is_new = is_trace & pack_is_cold   # hard reset only for cold-pack snowfall
     alb = ifelse(is_new, SNW_NEW_SNOW_ALB, ifelse(has_swe, alb_age, T_Type(NaN)))
 
-    # 3. melting flag
-    in_melt_season = ifelse(lat_positive == Int32(1), 
+
+    # 3. Melting flag
+    in_melt_season = ifelse(lat_positive == Int32(1),
                             (day_of_year > Int32(60)) & (day_of_year < Int32(273)),
                             (day_of_year < Int32(60)) | (day_of_year > Int32(273)))
-    # VIC: melt_flag triggers when CC >= 0 in melt season.
-    # Add VIC-faithful snowfall reset (solve_snow.c:384-386):
-    #   if (snowfall > TRACESNOW && MELTING) MELTING = FALSE
-    # Reset melt_flag when significant new snowfall falls on a melting pack.
-    flag_cond1 = (current_cc >= zero(T_Type)) & in_melt_season
-    # Snowfall reset: new snowfall > trace AND currently in melt mode → reset to ACCUM
-    snow_reset = is_trace & (melt_flag == Int32(1))
-    # Apply: set flag=1 if flag_cond1; reset to 0 if snowfall; otherwise retain
+    # VIC: MELTING flag triggers when CC >= 0 AND in melt season (solve_snow.c:376-386).
+    # VIC-faithful snowfall reset: snowfall > TRACESNOW while MELTING → MELTING=false.
+    # However, VIC runs 3-hourly: a tiny snowfall (0.5mm) briefly resets MELTING=false,
+    # then IMMEDIATELY re-triggers THAW at the next sub-hourly step (daytime melt).
+    # In mGV's daily timestepping, a 0.5mm snowfall locks ACCUM mode for the FULL day,
+    # causing albedo feedback divergence. Fix: use higher threshold for snow_reset (5mm)
+    # so only substantial snowfall resets melt_flag in the daily model.
+    # The lsnow counter (albedo aging) still resets on all snowfall > 0.001mm.
+    SNW_MELT_RESET_THRESH_MM = T_Type(5.0)  # kept for reference
+    CC_MELT_DEADBAND = zero(T_Type)  # No deadband: CC >= 0 triggers THAW (VIC-faithful)
+    flag_cond1 = (current_cc >= CC_MELT_DEADBAND) & in_melt_season
+    # Snow_reset: THAW → ACCUM only if snowfall AND pack truly cold (CC < 0).
+    # VIC 3-hourly: a tiny snowfall briefly resets MELTING=false, but daytime melt immediately
+    # re-triggers it. In mGV daily, we gate by CC: CC >= 0 (warm pack) means snowfall won't
+    # keep pack cold for a full day → don't reset melt_flag.
+    # CC < 0 (cold pack): snowfall can genuinely cool it further → allow ACCUM reset.
+    pack_is_cold_for_reset = current_cc < zero(T_Type)
+    snow_reset = is_trace & (melt_flag == Int32(1)) & pack_is_cold_for_reset
+    # Apply: set flag=1 if flag_cond1; reset to 0 if genuine cold-pack snowfall; otherwise retain
     melt_flag = ifelse(has_swe,
         ifelse(snow_reset, Int32(0), ifelse(flag_cond1, Int32(1), melt_flag)),
         Int32(0))
@@ -378,18 +398,24 @@ end
     is_melting_step = melt > zero(T_Type)
     
     # Cold content after a melt step:
-    # VIC (3-hourly): after daytime melt, nighttime cooling restores negative CC.
-    # mGV (daily): using prior_cc * 0.01 ≈ 0 causes immediate melt_flag=1 on next step.
-    # Fix: use nighttime-proxy temperature to set CC post-melt (prevents spurious THAW mode).
-    # Deep packs (swe_surf > 100mm) have internally-generated CC from compression — use 0.01×.
-    # Thin packs (< 100mm) need nighttime CC to prevent runaway melt from albedo feedback.
+    # VIC: CC gets satisfied by melt energy in lines 290-298 (current_cc → 0 when fully melting).
+    # mGV must NOT override this with cc_melt_branch (which would reset CC back to tiny negative).
+    # Correct approach:
+    # - Thick packs (f_deep ≈ 1): use CC from energy-balance satisfaction (lines 290-298).
+    #   When CC is fully satisfied → CC = 0 → melt_flag can trigger next step.
+    # - Thin packs (f_deep < 1, SWE < 100mm): apply nighttime CC correction to prevent
+    #   runaway autumn/off-season albedo feedback from tiny melt events at marginal temps.
     SNW_DEEP_SWE_MM   = T_Type(100.0)
     SNW_DTR_HALF_CC   = T_Type(4.0)
     sf_temp_night     = min(t_avg - SNW_DTR_HALF_CC, zero(T_Type))  # proxy nighttime T
     cc_melt_night     = min(SNW_VCPICE_WQ * (swe_surf_m * T_Type(1000.0)) * sf_temp_night, zero(T_Type))
-    # Blend: deep pack uses cc_melt_branch (near-zero); thin pack uses nighttime CC
+    # f_deep blends between nighttime-fix (thin) and physical-CC (thick)
     f_deep = clamp(current_swe / SNW_DEEP_SWE_MM, zero(T_Type), one(T_Type))
-    cc_melt_eff = f_deep * cc_melt_branch + (one(T_Type) - f_deep) * cc_melt_night
+    # For thick packs: preserve energy-balance CC (current_cc from lines 290-298).
+    # For thin packs: use nighttime-proxy CC to prevent spurious off-season THAW.
+    # The blend: at f_deep=1 → use current_cc (physical); at f_deep=0 → nighttime fix.
+    cc_melt_physical = current_cc  # already updated by energy balance (lines 290-298)
+    cc_melt_eff = f_deep * cc_melt_physical + (one(T_Type) - f_deep) * cc_melt_night
     
     current_cc = ifelse(is_melting_step, cc_melt_eff, ifelse(t_s < zero(T_Type), cc_nomelt_branch, current_cc))
     current_pcc = ifelse(is_melting_step, pcc_melt_branch, ifelse(t_s < zero(T_Type), pcc_nomelt_branch, current_pcc))
@@ -399,8 +425,8 @@ end
     # In the off-season (DOY < 60 or DOY > 250): if CC is restored negative by nighttime fix,
     # reset melt_flag → 0 (ACCUM mode). This prevents THAW-albedo decay from small autumn
     # melt events at marginal temperatures (matching VIC's nighttime CC behavior).
-    # In the main melt season (DOY 60-250): use original is_melting_step logic to allow
-    # genuine spring melt season THAW-mode progression.
+    # In the main melt season (DOY 60-250): flag_cond1 triggers THAW when CC >= 0 (VIC-faithful).
+    # CC reaches 0 naturally when thick-pack energy balance fully satisfies cold content.
     cc_reset_flag = in_off_season & (current_cc < zero(T_Type))
     melt_flag = ifelse(has_swe,
         ifelse(cc_reset_flag,
