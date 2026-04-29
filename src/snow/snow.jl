@@ -299,17 +299,10 @@ end
     
     melt_J = ifelse(has_swe & (melt_energy_at_zero > zero(T_Type)), melt_energy_at_zero * T_Type(86400.0), zero(T_Type))
     
-    # Diurnal melt fraction (seasonal): VIC's 3-hourly steps show melt only during
-    # daytime hours at marginal Ta. Outside the main melt season (DOY 60-250), thin
-    # autumn/spring snow is at risk of being over-melted by daily-mean SW.
-    # We apply a daytime fraction correction ONLY in the off-season (DOY <60 or DOY>250).
-    # During peak melt season (DOY 60-250), full melt rate applies.
-    # f_day at Ta=0°C → 0.71 (29% reduction); at Ta>+DTR_half → 1.0; at Ta<-DTR_half → 0.
-    SNW_DTR_HALF_MELT   = T_Type(3.0)
-    in_off_season = (day_of_year < Int32(60)) | (day_of_year > Int32(250))
-    f_day = sqrt(clamp((t_avg + SNW_DTR_HALF_MELT) / (T_Type(2.0) * SNW_DTR_HALF_MELT), zero(T_Type), one(T_Type)))
-    f_melt = ifelse(in_off_season, f_day, one(T_Type))
-    melt_J = melt_J * f_melt
+    # NOTE: f_melt diurnal correction removed. VIC runs with SNOW_STEPS_PER_DAY=1
+    # (same daily snow timestep as mGV), so no sub-daily day/night refreezing advantage
+    # exists in VIC. The correction was based on a false premise and suppressed melt
+    # unjustifiably in the off-season. Full melt_J applies directly.
     
     # Pack CC satisfying
     energy_needed_sfc = max(-current_cc, zero(T_Type))
@@ -408,7 +401,11 @@ end
     SNW_DEEP_SWE_MM   = T_Type(100.0)
     SNW_DTR_HALF_CC   = T_Type(4.0)
     sf_temp_night     = min(t_avg - SNW_DTR_HALF_CC, zero(T_Type))  # proxy nighttime T
-    cc_melt_night     = min(SNW_VCPICE_WQ * (swe_surf_m * T_Type(1000.0)) * sf_temp_night, zero(T_Type))
+    # Minimum CC floor ensures thin packs never get CC=0 after melt (prevents perpetual THAW).
+    # Equivalent to: pack surface is always at least 0.5°C below zero after a melt day.
+    SNW_CC_MIN_T      = T_Type(-0.5)   # minimum equivalent night temperature for thin packs
+    cc_min_thin       = SNW_VCPICE_WQ * (swe_surf_m * T_Type(1000.0)) * SNW_CC_MIN_T
+    cc_melt_night     = min(SNW_VCPICE_WQ * (swe_surf_m * T_Type(1000.0)) * sf_temp_night, cc_min_thin)
     # f_deep blends between nighttime-fix (thin) and physical-CC (thick)
     f_deep = clamp(current_swe / SNW_DEEP_SWE_MM, zero(T_Type), one(T_Type))
     # For thick packs: preserve energy-balance CC (current_cc from lines 290-298).
@@ -427,6 +424,7 @@ end
     # melt events at marginal temperatures (matching VIC's nighttime CC behavior).
     # In the main melt season (DOY 60-250): flag_cond1 triggers THAW when CC >= 0 (VIC-faithful).
     # CC reaches 0 naturally when thick-pack energy balance fully satisfies cold content.
+    in_off_season = (day_of_year < Int32(60)) | (day_of_year > Int32(250))
     cc_reset_flag = in_off_season & (current_cc < zero(T_Type))
     melt_flag = ifelse(has_swe,
         ifelse(cc_reset_flag,
