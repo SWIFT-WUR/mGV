@@ -482,9 +482,6 @@ function preprocess_daily_outputs(
         ws_summed = ws_summed,
         
         # 4D Snow Aggregation: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
-        # Matching VIC's collect_wb_terms: OUT_SWE += snow.swq * Cv * AreaFract
-        # CRITICAL: AreaFract_gpu is (nx,ny,nbands) — reshape to (nx,ny,nbands,1)
-        # so it outer-products correctly with cv_gpu (nx,ny,1,nveg) → (nx,ny,nbands,nveg)
         swe_summed = let
             af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
             w4 = ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
@@ -513,9 +510,7 @@ function preprocess_daily_outputs(
     # Snow-presence mask: cells with meaningful snow coverage
     snow_present = swe_masked .> ft(0.0)
 
-    # Albedo/surf_temp: weighted by Cv*AreaFract ONLY where snow is present, normalized by that same sum!
-    # Matches VIC's put_data.c handling of intensive snow variables.
-    
+    # Albedo/surf_temp: weighted by Cv*AreaFract ONLY where snow is present, normalized by that same sum!    
     _w4_base = let
         af4 = reshape(AreaFract_gpu, size(AreaFract_gpu,1), size(AreaFract_gpu,2), size(AreaFract_gpu,3), 1)
         ifelse.(isnan.(af4), ft(0.0), af4) .* ifelse.(isnan.(cv_gpu), ft(0.0), cv_gpu)
@@ -539,9 +534,9 @@ function preprocess_daily_outputs(
     # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
     # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported  
     # surface temperature is cold (near 0°C) over snow, not the bare-soil temp.
-    # mGV's tsurf is solved from the vegetation/soil energy balance; it stays
+    # Our tsurf is solved from the vegetation/soil energy balance; it stays
     # warm even when the cell is snow-covered. We correct this by blending:
-    #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf
+    #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf. TODO: is this reasonable?
     # -----------------------------------------------------------------------
     snow_cov_safe = ifelse.(snow_present, coverage_masked, ft(0.0))
     snow_t_safe   = ifelse.(snow_present, snow_surf_temp_2d, tsurf)

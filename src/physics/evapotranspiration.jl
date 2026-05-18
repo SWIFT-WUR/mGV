@@ -1,8 +1,7 @@
-# --- Scalar Physics Kernel (Runs on every pixel) ---
-function aerodynamic_kernel(z0, d0, tsurf, tair, wind, z2, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max)
+function aerodynamic_kernel(z0, d0, tsurf, tair, wind, Z2, Kt, gt, Tf, Ric, z_floor, d_floor, w_floor, L2_min, ra_min, ra_max)
     # 1. Roughness & Effective Height
     rough = max(z0, z_floor)
-    d_eff = max(z2 - d0, d_floor)
+    d_eff = max(Z2 - d0, d_floor)
 
     # 2. Log-law terms
     ratio = clamp(d_eff / rough, ft(1.0e-6), ft(1.0e6))
@@ -24,7 +23,7 @@ function aerodynamic_kernel(z0, d0, tsurf, tair, wind, z2, Kt, gt, Tf, Ric, z_fl
     Fw     = ifelse(Ri_B < ft(0.0), Fw_neg, Fw_pos)
     Fw     = clamp(Fw, ft(1.0e-3), ft(10.0))
 
-    # 5. Final Resistance (Scaled identically bridging the 0.5C gap mapped from VIC geometry bounds natively)
+    # 5. Final Resistance
     C_H = max(ft(1.0) * a_sq * Fw, ft(1.0e-6))
     ra_val = ft(1.0) / (C_H * w_spd)
     
@@ -34,14 +33,13 @@ end
 
 function compute_aerodynamic_resistance!(
     ra, 
-    z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
+    Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_gpu, wind_gpu, cv_gpu
 )
-    # --- 1. Hard Validation (Debugging/Safety) ---
-    # This costs zero time if types are correct but saves you from Float64 lag.
+    # --- 1. Hard Validation (Debugging/Safety), TODO: remove? ---
     @assert eltype(ra)       == FloatType "Output 'ra' must be FloatType"
     @assert eltype(tsurf)    == FloatType "Input 'tsurf' must be FloatType"
-    @assert von_karman       isa FloatType "Constant 'von_karman' in SimConstants must be FloatType"
-    @assert g                isa FloatType "Constant 'g' in SimConstants must be FloatType"
+    @assert VON_KARMAN       isa FloatType "Constant 'VON_KARMAN' in SimConstants must be FloatType"
+    @assert G                isa FloatType "Constant 'G' in SimConstants must be FloatType"
 
     # --- 2. Local Constants ---
     z_floor = ft(1e-3)
@@ -53,8 +51,8 @@ function compute_aerodynamic_resistance!(
     # Pre-calculate log expression
     L2_min  = ft(log(1.01)^2)
     
-    # Cast scalar z2 once if it isn't already
-    z2T = ft(z2)
+    # Cast scalar Z2 once if it isn't already
+    z2T = ft(Z2)
 
     # --- 3. Grid Dimensions ---
     N_all   = size(ra, 4)
@@ -63,14 +61,14 @@ function compute_aerodynamic_resistance!(
     # ========================================================================
     # 1. SOIL TILES (Last Index)
     # ========================================================================
-    # We pass the global constants (von_karman, g, t_freeze, Ri_cr) directly.
+    # We pass the global constants (VON_KARMAN, G, T_FREEZE, RI_CR) directly.
     @views @. ra[:, :, :, N_all:N_all] = aerodynamic_kernel(
         z0soil_gpu,                
         d0_gpu[:,:,:,N_all:N_all], 
         tsurf,                     
         tair_gpu,                  
         wind_gpu,                  
-        z2T, von_karman, g, t_freeze, Ri_cr, 
+        z2T, VON_KARMAN, G, T_FREEZE, RI_CR, 
         z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
     )
 
@@ -84,7 +82,7 @@ function compute_aerodynamic_resistance!(
             tsurf,
             tair_gpu,
             wind_gpu,
-            z2T, von_karman, g, t_freeze, Ri_cr, 
+            z2T, VON_KARMAN, G, T_FREEZE, RI_CR, 
             z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
         )
     end
@@ -95,13 +93,14 @@ end
 
 function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
                                   snow_coverage_gpu=nothing, snow_albedo_gpu=nothing, snow_surf_temp_gpu=nothing)
+
     if snow_coverage_gpu === nothing
-        @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - emissivity * sigma * (tsurf + ft(273.15))^4
+        @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - EMISSIVITY * SIGMA * (tsurf + ft(273.15))^4
     else
         eff_alb(alb, sc, s_alb) = (isnan(sc) || sc <= ft(0.0)) ? alb : (sc * s_alb + (ft(1.0) - sc) * alb)
         eff_t(ts, sc, s_ts) = (isnan(sc) || sc <= ft(0.0)) ? ts : (sc * s_ts + (ft(1.0) - sc) * ts)
         
-        @. net_rad = (ft(1.0) - eff_alb(albedo_gpu, snow_coverage_gpu, snow_albedo_gpu)) * swdown_gpu + lwdown_gpu - emissivity * sigma * (eff_t(tsurf, snow_coverage_gpu, snow_surf_temp_gpu) + ft(273.15))^4
+        @. net_rad = (ft(1.0) - eff_alb(albedo_gpu, snow_coverage_gpu, snow_albedo_gpu)) * swdown_gpu + lwdown_gpu - EMISSIVITY * SIGMA * (eff_t(tsurf, snow_coverage_gpu, snow_surf_temp_gpu) + ft(273.15))^4
     end
     
     return nothing
@@ -121,21 +120,18 @@ function calculate_potential_evaporation!(
     EPS     = ft(1.0e-6)      
 
     # 2. Pre-calculate 2D Meteorological Terms
-    # VIC's compute_pot_evap uses the grid-level air temperature (not band-lapsed) for slope.
-    # Using tair_grid (unlapsed, warmer at high elevations) gives better transpiration distribution
-    # across bands — run49 showed this gives 95.3% transpiration within threshold.
     slope       = @. calculate_svp_slope(tair_grid)           # grid-level T
-    latent_heat = @. calculate_latent_heat(tair_grid + t_freeze)  # grid-level T
-    gamma_      = @. G_COEFF * (p_std * exp(-elev_gpu / calculate_scale_height(tair_grid, elev_gpu))) / latent_heat
+    latent_heat = @. calculate_latent_heat(tair_grid + T_FREEZE)  # grid-level T
+    gamma_      = @. G_COEFF * (P_STD * exp(-elev_gpu / calculate_scale_height(tair_grid, elev_gpu))) / latent_heat
     vpd_pa      = @. calculate_vpd(tair_grid, vp_gpu)
-    air_dens_term = @. ((AIR_C * psurf_gpu * pa_per_kpa) / (t_freeze + tair_grid)) * c_p_air * calculate_vpd(tair_grid, vp_gpu) * day_sec
+    air_dens_term = @. ((AIR_C * psurf_gpu * PA_PER_KPA) / (T_FREEZE + tair_grid)) * C_P_AIR * calculate_vpd(tair_grid, vp_gpu) * DAY_SEC
 
 
     veg_indices = 1:(nveg - 1)
     
-    # Vegetation tiles: PE at minimum canopy resistance (gsm_inv=1, matching VIC's PE convention)
+    # Vegetation tiles: PE at minimum canopy resistance (gsm_inv=1)
     @views @. pe[:, :, :, veg_indices] = max(
-        (slope * (net_radiation[:, :, :, veg_indices] * day_sec) + 
+        (slope * (net_radiation[:, :, :, veg_indices] * DAY_SEC) + 
          (air_dens_term / aerodynamic_resistance[:, :, :, veg_indices])) / 
         (latent_heat * (slope + gamma_ * (ft(1.0) + 
          ((rmin_gpu[:, :, :, veg_indices] / max(LAI_gpu[:, :, :, veg_indices], EPS)) + 
@@ -143,9 +139,9 @@ function calculate_potential_evaporation!(
         ft(0.0)
     )
 
-    # Bare Soil Tile (rc=0, matching VIC's compute_pot_evap bare soil PE)
+    # Bare Soil Tile (rc=0, compute_pot_evap bare soil PE)
     @views @. pe[:, :, :, nveg] = max(
-        (slope * (net_radiation[:, :, :, nveg] * day_sec) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
+        (slope * (net_radiation[:, :, :, nveg] * DAY_SEC) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
         (latent_heat * (slope + gamma_ * (ft(1.0) + rarc_gpu[:, :, :, nveg] / aerodynamic_resistance[:, :, :, nveg]))),
         ft(0.0)
     )
@@ -176,7 +172,7 @@ end
     # --- 1. Physics Calculations ---
     # Using your existing project functions
     slope = calculate_svp_slope(tair)
-    latent_heat = calculate_latent_heat(tair + t_freeze)
+    latent_heat = calculate_latent_heat(tair + T_FREEZE)
 
     scale_height = calculate_scale_height(tair, elev)
     surface_pressure = ft(101325.0) * exp(-elev / scale_height)
@@ -337,29 +333,26 @@ end
 
                 dry_time_factor = ifelse(k == nveg, ONE, dry_time_factor)
 
-                # --- VIC Jarvis temperature + VPD factor for transpiration ---
+                # --- Jarvis temperature + VPD factor for transpiration ---
                 # Tfactor: reduces transpiration in cold/hot extremes (max=1 at T=25°C)
                 # VPDfactor: CANOPY_CLOSURE=13000 Pa. Using tair_grid for PE slope
                 # gives better transpiration distribution (95.3% in run49).
                 tair_c_v     = tair_gpu[i, j]
                 Tfactor_raw  = ft(0.08) * tair_c_v - ft(0.0016) * tair_c_v * tair_c_v
                 Tfact        = Tfactor_raw < ft(1.0e-10) ? ft(1.0e-10) : (Tfactor_raw > ONE ? ONE : Tfactor_raw)
-                svp_val_t    = svp_a * exp((svp_b * tair_c_v) / (svp_c + tair_c_v))  # kPa
-                vpd_pa_t     = max(svp_val_t - vp_gpu[i, j], ft(0.0)) * pa_per_kpa  # Pa
+                svp_val_t    = SVP_A * exp((SVP_B * tair_c_v) / (SVP_C + tair_c_v))  # kPa
+                vpd_pa_t     = max(svp_val_t - vp_gpu[i, j], ft(0.0)) * PA_PER_KPA  # Pa
                 raw_vpd_t    = ft(1.0) - vpd_pa_t / ft(13000.0)
                 VPDfact      = raw_vpd_t < ft(0.7) ? ft(0.7) : (raw_vpd_t > ONE ? ONE : raw_vpd_t)
                 rc_factor    = Tfact * VPDfact
 
                 # --- Transpiration Calculation ---
-                # trans_val = cv * dryFrac * pe * gsw matches VIC's transp * Cv per tile.
                 # Output aggregation in io_writer sums trans_val directly (no extra Cv weight).
                 trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg * rc_factor, ZERO, ft(Inf))
                 
                 # =========================================================
                 # --- Layer Apportionment (E1, E2) without branching ---
                 # =========================================================
-                # VIC apportions the total transpiration demand (trans_val)
-                # across soil layers according to root depth and soil moisture.
                 # If moisture is limited in one layer, roots can pull from another.
                 
                 # Setup base root + moisture weights
@@ -474,7 +467,7 @@ end
 
 
 function calculate_soil_evaporation!(
-    soil_evap, # <--- Output array (Modified in-place, 2D Grid)
+    soil_evap,
     soil_moisture, soil_moisture_max, potential_evaporation, 
     b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
 )
@@ -500,7 +493,7 @@ function calculate_soil_evaporation!(
         # 4. Saturation Check
         is_saturated = tmp >= max_infil
         
-        # 5. ARNO Evaporation Logic (matching VIC's soil evaporation beta)
+        # 5. ARNO Evaporation Logic
         # We replace the recursive if/else thresholds with branchless ternary expressions to compute the beta scaler.
         ratio_unsat = clamp(ft(1.0) - (tmp / max_infil), ft(0.0), ft(1.0))
         
@@ -536,7 +529,7 @@ function calculate_soil_evaporation!(
     N_bands = size(AreaFract_gpu, 3)
     for i in 1:N_veg
         for b in 1:N_bands
-            # VIC: Esoil = Esoil_pot * beta(sm) * (1-fcanopy) * Cv per tile.
+            # Esoil = Esoil_pot * beta(sm) * (1-fcanopy) * Cv per tile.
             # pe passed in is Step 2 (snow-blended) PE which captures snow energy effects.
             @views @. soil_evap += soil_evap_kernel(
                 soil_moisture[:,:,1],           
@@ -557,7 +550,6 @@ function update_water_canopy_storage!(
     water_storage, throughfall,  # Targets for mutation
     prec, cv, canopy_evap, Wm, coverage
 )
-    # We use @. (dot broadcast) to fuse the loop and avoid allocating 'new_storage' or 'excess' arrays.
     
     # 1. Update Throughfall FIRST
     # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
@@ -573,9 +565,6 @@ function update_water_canopy_storage!(
 
     return nothing
 end
-
-
-
 
 # Eq. (23): Total evapotranspiration
 function calculate_total_evapotranspiration!(

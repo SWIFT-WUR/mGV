@@ -87,7 +87,7 @@ function get_output_format()
             if val in ["netcdf", "nc"]
                 return :netcdf
             end
-        # 2. Check for simple flags: --netcdf or --nc
+        # 2. Check for flags: --netcdf or --nc
         elseif arg in ["--netcdf", "--nc"]
             return :netcdf
         end

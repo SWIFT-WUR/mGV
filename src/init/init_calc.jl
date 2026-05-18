@@ -10,7 +10,7 @@
     @Const(bulk_dens), @Const(soil_dens), @Const(depth),
     @Const(Wcr), @Const(Wfc), @Const(Wpwp), @Const(residmoist),
     # Constants
-    organic_frac, bulk_dens_org, soil_dens_org
+    ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG
 )
     i, j, k = @index(Global, NTuple)
 
@@ -19,8 +19,8 @@
     sd_val = soil_dens[i, j, k]
     
     # We use the types passed in (FloatType) automatically
-    bd_min = (bd_val - organic_frac * bulk_dens_org) / (1 - organic_frac)
-    sd_min = (sd_val - organic_frac * soil_dens_org) / (1 - organic_frac)
+    bd_min = (bd_val - ORGANIC_FRAC * BULK_DENS_ORG) / (1 - ORGANIC_FRAC)
+    sd_min = (sd_val - ORGANIC_FRAC * SOIL_DENS_ORG) / (1 - ORGANIC_FRAC)
     
     bulk_dens_min[i, j, k] = bd_min
     soil_dens_min[i, j, k] = sd_min
@@ -57,7 +57,7 @@ function calculate_soil_properties!(
     bulk_dens_gpu, soil_dens_gpu, depth_gpu,
     Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
     # Constants
-    organic_frac, bulk_dens_org, soil_dens_org
+    ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG
 )
 
     kernel_launcher! = soil_properties_kernel!(device_backend)
@@ -68,7 +68,7 @@ function calculate_soil_properties!(
         field_capacity, wilting_point, residual_moisture,
         bulk_dens_gpu, soil_dens_gpu, depth_gpu,
         Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
-        FloatType(organic_frac), FloatType(bulk_dens_org), FloatType(soil_dens_org);
+        FloatType(ORGANIC_FRAC), FloatType(BULK_DENS_ORG), FloatType(SOIL_DENS_ORG);
         ndrange=size(bulk_dens_gpu)
     )
     

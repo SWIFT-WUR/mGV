@@ -65,7 +65,7 @@ println("Allocating State Arrays on: $backend_name")
     const f_n                    = alloc(dim_tile...)
     const net_radiation          = alloc(dim_tile...)
     const potential_evaporation  = alloc(dim_tile...)  # Step 1 PE: for transpiration, canopy evap
-    const pe_soil                = alloc(dim_tile...)  # Step 2 PE: for soil evaporation (snow-blended energy)
+    const pe_soil                = alloc(dim_tile...)  # Step 2 PE: for soil evaporation 
     const aerodynamic_resistance = alloc(dim_tile...)
     const transpiration          = alloc(dim_tile...)
     const E_1_t                  = alloc(dim_tile...)
@@ -86,10 +86,10 @@ println("Allocating State Arrays on: $backend_name")
     const g1_buf            = alloc(dim_grid...)
     const g2_buf            = alloc(dim_grid...)
     
-    # --- 3b. Snow Per-(Band × Veg) States — 4D to match VIC architecture ---
-    # Shape: (nx, ny, nbands, nveg)  — one snowpack per (elevation band × vegetation tile)
-    # VIC's collect_wb_terms accumulates: OUT_SWE += snow.swq * Cv[veg] * AreaFract[band]
-    const dim_snow          = (dim_grid[1], dim_grid[2], nbands, dim_veg)
+    # --- 3b. Snow Per-(Band x Veg) States — 4D ---
+    # Shape: (nx, ny, nbands, nveg)  — one snowpack per (elevation band x vegetation tile)
+    # OUT_SWE += snow.swq * Cv[veg] * AreaFract[band]
+    const dim_snow              = (dim_grid[1], dim_grid[2], nbands, dim_veg)
     const swe_gpu               = alloc(dim_snow...)
     const surf_water_gpu        = alloc(dim_snow...)
     const pack_water_gpu        = alloc(dim_snow...)
@@ -98,10 +98,10 @@ println("Allocating State Arrays on: $backend_name")
     const snow_surf_temp_gpu    = alloc(dim_snow...)
     const snow_coverage_gpu     = alloc(dim_snow...)
     const snow_melt_gpu         = alloc(dim_snow...)
-    # VIC-faithful snow state variables
+    # Snow state variables
     const last_snow_gpu         = alloc(Int32, dim_snow...)   # days since last snowfall
     const cold_content_gpu      = alloc(dim_snow...)           # J/m² surface layer cold content
-    const pack_cc_gpu           = alloc(dim_snow...)           # J/m² pack layer cold content (VIC 2-layer)
+    const pack_cc_gpu           = alloc(dim_snow...)           # J/m² pack layer cold content (2-layer)
     const melting_flag_gpu      = alloc(Int32, dim_snow...)   # melt-season flag
     const store_snow_gpu        = alloc(Int32, dim_snow...)   # coverage state (1 = store)
     const snow_distrib_slope_gpu= alloc(dim_snow...)           # depth distribution slope (m)
@@ -131,7 +131,7 @@ println("Allocating State Arrays on: $backend_name")
     const soil_temperature       = alloc(dim_soil...) 
     
     const organic_frac_gpu       = alloc(dim_soil...)
-    fill!(organic_frac_gpu, FloatType(organic_frac))
+    fill!(organic_frac_gpu, FloatType(ORGANIC_FRAC))
 
     # Soil constant maps (Shape: nx, ny, 3)
     const bulk_dens_min = alloc(size(bulk_dens_gpu)...)
@@ -150,7 +150,7 @@ println("Allocating State Arrays on: $backend_name")
         view(soil_temperature, :, :, k) .= Tavg_gpu
     end
 
-    # Explicitly initialize all allocated states to 0.0 to prevent propagating mem alloc() garbage (NaNs/Infs)
+    # Explicitly initialize all allocated states to 0.0
     let arrays_to_zero = (
         water_storage, max_water_storage, throughfall, canopy_evaporation,
         f_n, net_radiation, potential_evaporation, aerodynamic_resistance,
@@ -172,8 +172,7 @@ println("Allocating State Arrays on: $backend_name")
             fill!(arr, FloatType(0.0))
         end
     end
-    # Initialize store_snow to 0 (VIC default: store_snow = false)
-    # store_coverage and store_swq stay at 0.0 (already zeroed above)
+
 end
 
 
@@ -194,12 +193,9 @@ end
         Wcr_gpu, Wfc_gpu, Wpwp_gpu, residmoist_gpu,
 
         # Constants
-        organic_frac, bulk_dens_org, soil_dens_org
+        ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG
     )
 
-    # VIC does NOT clamp to residual_moisture - it allows sub-residual initialization.
-    # The sub-step runoff loop then enforces the residual floor during physics.
-    # Matching this exactly: clamp to [0, max_moist] during initialization.
     soil_moisture .= clamp.(init_moist_gpu, ft(0), soil_moisture_max)
     
     # Translate baseflow parameters from NIJSSEN2001 to ARNO format
@@ -236,7 +232,7 @@ function process_year(year)
 
         if output_format == :netcdf
             output_path = joinpath(output_dir, "$(output_file_prefix)$(year).nc")
-            # Ignore the single buffer returned; we will create a pool instead.
+            # Create a buffer pool 
             output_store, _ = create_output_netcdf(output_path, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
         else
             output_path = joinpath(output_dir, "$(output_file_prefix)$(year).zarr")
@@ -283,11 +279,7 @@ function process_year(year)
             # ============================================================
             @timeit to "calculate_band_forcings" begin
                 @. tair_band = tair_gpu + FloatType(-0.0065) * (elevation_gpu - elev_gpu)
-                # VIC Pfactor fix: NC file stores precipitation FRACTIONS, not multipliers.
-                # VIC divides by AreaFract to get the true per-band precipitation multiplier.
-                # When Pfactor_nc[b] == AreaFract[b] (common case: uniform precip per unit area),
-                # the true multiplier = 1.0, so each band gets the FULL grid-cell precipitation.
-                # prec_band[b] = prec * (Pfactor_nc[b] / AreaFract[b])
+                
                 @. prec_band = prec_gpu * ifelse(
                     AreaFract_gpu > FloatType(1e-6),
                     Pfactor_gpu / AreaFract_gpu,
@@ -298,13 +290,12 @@ function process_year(year)
             @timeit to "compute_aerodynamic_resistance" begin
                 compute_aerodynamic_resistance!(
                     aerodynamic_resistance,
-                    z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
+                    Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
                 )
             end
 
             @timeit to "calculate_net_radiation" begin
-                # Step 1: compute WITHOUT snow for PE (matching VIC's compute_pot_evap convention)
-                # Use grid-level tair_gpu for LW emission (consistent with VIC's Penman LW term).
+                # Step 1: compute WITHOUT snow for PE
                 calculate_net_radiation!(
                     net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tair_gpu
                 )
@@ -327,9 +318,6 @@ function process_year(year)
             end
 
             @timeit to "calculate_potential_evaporation_soil" begin
-                # Step 2 PE for soil evaporation: snow-blended net_rad gives lower
-                # PE in energy-limited (snow/winter) months, reducing mGV's 22%
-                # summer overestimate vs VIC. (See run55-59 for validation.)
                 calculate_potential_evaporation!(
                     pe_soil,
                     tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
@@ -390,7 +378,7 @@ function process_year(year)
             end
 
             # ============================================================
-            # Snow Dynamics — 4D per-(band × veg) tile, matching VIC architecture
+            # Snow Dynamics — 4D per-(band × veg) 
             # ============================================================
             @timeit to "calculate_snow_dynamics!" begin
                 if enable_snow
@@ -409,13 +397,6 @@ function process_year(year)
                         day, Float64(lat_mean_val)
                     )
 
-                    # Aggregate 4D→3D for soil model input:
-                    # ppt_gpu[i,j,b] = sum_v( (rain[b,v] + melt[b,v]) * Cv[v] )
-                    # where rain[b,v] = throughfall_pre_snow[b,v] * rain_frac(tair_band[b])
-                    # We saved throughfall BEFORE snow (it was already overwritten above
-                    # by the canopy step), so rain = throughfall * rain_frac
-                    ft = FloatType
-
                     # Total per-band soil influx: snow_melt_gpu contains ALL outflow (pack drainage + bare rain)
                     melt_band_gpu .= dropdims(
                         sum(ifelse.(isnan.(snow_melt_gpu .* cv_gpu), ft(0.0), snow_melt_gpu .* cv_gpu), dims=4),
@@ -432,8 +413,6 @@ function process_year(year)
                 end
             end
 
-            # Removed erroneous 13-argument calculate_infiltration! block
-
             # ============================================================
             # Soil evaporation
             # ============================================================
@@ -444,8 +423,6 @@ function process_year(year)
                     b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
                 )
             end
-
-            # (update_water_canopy_storage! already ran before snow dynamics above)
 
             @timeit to "calculate_surface_runoff" begin
                 calculate_surface_runoff!(
@@ -499,7 +476,7 @@ function process_year(year)
                     run_routing_step!(
                         routing_state,
                         total_runoff,
-                        day_sec
+                        DAY_SEC
                     )
                 end
             end
@@ -518,7 +495,7 @@ function process_year(year)
             @timeit to "volumetric_heat_capacity" begin
                 volumetric_heat_capacity!(
                     cs_array, bulk_dens_gpu, soil_dens_gpu, soil_moisture,
-                    rho_w, ice_frac, organic_frac
+                    RHO_W, ice_frac, ORGANIC_FRAC
                 )
             end
 
@@ -537,7 +514,7 @@ function process_year(year)
                         tsurf,
                         soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                         aerodynamic_resistance,
-                        kappa_array, depth_gpu, day_sec, cs_array, total_et,
+                        kappa_array, depth_gpu, DAY_SEC, cs_array, total_et,
                         tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
                     )
                 end
@@ -545,7 +522,7 @@ function process_year(year)
                 @timeit to "compute_aerodynamic_resistance" begin
                     compute_aerodynamic_resistance!(
                         aerodynamic_resistance,
-                        z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
+                        Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
                     )
                 end
             end
@@ -554,7 +531,7 @@ function process_year(year)
                 solve_surface_temperature!(
                     tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
                     aerodynamic_resistance,
-                    kappa_array, depth_gpu, day_sec, cs_array, total_et,
+                    kappa_array, depth_gpu, DAY_SEC, cs_array, total_et,
                     tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
                 )
             end
@@ -562,13 +539,13 @@ function process_year(year)
             # ============================================================
             # Preprocess & Write Outputs
             # ============================================================
-            # Correct logging outputs by recalculating Radiation dynamically closing the explicit current-day temperature offset mirroring the VIC closures.
             @timeit to "calculate_net_radiation_post_closure" begin
                 calculate_net_radiation!(
                     net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
                     snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
                 )
             end
+            
             @timeit to "preprocess_daily_data" begin
                 gpu_results = preprocess_daily_outputs(
                     day, tsurf, tair_gpu, prec_gpu,

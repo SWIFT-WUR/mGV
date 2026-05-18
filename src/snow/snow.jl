@@ -6,9 +6,7 @@
 # vegetation tile within each spatial grid cell.
 # ==============================================================================
 
-
-# Solves surface energy balance via Newton-Raphson to find snow surface temp (max 0°C).
-# Returns: (final_ts, final_melt_energy, sub_mass_mm).
+# Solve surface energy balance via Newton-Raphson to find snow surface temp (max 0°C).
 @inline function snow_surface_temp_nr(
     tsurf_init,   # Initial temperature guess from previous timestep [°C] (OldTSurf)
     Ta,           # Air temperature [°C]
@@ -50,8 +48,8 @@
     # Melt energy is computed at Ts=0 using LE0 (standard convention)
     rhs_melt = rhs_base - LE_sub_0 
     
-    # Longwave emission coefficient: sigma * epsilon_snow
-    sig_eps = sigma * ft(0.97)   # param.EMISS_SNOW = 0.97
+    # Longwave emission coefficient: SIGMA * epsilon_snow
+    sig_eps = SIGMA * ft(0.97)   # param.EMISS_SNOW = 0.97
 
     # 5. Newton-Raphson Solver
     # f(ts) = LW_out(ts) + h_sens(ts,Ta) - LE(min(ts,0)) - rhs_base = 0
@@ -455,7 +453,7 @@ function calculate_snow_dynamics!(
     store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
     throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
     AreaFract_gpu, cv_gpu, annual_prec_gpu,
-    day_of_year::Int, lat_mean::Float64
+    day_of_year::Int, lat_mean::FloatType
 )
     # Determine hemispheric context for seasonality checks
     lat_pos = Int32(lat_mean >= 0.0 ? 1 : 0)

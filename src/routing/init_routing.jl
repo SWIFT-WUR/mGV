@@ -33,7 +33,7 @@ function initialize_routing_model(param_file, elev)
     println("  -> Grid: $nx x $ny ($n_total pixels)")
 
     # 2. Build Topology (with lookup table)
-    # VIC IDs are arbitrary integers. We must map ID -> Linear Index.
+    # We must map ID -> Linear Index.
     println("  -> Building connectivity graph...")
 
     id_to_index = Dict{Int32,Int32}()
@@ -53,8 +53,8 @@ function initialize_routing_model(param_file, elev)
         # Where does cell i want to go?
         target_val = raw_target[i]
 
-        # If target is valid and exists in our grid, save the index.
-        # If target is -1 (missing) or not found (outside domain), keep as -1.
+        # If target is valid and exists in our grid, save the index
+        # If target is -1 (missing) or not found (outside domain), keep as -1
         if target_val != -1 && haskey(id_to_index, target_val)
             dest_idx = id_to_index[target_val]
 
@@ -74,7 +74,7 @@ function initialize_routing_model(param_file, elev)
     # Convert accumulation from m2 -> km2 for the formula
     acc_km2 = flat_acc ./ ft(1.0e6)
 
-    # Width formula: 7 * sqrt(Area_km2). Clamp to [2m, 2000m].
+    # Width formula: 7 * sqrt(Area_km2). Clamp to [2m, 2000m]
     # Handle NaNs by defaulting to minimum width
     flat_width = map(x -> isnan(x) ? ft(2.0) : clamp(ft(7.0) * sqrt(x), ft(2.0), ft(2000.0)), acc_km2)
 
