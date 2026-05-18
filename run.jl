@@ -14,6 +14,7 @@ include("config/user_config.jl")
 # Constants
 include("src/constants/sim_constants.jl")
 include("src/constants/physical_constants.jl")
+include("src/constants/snow_constants.jl")
 
 # I/O helpers
 include("src/io/io_helpers.jl")
