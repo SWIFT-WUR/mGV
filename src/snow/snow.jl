@@ -1,13 +1,5 @@
-# =============================================================================
-# SNOW PHYSICS MODULE — VIC-faithful implementation
-# Mirrors: solve_snow.c, snow_utility.c, calc_snow_coverage.c, snow_melt.c
-#
-# Architecture: 4D state (nx, ny, nbands, nveg) — one snowpack per
-# (elevation band × vegetation tile), matching VIC's per-tile approach.
-# =============================================================================
-
 # ---------------------------------------------------------------------------
-# VIC Snow Parameters (from initialize_parameters.c)
+# VIC Snow Parameters
 # ---------------------------------------------------------------------------
 const SNW_NEW_SNOW_ALB       = FloatType(0.85)    # new snow albedo
 const SNW_ALB_ACCUM_A        = FloatType(0.94)    # accumulation-season decay A
@@ -97,6 +89,7 @@ const SNW_DENSITY            = FloatType(250.0)    # kg/m³ — typical snow den
     end
     ts = clamp(ts, T_Type(-60.0), T_Type(50.0))
 
+
     # Melt energy at Ts=0 (using LE at 0°C, per VIC convention)
     Ts0_K          = T_Type(273.15)
     lw_out0        = sig_eps * (Ts0_K ^ T_Type(4.0))
@@ -133,7 +126,7 @@ const SNW_DENSITY            = FloatType(250.0)    # kg/m³ — typical snow den
     return final_ts, final_melt_energy, sub_mass_mm
 end
 
-# ---------------------------------------------------------------------------
+
 # ---------------------------------------------------------------------------
 # VIC-faithful 4D snow dynamics kernel
 # ---------------------------------------------------------------------------
@@ -418,13 +411,12 @@ end
     current_pcc = ifelse(is_melting_step, pcc_melt_branch, ifelse(t_s < zero(T_Type), pcc_nomelt_branch, current_pcc))
 
     # Update melt_flag post-NR: based on FINAL cold content (post energy-balance update).
-    # VIC (3-hourly): recalculates MELTING from coldcontent >= 0 at EACH sub-step.
-    # In the off-season (DOY < 60 or DOY > 250): if CC is restored negative by nighttime fix,
-    # reset melt_flag → 0 (ACCUM mode). This prevents THAW-albedo decay from small autumn
-    # melt events at marginal temperatures (matching VIC's nighttime CC behavior).
-    # In the main melt season (DOY 60-250): flag_cond1 triggers THAW when CC >= 0 (VIC-faithful).
+    # VIC: MELTING can only be true in the melt season (NH: DOY 60-273 / ~March 1 to Oct 1).
+    # In the off-season: if CC is negative, reset melt_flag → 0 (ACCUM mode). This prevents
+    # THAW-albedo decay from small autumn/spring melt events at marginal temperatures.
+    # In the main melt season (DOY 60-273 NH): flag_cond1 triggers THAW when CC >= 0.
     # CC reaches 0 naturally when thick-pack energy balance fully satisfies cold content.
-    in_off_season = (day_of_year < Int32(60)) | (day_of_year > Int32(250))
+    in_off_season = !in_melt_season  # VIC: DOY<=60 or DOY>=273 (NH); exact mirror of solve_snow.c:377
     cc_reset_flag = in_off_season & (current_cc < zero(T_Type))
     melt_flag = ifelse(has_swe,
         ifelse(cc_reset_flag,
@@ -463,7 +455,15 @@ end
     pack_water[i, j, b, v]           = ifelse(active, ifelse(current_swe > zero(T_Type), c_pack_water, zero(T_Type)), zero(T_Type))
     snow_depth[i, j, b, v]           = ifelse(active, ifelse(current_swe > zero(T_Type), current_depth_m * T_Type(1000.0), zero(T_Type)), zero(T_Type))
     snow_albedo[i, j, b, v]          = ifelse(active, ifelse((current_swe > zero(T_Type)) & !isnan(alb), alb, T_Type(NaN)), T_Type(NaN))
-    snow_surf_temp[i, j, b, v]       = ifelse(active, ifelse(current_swe > zero(T_Type), t_s, T_Type(NaN)), T_Type(NaN))
+    # VIC-faithful surf_temp: VIC reports surf_temp = SurfaceCC / (VCP_ice * SWE_surf)
+    # (snow_melt.c:154, 476) -- thermodynamic equilibrium temp of surface layer from cold content.
+    # This differs from the NR-solved t_s (radiative balance Ts) by ~1 C systematically.
+    swe_surf_mm_out = min(current_swe, SNW_MAX_SURFACE_SWE_MM)
+    t_s_vic = ifelse(swe_surf_mm_out > zero(T_Type),
+                     current_cc / (SNW_VCPICE_WQ * swe_surf_mm_out),
+                     zero(T_Type))
+    t_s_vic = min(t_s_vic, zero(T_Type))  # surf_temp <= 0 always for cold pack
+    snow_surf_temp[i, j, b, v]       = ifelse(active, ifelse(current_swe > zero(T_Type), t_s_vic, T_Type(NaN)), T_Type(NaN))
     snow_coverage[i, j, b, v]        = ifelse(active, new_coverage, zero(T_Type))
     melt_out[i, j, b, v]             = ifelse(active, melt_out_val, zero(T_Type))
     last_snow[i, j, b, v]            = ifelse(active, ifelse(current_swe > zero(T_Type), lsnow, Int32(0)), Int32(0))
@@ -479,8 +479,6 @@ end
     nothing
 end
 
-# ---------------------------------------------------------------------------
-# Wrapper
 # ---------------------------------------------------------------------------
 # Wrapper
 # ---------------------------------------------------------------------------
