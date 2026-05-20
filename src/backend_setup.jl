@@ -20,9 +20,10 @@ println("Active Julia Threads: $(Threads.nthreads())")
 # ===========================================================================
 # 2. PACKAGE LOADING
 # ===========================================================================
-const HAS_CUDA   = try using CUDA;   true catch; false end
+const HAS_CUDA   = try using CUDA; true catch; false end
 const HAS_AMDGPU = try using AMDGPU; true catch; false end
-const HAS_METAL  = try using Metal;  true catch; false end
+const HAS_METAL  = try using Metal; true catch; false end
+const HAS_ONEAPI  = try using oneAPI; true catch; false end
 
 # ===========================================================================
 # 3. DEVICE (GPU type or CPU) & ARRAY CONFIGURATION
@@ -61,6 +62,18 @@ elseif HAS_METAL && Metal.functional()
     
     pin_memory!(arr) = nothing 
     println("✅ Active device: Apple Silicon (Metal)")
+
+elseif HAS_ONEAPI && oneAPI.functional()
+    const device_backend = oneAPIBackend()
+    const ArrayType = oneArray
+    const backend_name = "oneAPI"
+
+    # For now, run sequentially without asynchronous streams (CommandQueues) for oneAPI
+    const StreamType = Nothing 
+    create_stream() = nothing
+    
+    pin_memory!(arr) = nothing 
+    println("✅ Active device: Intel Graphics (oneAPI)")
 
 else
     const device_backend = CPU()

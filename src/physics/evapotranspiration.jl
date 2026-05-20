@@ -95,12 +95,12 @@ function calculate_net_radiation!(net_rad, swdown_gpu, lwdown_gpu, albedo_gpu, t
                                   snow_coverage_gpu=nothing, snow_albedo_gpu=nothing, snow_surf_temp_gpu=nothing)
 
     if snow_coverage_gpu === nothing
-        @. net_rad = (ft(1.0) - albedo_gpu) * swdown_gpu + lwdown_gpu - EMISSIVITY * SIGMA * (tsurf + ft(273.15))^4
+        @. net_rad = (1.0f0 - albedo_gpu) * swdown_gpu + lwdown_gpu - EMISSIVITY * SIGMA * (tsurf + 273.15f0)^4
     else
-        eff_alb(alb, sc, s_alb) = (isnan(sc) || sc <= ft(0.0)) ? alb : (sc * s_alb + (ft(1.0) - sc) * alb)
-        eff_t(ts, sc, s_ts) = (isnan(sc) || sc <= ft(0.0)) ? ts : (sc * s_ts + (ft(1.0) - sc) * ts)
+        eff_alb(alb, sc, s_alb) = (isnan(sc) || sc <= 0.0f0) ? alb : (sc * s_alb + (1.0f0 - sc) * alb)
+        eff_t(ts, sc, s_ts) = (isnan(sc) || sc <= 0.0f0) ? ts : (sc * s_ts + (1.0f0 - sc) * ts)
         
-        @. net_rad = (ft(1.0) - eff_alb(albedo_gpu, snow_coverage_gpu, snow_albedo_gpu)) * swdown_gpu + lwdown_gpu - EMISSIVITY * SIGMA * (eff_t(tsurf, snow_coverage_gpu, snow_surf_temp_gpu) + ft(273.15))^4
+        @. net_rad = (1.0f0 - eff_alb(albedo_gpu, snow_coverage_gpu, snow_albedo_gpu)) * swdown_gpu + lwdown_gpu - EMISSIVITY * SIGMA * (eff_t(tsurf, snow_coverage_gpu, snow_surf_temp_gpu) + 273.15f0)^4
     end
     
     return nothing
@@ -133,17 +133,17 @@ function calculate_potential_evaporation!(
     @views @. pe[:, :, :, veg_indices] = max(
         (slope * (net_radiation[:, :, :, veg_indices] * DAY_SEC) + 
          (air_dens_term / aerodynamic_resistance[:, :, :, veg_indices])) / 
-        (latent_heat * (slope + gamma_ * (ft(1.0) + 
+        (latent_heat * (slope + gamma_ * (1.0f0 + 
          ((rmin_gpu[:, :, :, veg_indices] / max(LAI_gpu[:, :, :, veg_indices], EPS)) + 
           rarc_gpu[:, :, :, veg_indices]) / aerodynamic_resistance[:, :, :, veg_indices]))),
-        ft(0.0)
+        0.0f0
     )
 
     # Bare Soil Tile (rc=0, compute_pot_evap bare soil PE)
     @views @. pe[:, :, :, nveg] = max(
         (slope * (net_radiation[:, :, :, nveg] * DAY_SEC) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
-        (latent_heat * (slope + gamma_ * (ft(1.0) + rarc_gpu[:, :, :, nveg] / aerodynamic_resistance[:, :, :, nveg]))),
-        ft(0.0)
+        (latent_heat * (slope + gamma_ * (1.0f0 + rarc_gpu[:, :, :, nveg] / aerodynamic_resistance[:, :, :, nveg]))),
+        0.0f0
     )
 
     return nothing
@@ -152,11 +152,11 @@ end
 
 function calculate_max_water_storage!(max_water_storage, LAI_gpu, coverage_gpu)
 
-    @. max_water_storage = ifelse(coverage_gpu > ft(1.0e-5), (K_L * LAI_gpu) / coverage_gpu, ft(0.0))
+    @. max_water_storage = ifelse(coverage_gpu > 1.0f-5, (K_L * LAI_gpu) / coverage_gpu, 0.0f0)
 
     @. max_water_storage = ifelse(
         isnan(max_water_storage) | (abs(max_water_storage) > fillvalue_threshold), 
-        ft(0.0), 
+        0.0f0, 
         max_water_storage
     )
 
@@ -555,13 +555,13 @@ function update_water_canopy_storage!(
     # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
     # Logic: excess = max(0, (W + P - E) - Wm)
     # Throughfall = (excess * coverage) + (prec * (1 - coverage))
-    @. throughfall = (max(ft(0.0), water_storage + prec - canopy_evap - Wm) * coverage) + 
-                     (prec * (ft(1.0) - coverage))
+    @. throughfall = (max(0.0f0, water_storage + prec - canopy_evap - Wm) * coverage) + 
+                     (prec * (1.0f0 - coverage))
 
     # 2. Update Water Storage SECOND
     # Now we can safely mutate water_storage.
     # Logic: clamped new storage
-    @. water_storage = clamp(water_storage + prec - canopy_evap, ft(0.0), Wm)
+    @. water_storage = clamp(water_storage + prec - canopy_evap, 0.0f0, Wm)
 
     return nothing
 end
