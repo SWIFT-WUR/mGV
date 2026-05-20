@@ -62,11 +62,11 @@ function volumetric_heat_capacity!(cs_array, bulk_dens, soil_dens, soil_moisture
         # (1.0 - ORGANIC_FRAC) splits the soil_fract into mineral/organic components
         # Constant values are volumetric heat capacities in J/m^3/K
 
-        cs_array = ft(2.0e6) * (bulk_dens / soil_dens) * (ft(1.0) - ORGANIC_FRAC) +
-                   ft(2.7e6) * (bulk_dens / soil_dens) * ORGANIC_FRAC +
-                   ft(4.2e6) * (soil_moisture / RHO_W) +
-                   ft(1.9e6) * ice_frac +
-                   ft(1.3e3) * (ft(1.0) - ((bulk_dens / soil_dens) + (soil_moisture / RHO_W) + ice_frac))
+        cs_array = 2.0f6 * (bulk_dens / soil_dens) * (1.0f0 - ORGANIC_FRAC) +
+                   2.7f6 * (bulk_dens / soil_dens) * ORGANIC_FRAC +
+                   4.2f6 * (soil_moisture / RHO_W) +
+                   1.9f6 * ice_frac +
+                   1.3f3 * (1.0f0 - ((bulk_dens / soil_dens) + (soil_moisture / RHO_W) + ice_frac))
     end
 
     return nothing

@@ -278,12 +278,12 @@ function process_year(year)
             # Energy balance and atmospheric calculations
             # ============================================================
             @timeit to "calculate_band_forcings" begin
-                @. tair_band = tair_gpu + FloatType(-0.0065) * (elevation_gpu - elev_gpu)
+                @. tair_band = tair_gpu + -0.0065f0 * (elevation_gpu - elev_gpu)
                 
                 @. prec_band = prec_gpu * ifelse(
-                    AreaFract_gpu > FloatType(1e-6),
+                    AreaFract_gpu > 1f-6,
                     Pfactor_gpu / AreaFract_gpu,
-                    FloatType(0.0)
+                    0.0f0
                 )
             end
 

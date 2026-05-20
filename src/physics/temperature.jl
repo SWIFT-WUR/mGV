@@ -125,11 +125,11 @@ function estimate_layer_temperature!(soil_temperature, depth_gpu, dp_gpu, tsurf,
     # --- 1. Update Layer 3 ---
     # Must be done FIRST because it depends on the OLD values of L1 and L2
     # We inline the calculation of top_avg = (L1 + L2) * 0.5
-    @. T_L3 = Tavg_gpu - (dp_gpu / D_L3) * (((T_L1 + T_L2) * ft(0.5)) - Tavg_gpu) * (exp(-(D_L2 + D_L3) / dp_gpu) - exp(-D_L2 / dp_gpu))
+    @. T_L3 = Tavg_gpu - (dp_gpu / D_L3) * (((T_L1 + T_L2) * 0.5f0) - Tavg_gpu) * (exp(-(D_L2 + D_L3) / dp_gpu) - exp(-D_L2 / dp_gpu))
 
     # --- 2. Update Layer 1 ---
     # We inline top_avg again 
-    @. T_L1 = ft(0.5) * (tsurf + ((T_L1 + T_L2) * ft(0.5)))
+    @. T_L1 = 0.5f0 * (tsurf + ((T_L1 + T_L2) * 0.5f0))
 
     # --- 3. Update Layer 2 ---
     # L2 is modeled identically to L1, so we just copy the new L1 values
