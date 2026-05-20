@@ -249,6 +249,7 @@ elseif CASE == "mekong"
     Ws_var = "Ws" #fraction
     Tavg_var = "avg_T" 
     dp_var = "dp"
+    annual_prec_var = "annual_prec"  # mm/year — used to compute snow distribution slope
 
     prec_var = "prec"
     tair_var = "tair"

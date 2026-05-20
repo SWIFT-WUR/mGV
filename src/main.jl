@@ -252,6 +252,7 @@ function process_year(year)
     day_prev = 0
     month_prev = 0
 
+    num_days = 2
     @showprogress "Processing year $year (GPU)..." for day in 1:num_days
         @timeit to "process_year" begin
             month = day_to_month(day, year)
@@ -278,308 +279,308 @@ function process_year(year)
             # Energy balance and atmospheric calculations
             # ============================================================
             @timeit to "calculate_band_forcings" begin
-                @. tair_band = tair_gpu + FloatType(-0.0065) * (elevation_gpu - elev_gpu)
+                tair_band .= tair_gpu .+ FloatType(-0.0065) .* (elevation_gpu .- elev_gpu)
                 
-                @. prec_band = prec_gpu * ifelse(
-                    AreaFract_gpu > FloatType(1e-6),
-                    Pfactor_gpu / AreaFract_gpu,
+                prec_band .= prec_gpu .* ifelse.(
+                    AreaFract_gpu .> FloatType(1e-6),
+                    Pfactor_gpu ./ AreaFract_gpu,
                     FloatType(0.0)
                 )
             end
 
-            @timeit to "compute_aerodynamic_resistance" begin
-                compute_aerodynamic_resistance!(
-                    aerodynamic_resistance,
-                    Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
-                )
-            end
+            # @timeit to "compute_aerodynamic_resistance" begin
+            #     compute_aerodynamic_resistance!(
+            #         aerodynamic_resistance,
+            #         Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
+            #     )
+            # end
 
-            @timeit to "calculate_net_radiation" begin
-                # Step 1: compute WITHOUT snow for PE
-                calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tair_gpu
-                )
-            end
+            # @timeit to "calculate_net_radiation" begin
+            #     # Step 1: compute WITHOUT snow for PE
+            #     calculate_net_radiation!(
+            #         net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tair_gpu
+            #     )
+            # end
 
-            @timeit to "calculate_potential_evaporation" begin
-                calculate_potential_evaporation!(
-                    potential_evaporation,
-                    tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
-                    aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
-                )
-            end
+            # @timeit to "calculate_potential_evaporation" begin
+            #     calculate_potential_evaporation!(
+            #         potential_evaporation,
+            #         tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
+            #         aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
+            #     )
+            # end
 
-            @timeit to "calculate_net_radiation_snow" begin
-                # Step 2: recompute WITH snow for the full energy balance
-                calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
-                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
-                )
-            end
+            # @timeit to "calculate_net_radiation_snow" begin
+            #     # Step 2: recompute WITH snow for the full energy balance
+            #     calculate_net_radiation!(
+            #         net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+            #         snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
+            #     )
+            # end
 
-            @timeit to "calculate_potential_evaporation_soil" begin
-                calculate_potential_evaporation!(
-                    pe_soil,
-                    tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
-                    aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
-                )
-            end
+            # @timeit to "calculate_potential_evaporation_soil" begin
+            #     calculate_potential_evaporation!(
+            #         pe_soil,
+            #         tair_band, tair_gpu, psurf_gpu, vp_gpu, elev_gpu, net_radiation,
+            #         aerodynamic_resistance, rarc_gpu, rmin_gpu, LAI_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Canopy processes
-            # ============================================================
-            @timeit to "calculate_max_water_storage" begin
-                calculate_max_water_storage!(max_water_storage, LAI_gpu, coverage_gpu)
-            end
+            # # ============================================================
+            # # Canopy processes
+            # # ============================================================
+            # @timeit to "calculate_max_water_storage" begin
+            #     calculate_max_water_storage!(max_water_storage, LAI_gpu, coverage_gpu)
+            # end
 
-            @timeit to "calculate_canopy_evaporation" begin
-                calculate_canopy_evaporation!(
-                    canopy_evaporation, f_n,
-                    water_storage, max_water_storage, potential_evaporation,
-                    aerodynamic_resistance, rarc_gpu, prec_band, cv_gpu,
-                    rmin_gpu, LAI_gpu, tair_band, elev_gpu
-                )
-            end
+            # @timeit to "calculate_canopy_evaporation" begin
+            #     calculate_canopy_evaporation!(
+            #         canopy_evaporation, f_n,
+            #         water_storage, max_water_storage, potential_evaporation,
+            #         aerodynamic_resistance, rarc_gpu, prec_band, cv_gpu,
+            #         rmin_gpu, LAI_gpu, tair_band, elev_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Transpiration
-            # ============================================================
-            @timeit to "calculate_transpiration" begin
-                calculate_transpiration!(
-                    # Outputs
-                    transpiration,
-                    transpiration_layers,
-                    # Inputs
-                    potential_evaporation, 
-                    water_storage, 
-                    max_water_storage, 
-                    soil_moisture,
-                    soil_moisture_critical, 
-                    wilting_point, 
-                    root_gpu, 
-                    cv_gpu, 
-                    f_n,
-                    AreaFract_gpu,
-                    tair_gpu,
-                    vp_gpu
-                )
-            end
+            # # ============================================================
+            # # Transpiration
+            # # ============================================================
+            # @timeit to "calculate_transpiration" begin
+            #     calculate_transpiration!(
+            #         # Outputs
+            #         transpiration,
+            #         transpiration_layers,
+            #         # Inputs
+            #         potential_evaporation, 
+            #         water_storage, 
+            #         max_water_storage, 
+            #         soil_moisture,
+            #         soil_moisture_critical, 
+            #         wilting_point, 
+            #         root_gpu, 
+            #         cv_gpu, 
+            #         f_n,
+            #         AreaFract_gpu,
+            #         tair_gpu,
+            #         vp_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Water balance: throughfall (must run BEFORE snow dynamics so
-            # the snow kernel sees today's precipitation, not yesterday's)
-            # ============================================================
-            @timeit to "update_water_canopy_storage" begin
-                update_water_canopy_storage!(
-                    water_storage, throughfall,
-                    prec_band, cv_gpu, canopy_evaporation,
-                    max_water_storage, coverage_gpu
-                )
-            end
+            # # ============================================================
+            # # Water balance: throughfall (must run BEFORE snow dynamics so
+            # # the snow kernel sees today's precipitation, not yesterday's)
+            # # ============================================================
+            # @timeit to "update_water_canopy_storage" begin
+            #     update_water_canopy_storage!(
+            #         water_storage, throughfall,
+            #         prec_band, cv_gpu, canopy_evaporation,
+            #         max_water_storage, coverage_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Snow Dynamics — 4D per-(band × veg) 
-            # ============================================================
-            @timeit to "calculate_snow_dynamics!" begin
-                if enable_snow
-                    # Compute mean latitude for hemisphere detection
-                    lat_mean_val = mean(lat_cpu)
+            # # ============================================================
+            # # Snow Dynamics — 4D per-(band × veg) 
+            # # ============================================================
+            # @timeit to "calculate_snow_dynamics!" begin
+            #     if enable_snow
+            #         # Compute mean latitude for hemisphere detection
+            #         lat_mean_val = mean(lat_cpu)
 
-                    # 4D snow kernel: partitions throughfall[b,v] per tile internally
-                    calculate_snow_dynamics!(
-                        swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
-                        snow_coverage_gpu, snow_melt_gpu,
-                        last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
-                        store_snow_gpu, snow_distrib_slope_gpu,
-                        store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
-                        throughfall, tair_band, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
-                        AreaFract_gpu, cv_gpu, annual_prec_gpu,
-                        day, Float64(lat_mean_val)
-                    )
+            #         # 4D snow kernel: partitions throughfall[b,v] per tile internally
+            #         calculate_snow_dynamics!(
+            #             swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
+            #             snow_coverage_gpu, snow_melt_gpu,
+            #             last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
+            #             store_snow_gpu, snow_distrib_slope_gpu,
+            #             store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
+            #             throughfall, tair_band, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
+            #             AreaFract_gpu, cv_gpu, annual_prec_gpu,
+            #             day, Float64(lat_mean_val)
+            #         )
 
-                    # Total per-band soil influx: snow_melt_gpu contains ALL outflow (pack drainage + bare rain)
-                    melt_band_gpu .= dropdims(
-                        sum(ifelse.(isnan.(snow_melt_gpu .* cv_gpu), ft(0.0), snow_melt_gpu .* cv_gpu), dims=4),
-                        dims=4)
-                    ppt_gpu .= melt_band_gpu
+            #         # Total per-band soil influx: snow_melt_gpu contains ALL outflow (pack drainage + bare rain)
+            #         melt_band_gpu .= dropdims(
+            #             sum(ifelse.(isnan.(snow_melt_gpu .* cv_gpu), ft(0.0), snow_melt_gpu .* cv_gpu), dims=4),
+            #             dims=4)
+            #         ppt_gpu .= melt_band_gpu
 
-                    # Broadcast back to 4D throughfall for downstream soil/runoff modules
-                    # (they expect throughfall[b,v] = same water input for all veg tiles)
-                    nx_s, ny_s, nb_s = size(ppt_gpu)
-                    nv_s = size(throughfall, 4)
-                    throughfall .= repeat(reshape(ppt_gpu, nx_s, ny_s, nb_s, 1), 1, 1, 1, nv_s)
-                else
-                    ppt_gpu .= dropdims(sum(throughfall, dims=(3,4)), dims=(3,4))
-                end
-            end
+            #         # Broadcast back to 4D throughfall for downstream soil/runoff modules
+            #         # (they expect throughfall[b,v] = same water input for all veg tiles)
+            #         nx_s, ny_s, nb_s = size(ppt_gpu)
+            #         nv_s = size(throughfall, 4)
+            #         throughfall .= repeat(reshape(ppt_gpu, nx_s, ny_s, nb_s, 1), 1, 1, 1, nv_s)
+            #     else
+            #         ppt_gpu .= dropdims(sum(throughfall, dims=(3,4)), dims=(3,4))
+            #     end
+            # end
 
-            # ============================================================
-            # Soil evaporation
-            # ============================================================
-            @timeit to "calculate_soil_evaporation" begin
-                calculate_soil_evaporation!(
-                    soil_evaporation,
-                    soil_moisture, soil_moisture_max, pe_soil,  # Step 2 (snow-blended) PE
-                    b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
-                )
-            end
+            # # ============================================================
+            # # Soil evaporation
+            # # ============================================================
+            # @timeit to "calculate_soil_evaporation" begin
+            #     calculate_soil_evaporation!(
+            #         soil_evaporation,
+            #         soil_moisture, soil_moisture_max, pe_soil,  # Step 2 (snow-blended) PE
+            #         b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
+            #     )
+            # end
 
-            @timeit to "calculate_surface_runoff" begin
-                calculate_surface_runoff!(
-                    surface_runoff, asat,
-                    throughfall, soil_moisture,
-                    soil_moisture_max, b_infilt_gpu, cv_gpu, AreaFract_gpu
-                )
-            end
+            # @timeit to "calculate_surface_runoff" begin
+            #     calculate_surface_runoff!(
+            #         surface_runoff, asat,
+            #         throughfall, soil_moisture,
+            #         soil_moisture_max, b_infilt_gpu, cv_gpu, AreaFract_gpu
+            #     )
+            # end
 
-            @timeit to "calculate_infiltration" begin
-                calculate_infiltration!(infiltration, throughfall, surface_runoff, cv_gpu)
-            end
+            # @timeit to "calculate_infiltration" begin
+            #     calculate_infiltration!(infiltration, throughfall, surface_runoff, cv_gpu)
+            # end
 
-            # ============================================================
-            # Soil moisture update
-            # ============================================================
-            @timeit to "transpiration_grid" begin
-                transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
-            end
+            # # ============================================================
+            # # Soil moisture update
+            # # ============================================================
+            # @timeit to "transpiration_grid" begin
+            #     transpiration_grid = sum(transpiration_layers .* coverage_gpu, dims=4)
+            # end
 
-            @timeit to "solve_runoff_and_drainage" begin
-                solve_runoff_and_drainage!(
-                    soil_moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
-                    infiltration, soil_evaporation, transpiration_grid,
-                    soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
-                    Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
-                )
-            end
+            # @timeit to "solve_runoff_and_drainage" begin
+            #     solve_runoff_and_drainage!(
+            #         soil_moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
+            #         infiltration, soil_evaporation, transpiration_grid,
+            #         soil_moisture_max, ksat_gpu, residual_moisture, expt_gpu,
+            #         Dsmax_gpu, Ds_gpu, Ws_gpu, c_expt_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Total fluxes
-            # ============================================================
-            @timeit to "compute_total_fluxes" begin
-                calculate_total_evapotranspiration!(
-                    total_et,
-                    canopy_evaporation, transpiration, soil_evaporation,
-                    cv_gpu, coverage_gpu, AreaFract_gpu
-                )
-                calculate_total_runoff!(
-                    total_runoff,
-                    surface_runoff,
-                    subsurface_runoff
-                )
-            end
+            # # ============================================================
+            # # Total fluxes
+            # # ============================================================
+            # @timeit to "compute_total_fluxes" begin
+            #     calculate_total_evapotranspiration!(
+            #         total_et,
+            #         canopy_evaporation, transpiration, soil_evaporation,
+            #         cv_gpu, coverage_gpu, AreaFract_gpu
+            #     )
+            #     calculate_total_runoff!(
+            #         total_runoff,
+            #         surface_runoff,
+            #         subsurface_runoff
+            #     )
+            # end
 
-            # ============================================================
-            # Routing
-            # ============================================================
-            if enable_routing
-                @timeit to "run_routing" begin
-                    run_routing_step!(
-                        routing_state,
-                        total_runoff,
-                        DAY_SEC
-                    )
-                end
-            end
+            # # ============================================================
+            # # Routing
+            # # ============================================================
+            # if enable_routing
+            #     @timeit to "run_routing" begin
+            #         run_routing_step!(
+            #             routing_state,
+            #             total_runoff,
+            #             DAY_SEC
+            #         )
+            #     end
+            # end
 
-            # ============================================================
-            # Soil thermal properties & soil temperature
-            # ============================================================
-            @timeit to "soil_conductivity" begin
-                soil_conductivity!(
-                    kappa_array, soil_moisture, ice_frac,
-                    soil_dens_min, bulk_dens_min, quartz_gpu,
-                    organic_frac_gpu, porosity
-                )
-            end
+            # # ============================================================
+            # # Soil thermal properties & soil temperature
+            # # ============================================================
+            # @timeit to "soil_conductivity" begin
+            #     soil_conductivity!(
+            #         kappa_array, soil_moisture, ice_frac,
+            #         soil_dens_min, bulk_dens_min, quartz_gpu,
+            #         organic_frac_gpu, porosity
+            #     )
+            # end
 
-            @timeit to "volumetric_heat_capacity" begin
-                volumetric_heat_capacity!(
-                    cs_array, bulk_dens_gpu, soil_dens_gpu, soil_moisture,
-                    RHO_W, ice_frac, ORGANIC_FRAC
-                )
-            end
+            # @timeit to "volumetric_heat_capacity" begin
+            #     volumetric_heat_capacity!(
+            #         cs_array, bulk_dens_gpu, soil_dens_gpu, soil_moisture,
+            #         RHO_W, ice_frac, ORGANIC_FRAC
+            #     )
+            # end
 
-            @timeit to "estimate_layer_temperature" begin
-                estimate_layer_temperature!(
-                    soil_temperature, depth_gpu, dp_gpu, tsurf, Tavg_gpu
-                )
-            end
+            # @timeit to "estimate_layer_temperature" begin
+            #     estimate_layer_temperature!(
+            #         soil_temperature, depth_gpu, dp_gpu, tsurf, Tavg_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Surface temperature 
-            # ============================================================
-            if day == 1 && year == start_year
-                @timeit to "solve_surface_temperature_init" begin
-                    solve_surface_temperature!(
-                        tsurf,
-                        soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
-                        aerodynamic_resistance,
-                        kappa_array, depth_gpu, DAY_SEC, cs_array, total_et,
-                        tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
-                    )
-                end
+            # # ============================================================
+            # # Surface temperature 
+            # # ============================================================
+            # if day == 1 && year == start_year
+            #     @timeit to "solve_surface_temperature_init" begin
+            #         solve_surface_temperature!(
+            #             tsurf,
+            #             soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+            #             aerodynamic_resistance,
+            #             kappa_array, depth_gpu, DAY_SEC, cs_array, total_et,
+            #             tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
+            #         )
+            #     end
 
-                @timeit to "compute_aerodynamic_resistance" begin
-                    compute_aerodynamic_resistance!(
-                        aerodynamic_resistance,
-                        Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
-                    )
-                end
-            end
+            #     @timeit to "compute_aerodynamic_resistance" begin
+            #         compute_aerodynamic_resistance!(
+            #             aerodynamic_resistance,
+            #             Z2, d0_gpu, z0_gpu, z0soil_gpu, tsurf, tair_band, wind_gpu, cv_gpu
+            #         )
+            #     end
+            # end
 
-            @timeit to "solve_surface_temperature" begin
-                solve_surface_temperature!(
-                    tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
-                    aerodynamic_resistance,
-                    kappa_array, depth_gpu, DAY_SEC, cs_array, total_et,
-                    tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
-                )
-            end
+            # @timeit to "solve_surface_temperature" begin
+            #     solve_surface_temperature!(
+            #         tsurf, soil_temperature, albedo_gpu, swdown_gpu, lwdown_gpu,
+            #         aerodynamic_resistance,
+            #         kappa_array, depth_gpu, DAY_SEC, cs_array, total_et,
+            #         tair_gpu, cv_gpu, psurf_gpu, AreaFract_gpu
+            #     )
+            # end
 
-            # ============================================================
-            # Preprocess & Write Outputs
-            # ============================================================
-            @timeit to "calculate_net_radiation_post_closure" begin
-                calculate_net_radiation!(
-                    net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
-                    snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
-                )
-            end
+            # # ============================================================
+            # # Preprocess & Write Outputs
+            # # ============================================================
+            # @timeit to "calculate_net_radiation_post_closure" begin
+            #     calculate_net_radiation!(
+            #         net_radiation, swdown_gpu, lwdown_gpu, albedo_gpu, tsurf,
+            #         snow_coverage_gpu, snow_albedo_gpu, snow_surf_temp_gpu
+            #     )
+            # end
             
-            @timeit to "preprocess_daily_data" begin
-                gpu_results = preprocess_daily_outputs(
-                    day, tsurf, tair_gpu, prec_gpu,
-                    total_et, surface_runoff, total_runoff,
-                    soil_evaporation, soil_moisture,
-                    potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
-                    coverage_gpu, cv_gpu, fillvalue_threshold,
-                    swe_gpu, surf_water_gpu, pack_water_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
-                    AreaFract_gpu
-                )
-            end
+            # @timeit to "preprocess_daily_data" begin
+            #     gpu_results = preprocess_daily_outputs(
+            #         day, tsurf, tair_gpu, prec_gpu,
+            #         total_et, surface_runoff, total_runoff,
+            #         soil_evaporation, soil_moisture,
+            #         potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
+            #         coverage_gpu, cv_gpu, fillvalue_threshold,
+            #         swe_gpu, surf_water_gpu, pack_water_gpu, snow_albedo_gpu, snow_surf_temp_gpu, snow_coverage_gpu, snow_melt_gpu,
+            #         AreaFract_gpu
+            #     )
+            # end
 
-            @timeit to "outputs" begin
+            # @timeit to "outputs" begin
                 
-                # Get a free buffer from the pool 
-                # (Instant unless disk is >4 days behind)
-                local current_buf
-                @timeit to "wait_for_buffer" begin
-                    current_buf = get_free_buffer(io_service)
-                end
+            #     # Get a free buffer from the pool 
+            #     # (Instant unless disk is >4 days behind)
+            #     local current_buf
+            #     @timeit to "wait_for_buffer" begin
+            #         current_buf = get_free_buffer(io_service)
+            #     end
 
-                # Transfer GPU -> CPU (RAM copy)
-                @timeit to "gpu_transfer" begin
-                    async_transfer!(gpu_results, current_buf)
-                end
+            #     # Transfer GPU -> CPU (RAM copy)
+            #     @timeit to "gpu_transfer" begin
+            #         async_transfer!(gpu_results, current_buf)
+            #     end
             
-                # Hand off to background thread and continue simulation immediately.
-                @timeit to "async_submit" begin
-                    submit_buffer(io_service, day, current_buf)
-                end
-            end
+            #     # Hand off to background thread and continue simulation immediately.
+            #     @timeit to "async_submit" begin
+            #         submit_buffer(io_service, day, current_buf)
+            #     end
+            # end
 
-            day_prev = day
-            month_prev = month
+            # day_prev = day
+            # month_prev = month
         end
     end
 
