@@ -32,7 +32,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install Python dependencies
-        run: pip install numpy
+        run: pip install numpy netCDF4
 
       # 4. Execute the script
       - name: Run validations
