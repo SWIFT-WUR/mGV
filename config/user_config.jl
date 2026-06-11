@@ -1,8 +1,45 @@
+using TOML
+
+
+"""Validate the path of a file relative to the given directory."""
+function validate_path(file, dir)
+    file = abspath(joinpath(dir, file))
+    if endswith(file, "_")
+        files = readdir(dirname(file))
+        n_matching_files = sum(startswith.(files, basename(file)))
+        if n_matching_files < 1
+            error("No files found in ", dirname(file), "starting with", basename(file))
+        end
+    elseif !isfile(file)
+        error("Cannot find file '$file'")
+    end
+    return file
+end
+
+
 config_file = parse_args()
 
 println("Loading configuration file...")
 
-cfg = from_toml(Config, config_file)
+cfg_dict = TOML.parsefile(config_file)
+
+# Make all input paths absolute, make relative path abs to config
+for (key, path) in cfg_dict["input"]["paths"]
+    cfg_dict["input"]["paths"][key] = validate_path(path, dirname(config_file))
+end
+
+# Check that parent directory of output dir exists, make relative path abs to config
+if !isabspath(cfg_dict["output"]["dir"])
+    output_dir = joinpath(dirname(config_file), dirname(cfg_dict["output"]["dir"]))
+    if !isdir(output_dir)
+        error(
+            "Output parent directory '$output_dir' does not exist or is not a directory."
+        )
+    end
+    cfg_dict["output"]["dir"] = joinpath(output_dir, basename(cfg_dict["output"]["dir"]))
+end
+
+cfg = from_dict(Config, cfg_dict)
 
 start_year = cfg.start_year
 end_year   = cfg.end_year

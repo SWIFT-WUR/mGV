@@ -7,21 +7,21 @@ enable_snow = true
 fillvalue_threshold = 1e15
 
 [output]
-dir         = "./output_data/global/"
+dir         = "../output_data/global/"
 file_prefix = "outputfile_global_"
 
 [input]
 [input.paths]
-input_param_file       = "input_data/global/era5_0_25_vic_params_w_depth.nc"
-coverage_file          = "input_data/global/global_0.25deg_coverage_reordered.nc"
-routing_param_file     = "./input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
-input_prec_prefix      = "./input_data/global/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_f32_"
-input_tair_prefix      = "./input_data/global/forcing/tair/tair_WFDE5_v2.0_5arcmin_f32_"
-input_wind_prefix      = "./input_data/global/forcing/wind/wind_WFDE5_v2.0_5arcmin_f32_"
-input_vp_prefix        = "./input_data/global/forcing/vp/vp_WFDE5_v2.0_5arcmin_f32_"
-input_swdown_prefix    = "./input_data/global/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_f32_"
-input_lwdown_prefix    = "./input_data/global/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_f32_"
-input_psurf_prefix     = "./input_data/global/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_f32_"
+input_param_file       = "../input_data/global/era5_0_25_vic_params_w_depth.nc"
+coverage_file          = "../input_data/global/global_0.25deg_coverage_reordered.nc"
+routing_param_file     = "../input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
+input_prec_prefix      = "../input_data/global/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_f32_"
+input_tair_prefix      = "../input_data/global/forcing/tair/tair_WFDE5_v2.0_5arcmin_f32_"
+input_wind_prefix      = "../input_data/global/forcing/wind/wind_WFDE5_v2.0_5arcmin_f32_"
+input_vp_prefix        = "../input_data/global/forcing/vp/vp_WFDE5_v2.0_5arcmin_f32_"
+input_swdown_prefix    = "../input_data/global/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_f32_"
+input_lwdown_prefix    = "../input_data/global/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_f32_"
+input_psurf_prefix     = "../input_data/global/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_f32_"
 
 [input.names]
 lat = "lat"
