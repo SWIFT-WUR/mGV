@@ -23,8 +23,18 @@ jobs:
         with:
           version: '1'
 
-      # 3. Execute the script
+      - name: Install Julia dependencies
+        run: julia --project -e 'using Pkg; Pkg.instantiate()'
+
+      # 3. Set up Python & Numpy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python dependencies
+        run: pip install numpy
+
+      # 4. Execute the script
       - name: Run validations
         run: bash run_validations.sh
-
 
