@@ -34,6 +34,13 @@ jobs:
       - name: Install Python dependencies
         run: pip install numpy netCDF4
 
+      - name: Show file paths
+        run: |
+          pwd
+          ls -la
+          ls -la input_data/mekong/
+
+
       # 4. Execute the script
       - name: Run validations
         run: bash run_validations.sh
