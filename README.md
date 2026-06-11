@@ -27,7 +27,7 @@ julia --project=. -e 'import Pkg; Pkg.instantiate()'
 To run the program:
 
 ```bash
-julia --project=. run.jl mekong 1979 1980
+julia --project=. run.jl configs/config_mekong.toml
 ```
 
-This will provide output netCDF files for the Mekong region, years 1979 and 1980. Currently we only provide forcing and landsurface parameter files for the (small) Mekong region in this repo, due to file-size considerations. Data for the entire globe and the indus region will be made available at a later point in development, or can be made available upon request.
+This will provide output netCDF files for the Mekong region, years 1979 to 1984. Currently we only provide forcing and landsurface parameter files for the (small) Mekong region in this repo, due to file-size considerations. Data for the entire globe and the indus region will be made available at a later point in development, or can be made available upon request.

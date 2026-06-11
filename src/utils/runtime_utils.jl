@@ -1,17 +1,20 @@
-function parse_case_args()
-    # Use the first argument in ARGS as the CASE, defaulting to "global" if not provided
-    local_case = length(ARGS) > 0 ? ARGS[1] : "global"
-    
+function parse_args()
     # Notify the user if defaulting to "global"
-    if length(ARGS) == 0
-        println("No CASE provided. Defaulting to 'global'.")
+    if length(ARGS) != 1
+        error("run script requires a single argument, the path to the config file.")
     end
     
-    # Parse optional start and end year from ARGS
-    local_start_year_arg = length(ARGS) > 1 ? parse(Int, ARGS[2]) : nothing
-    local_end_year_arg   = length(ARGS) > 2 ? parse(Int, ARGS[3]) : nothing
-    
-    return local_case, local_start_year_arg, local_end_year_arg
+    config_file = ARGS[1]
+
+    if !isabspath(config_file)
+        config_file = abspath(config_file)
+    end
+
+    if !isfile(config_file)
+        error("Provided config file does not exist, or is not reachable from this path!")
+    end
+
+    return config_file
 end
 
 function ensure_output_directory(output_dir::String)
