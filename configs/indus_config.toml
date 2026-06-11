@@ -1,0 +1,26 @@
+start_year = 1979
+end_year = 2020
+enable_routing = false
+nveg = 22
+
+[output]
+dir         = "./output_data/mekong/"
+file_prefix = "outputfile_mekong_"
+
+[input]
+[input.paths]
+input_param_file    = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
+routing_param_file  = "./input_data/indus/routing/VIC_rout_params_Indus.nc"
+coverage_file       = "input_data/indus/vic_indus_50km_coverage.nc"
+input_prec_prefix   = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
+input_tair_prefix   = "./input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_"
+input_wind_prefix   = "./input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_"
+input_vp_prefix     = "./input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_"
+input_swdown_prefix = "./input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_"
+input_lwdown_prefix = "./input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_"
+input_psurf_prefix  = "./input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_"
+
+[input.names]
+prec = "pr"
+tair = "tas"
+wind = "wind10" 

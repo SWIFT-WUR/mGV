@@ -1,0 +1,77 @@
+start_year = 1979
+end_year = 2020
+
+nveg = 14
+enable_routing = true
+enable_snow = true
+fillvalue_threshold = 1e15
+
+[output]
+dir         = "./output_data/global/"
+file_prefix = "outputfile_global_"
+
+[input]
+[input.paths]
+input_param_file       = "input_data/global/era5_0_25_vic_params_w_depth.nc"
+coverage_file          = "input_data/global/global_0.25deg_coverage_reordered.nc"
+routing_param_file     = "./input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
+input_prec_prefix      = "./input_data/global/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_f32_"
+input_tair_prefix      = "./input_data/global/forcing/tair/tair_WFDE5_v2.0_5arcmin_f32_"
+input_wind_prefix      = "./input_data/global/forcing/wind/wind_WFDE5_v2.0_5arcmin_f32_"
+input_vp_prefix        = "./input_data/global/forcing/vp/vp_WFDE5_v2.0_5arcmin_f32_"
+input_swdown_prefix    = "./input_data/global/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_f32_"
+input_lwdown_prefix    = "./input_data/global/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_f32_"
+input_psurf_prefix     = "./input_data/global/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_f32_"
+
+[input.names]
+lat = "lat"
+lon = "lon"
+d0 = "displacement"
+z0 = "veg_rough"
+z0soil = "rough"
+LAI = "LAI"
+rmin = "rmin"
+rarc = "rarc"
+cv = "Cv"
+elev = "elev"
+residmoist = "resid_moist"
+init_moist = "init_moist"
+c_expt = "c"
+
+AreaFract = "AreaFract"
+elevation = "elevation"
+Pfactor = "Pfactor"
+
+ksat = "Ksat"
+albedo = "albedo"
+root = "root_fract"
+
+# === Field Capacity, Wilting Point, and Critical Moisture related variables ===
+Wcr = "Wcr_FRACT" #Wcr_FRACT(nlayer, lat, lon) 
+Wfc = "Wfc_FRACT" #Wfc_FRACT(nlayer, lat, lon) 
+Wpwp = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
+coverage = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
+quartz = "quartz" #quartz(nlayer, lat, lon)
+
+# === Extract Soil Parameters ===
+depth = "depth" #depth(nlayer, lat, lon)
+bulk_dens = "bulk_density" #bulk_density(nlayer, lat, lon)
+soil_dens = "soil_density" #soil_density(nlayer, lat, lon) 
+expt = "expt"
+b_infilt = "infilt"
+
+# === Subsurface Parameters ===
+Ds = "Ds" #fraction
+Dsmax = "Dsmax" #mm/day
+Ws = "Ws" #fraction
+Tavg = "avg_T" 
+dp = "dp"
+
+annual_prec = "annual_prec"  # mm/year — used to compute snow distribution slope
+prec = "prec"
+tair = "tair"
+wind = "wind" 
+vp = "vp"
+swdown = "swdown"
+lwdown = "lwdown"
+psurf = "psurf"

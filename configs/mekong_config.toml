@@ -1,0 +1,22 @@
+start_year = 1979
+end_year = 2020
+enable_snow = false
+
+[output]
+dir         = "./output_data/mekong/"
+file_prefix = "outputfile_mekong_"
+
+[input]
+[input.paths]
+input_param_file       = "input_data/mekong/vic_mekong_5min_params.nc"
+coverage_file          = "input_data/mekong/vic_mekong_5min_coverage.nc"
+routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
+input_prec_prefix      = "./input_data/mekong/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"
+input_tair_prefix      = "./input_data/mekong/forcing/tair/tair_WFDE5_v2.0_5arcmin_"
+input_wind_prefix      = "./input_data/mekong/forcing/wind/wind_WFDE5_v2.0_5arcmin_"
+input_vp_prefix        = "./input_data/mekong/forcing/vp/vp_WFDE5_v2.0_5arcmin_"
+input_swdown_prefix    = "./input_data/mekong/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_"
+input_lwdown_prefix    = "./input_data/mekong/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_"
+input_psurf_prefix     = "./input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_"
+
+[input.names]
