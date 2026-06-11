@@ -9,6 +9,7 @@ include("src/utils/diagnostics.jl")
 include("src/backend_setup.jl")
 
 # Load user-modifiable configuration
+include("src/config.jl")
 include("config/user_config.jl")
 
 # Constants

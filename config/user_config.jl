@@ -1,277 +1,112 @@
-CASE, start_year_arg, end_year_arg = parse_case_args()
+using TOML
 
-lat_var = "lat"
-lon_var = "lon"
 
-# Load the configuration matching the input argument:
-if CASE == "global"
-
-    println("Loading configuration for 'global'...")
-    global nveg = 14
-    global enable_routing = true
-
-    # =========================== GLOBAL CONFIGURATION ===========================
-        
-    # Input file paths/names
-    input_param_file       = get(ENV, "MGV_PARAMS_FILE", "input_data/global/era5_0_25_vic_params_w_depth.nc")
-    coverage_file          = get(ENV, "MGV_COVERAGE_FILE", "input_data/global/global_0.25deg_coverage_reordered.nc")
-    routing_param_file     = "./input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
-    enable_snow            = true # Default to true for global
-    fillvalue_threshold    = ft(1e15)
-
-    input_prec_prefix      = "./input_data/global/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_f32_"
-    input_tair_prefix      = "./input_data/global/forcing/tair/tair_WFDE5_v2.0_5arcmin_f32_"
-    input_wind_prefix      = "./input_data/global/forcing/wind/wind_WFDE5_v2.0_5arcmin_f32_"
-    input_vp_prefix        = "./input_data/global/forcing/vp/vp_WFDE5_v2.0_5arcmin_f32_"
-    input_swdown_prefix    = "./input_data/global/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_f32_"
-    input_lwdown_prefix    = "./input_data/global/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_f32_"
-    input_psurf_prefix     = "./input_data/global/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_f32_"
-
-    # Input variable names (as specified in the input files' metadata)
-    d0_var = "displacement"
-    z0_var = "veg_rough"
-    z0soil_var = "rough"
-    LAI_var = "LAI"
-    rmin_var = "rmin"
-    rarc_var = "rarc"
-    cv_var = "Cv"
-    elev_var = "elev"
-    residmoist_var = "resid_moist"
-    init_moist_var = "init_moist"
-    c_expt_var = "c"
-    
-    AreaFract_var = "AreaFract"
-    elevation_var = "elevation"
-    Pfactor_var = "Pfactor"
-
-    ksat_var = "Ksat"
-    albedo_var = "albedo"
-    root_var = "root_fract" # root_fract(veg_class, root_zone, lat, lon) ;
-    #root_fract_layer1 = root_fract[:, 0, :, :]
-    #root_fract_layer2 = root_fract[:, 1, :, :]
-    
-    # === Field Capacity, Wilting Point, and Critical Moisture related variables ===
-    Wcr_var = "Wcr_FRACT" #Wcr_FRACT(nlayer, lat, lon) 
-    Wfc_var = "Wfc_FRACT" #Wfc_FRACT(nlayer, lat, lon) 
-    Wpwp_var = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
-    coverage_var = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
-    quartz_var = "quartz" #quartz(nlayer, lat, lon)
-
-    # === Extract Soil Parameters ===
-    depth_var = "depth" #depth(nlayer, lat, lon)
-    bulk_dens_var = "bulk_density" #bulk_density(nlayer, lat, lon)
-    soil_dens_var = "soil_density" #soil_density(nlayer, lat, lon) 
-    expt_var = "expt"
-    b_infilt_var = "infilt"
-
-    # === Subsurface Parameters ===
-    Ds_var = "Ds" #fraction
-    Dsmax_var = "Dsmax" #mm/day
-    Ws_var = "Ws" #fraction
-    Tavg_var = "avg_T" 
-    dp_var = "dp"
-
-    prec_var = "prec"
-    tair_var = "tair"
-    wind_var = "wind" 
-    vp_var = "vp"
-    swdown_var = "swdown"
-    lwdown_var = "lwdown"
-    psurf_var = "psurf"
-
-    # Output file paths/names
-    output_dir             = "./output_data/global/"
-    output_file_prefix     = "outputfile_global_"
-    
-    # Set default simulation years if no command-line arguments are provided
-    start_year             = isnothing(start_year_arg) ? 1979 : start_year_arg
-    end_year               = isnothing(end_year_arg)   ? 2019 : end_year_arg
-    
-    # ========================= END GLOBAL CONFIGURATION ==========================
-
-    ensure_output_directory(output_dir)
-    println("Running from year $start_year to year $end_year.\n")
-
-elseif CASE == "indus"
-
-    println("Loading configuration for 'indus'...")
-    global nveg = 22
-    global enable_routing = false
-
-    # ============================ INDUS CONFIGURATION ============================
-   
-    # Input file paths/names
-    input_param_file       = "./input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
-    routing_param_file     = "./input_data/indus/routing/VIC_rout_params_Indus.nc"
-    coverage_file          = "input_data/indus/vic_indus_50km_coverage.nc"
-    # Enable snow
-    enable_snow            = true
-    fillvalue_threshold    = ft(1e15)
-    # -------------------------------------------------------------
-
-    input_prec_prefix      = "./input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
-    input_tair_prefix      = "./input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_"
-    input_wind_prefix      = "./input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_"
-    input_vp_prefix        = "./input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_"
-    input_swdown_prefix    = "./input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_"
-    input_lwdown_prefix    = "./input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_"
-    input_psurf_prefix     = "./input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_"
-    
-    # Input variable names (as specified in the input files' metadata)
-    d0_var = "displacement"
-    z0_var = "veg_rough"
-    z0soil_var = "rough"
-    LAI_var = "LAI"
-    rmin_var = "rmin"
-    rarc_var = "rarc"
-    cv_var = "Cv"
-    elev_var = "elev"
-    residmoist_var = "resid_moist"
-    init_moist_var = "init_moist"
-    c_expt_var = "c"
-
-    AreaFract_var = "AreaFract"
-    elevation_var = "elevation"
-    Pfactor_var = "Pfactor"
-
-    ksat_var = "Ksat"
-    albedo_var = "albedo"
-    root_var = "root_fract" # root_fract(veg_class, root_zone, lat, lon) ;
-    #root_fract_layer1 = root_fract[:, 0, :, :]
-    #root_fract_layer2 = root_fract[:, 1, :, :]
-    
-    # === Field Capacity, Wilting Point, and Critical Moisture related variables ===
-    Wcr_var = "Wcr_FRACT" #Wcr_FRACT(nlayer, lat, lon) 
-    Wfc_var = "Wfc_FRACT" #Wfc_FRACT(nlayer, lat, lon) 
-    Wpwp_var = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
-    coverage_var = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
-    quartz_var = "quartz" #quartz(nlayer, lat, lon)
-
-    # === Extract Soil Parameters ===
-    depth_var = "depth" #depth(nlayer, lat, lon)
-    bulk_dens_var = "bulk_density" #bulk_density(nlayer, lat, lon)
-    soil_dens_var = "soil_density" #soil_density(nlayer, lat, lon) 
-    expt_var = "expt"
-    b_infilt_var = "infilt"
-
-    # === Subsurface Parameters ===
-    Ds_var = "Ds" #fraction
-    Dsmax_var = "Dsmax" #mm/day
-    Ws_var = "Ws" #fraction
-    Tavg_var = "avg_T" 
-    dp_var = "dp"
-    annual_prec_var = "annual_prec"  # mm/year — used to compute snow distribution slope
-
-    prec_var = "pr"
-    tair_var = "tas"
-    wind_var = "wind10" 
-    vp_var = "vp"
-    swdown_var = "swdown"
-    lwdown_var = "lwdown"
-    psurf_var = "psurf"
-
-    # Output file paths/names
-    output_dir             = "./output_data/indus/"
-    output_file_prefix     = "outputfile_indus_"
-    
-    # Set default simulation years if no command-line arguments are provided
-    start_year             = isnothing(start_year_arg) ? 1979 : start_year_arg
-    end_year               = isnothing(end_year_arg)   ? 2010 : end_year_arg
-    
-    # ========================== END INDUS CONFIGURATION ==========================
-
-    ensure_output_directory(output_dir)
-    println("Running from year $start_year to year $end_year. \n")
-
-elseif CASE == "mekong"
-
-    println("Loading configuration for 'mekong'...")
-    global nveg = 14
-    global enable_routing = true
-    # ============================ MEKONG CONFIGURATION ============================
-   
-    # Input file paths/names
-    input_param_file       = "input_data/mekong/vic_mekong_5min_params.nc"
-    coverage_file          = "input_data/mekong/vic_mekong_5min_coverage.nc"
-    routing_param_file     = "./input_data/mekong/routing/VIC_rout_params_Mekong.nc"
-    # Enable snow for Mekong
-    enable_snow            = false
-    fillvalue_threshold    = ft(1e15)
-
-    input_prec_prefix      = "./input_data/mekong/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_"
-    input_tair_prefix      = "./input_data/mekong/forcing/tair/tair_WFDE5_v2.0_5arcmin_"
-    input_wind_prefix      = "./input_data/mekong/forcing/wind/wind_WFDE5_v2.0_5arcmin_"
-    input_vp_prefix        = "./input_data/mekong/forcing/vp/vp_WFDE5_v2.0_5arcmin_"
-    input_swdown_prefix    = "./input_data/mekong/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_"
-    input_lwdown_prefix    = "./input_data/mekong/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_"
-    input_psurf_prefix     = "./input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_"
-
-    # Input variable names (as specified in the input files' metadata)
-    d0_var = "displacement"
-    z0_var = "veg_rough"
-    z0soil_var = "rough"
-    LAI_var = "LAI"
-    rmin_var = "rmin"
-    rarc_var = "rarc"
-    cv_var = "Cv"
-    elev_var = "elev"
-    residmoist_var = "resid_moist"
-    init_moist_var = "init_moist"
-    c_expt_var = "c"
-
-    AreaFract_var = "AreaFract"
-    elevation_var = "elevation"
-    Pfactor_var = "Pfactor"
-
-    ksat_var = "Ksat"
-    albedo_var = "albedo"
-    root_var = "root_fract" # root_fract(veg_class, root_zone, lat, lon) ;
-    #root_fract_layer1 = root_fract[:, 0, :, :]
-    #root_fract_layer2 = root_fract[:, 1, :, :]
-    
-    # === Field Capacity, Wilting Point, and Critical Moisture related variables ===
-    Wcr_var = "Wcr_FRACT" #Wcr_FRACT(nlayer, lat, lon) 
-    Wfc_var = "Wfc_FRACT" #Wfc_FRACT(nlayer, lat, lon) 
-    Wpwp_var = "Wpwp_FRACT" #Wpwp_FRACT(nlayer, lat, lon) 
-    coverage_var = "fcanopy" #fcanopy(veg_class, month, lat, lon) # "canopy coverage"
-    quartz_var = "quartz" #quartz(nlayer, lat, lon)
-
-    # === Extract Soil Parameters ===
-    depth_var = "depth" #depth(nlayer, lat, lon)
-    bulk_dens_var = "bulk_density" #bulk_density(nlayer, lat, lon)
-    soil_dens_var = "soil_density" #soil_density(nlayer, lat, lon) 
-    expt_var = "expt"
-    b_infilt_var = "infilt"
-
-    # === Subsurface Parameters ===
-    Ds_var = "Ds" #fraction
-    Dsmax_var = "Dsmax" #mm/day
-    Ws_var = "Ws" #fraction
-    Tavg_var = "avg_T" 
-    dp_var = "dp"
-
-    prec_var = "prec"
-    tair_var = "tair"
-    wind_var = "wind" 
-    vp_var = "vp"
-    swdown_var = "swdown"
-    lwdown_var = "lwdown"
-    psurf_var = "psurf"
-
-    # Output file paths/names
-    output_dir             = "./output_data/mekong/"
-    output_file_prefix     = "outputfile_mekong_"
-    
-    # Set default simulation years if no command-line arguments are provided
-    start_year             = isnothing(start_year_arg) ? 1979 : start_year_arg
-    end_year               = isnothing(end_year_arg)   ? 1984 : end_year_arg
-    
-    # ========================== END INDUS CONFIGURATION ==========================
-
-    ensure_output_directory(output_dir)
-    println("Running from year $start_year to year $end_year. \n")
-
-else
-    error("Unknown CASE: '$CASE'. Please provide 'global' or 'indus' (or any other case defined in init.jl) as the first argument.")
+"""Validate the path of a file relative to the given directory."""
+function validate_path(file, dir)
+    file = abspath(joinpath(dir, file))
+    if endswith(file, "_")
+        files = readdir(dirname(file))
+        n_matching_files = sum(startswith.(files, basename(file)))
+        if n_matching_files < 1
+            error("No files found in ", dirname(file), "starting with", basename(file))
+        end
+    elseif !isfile(file)
+        error("Cannot find file '$file'")
+    end
+    return file
 end
 
+
+config_file = parse_args()
+
+println("Loading configuration file...")
+
+cfg_dict = TOML.parsefile(config_file)
+
+# Make all input paths absolute, make relative path abs to config
+for (key, path) in cfg_dict["input"]["paths"]
+    cfg_dict["input"]["paths"][key] = validate_path(path, dirname(config_file))
+end
+
+# Check that parent directory of output dir exists, make relative path abs to config
+if !isabspath(cfg_dict["output"]["dir"])
+    output_dir = joinpath(dirname(config_file), dirname(cfg_dict["output"]["dir"]))
+    if !isdir(output_dir)
+        error(
+            "Output parent directory '$output_dir' does not exist or is not a directory."
+        )
+    end
+    cfg_dict["output"]["dir"] = joinpath(output_dir, basename(cfg_dict["output"]["dir"]))
+end
+
+cfg = from_dict(Config, cfg_dict)
+
+start_year = cfg.start_year
+end_year   = cfg.end_year
+
+lat_var = cfg.input.names.lat
+lon_var = cfg.input.names.lon
+
+global nveg = cfg.nveg
+global enable_routing = cfg.enable_routing
+
+enable_snow         = cfg.enable_snow
+fillvalue_threshold = cfg.fillvalue_threshold
+
+input_param_file    = cfg.input.paths.input_param_file
+coverage_file       = cfg.input.paths.coverage_file
+routing_param_file  = cfg.input.paths.routing_param_file
+input_prec_prefix   = cfg.input.paths.input_prec_prefix
+input_tair_prefix   = cfg.input.paths.input_tair_prefix
+input_wind_prefix   = cfg.input.paths.input_wind_prefix
+input_vp_prefix     = cfg.input.paths.input_vp_prefix
+input_swdown_prefix = cfg.input.paths.input_swdown_prefix
+input_lwdown_prefix = cfg.input.paths.input_lwdown_prefix
+input_psurf_prefix  = cfg.input.paths.input_psurf_prefix
+
+d0_var = cfg.input.names.d0
+z0_var = cfg.input.names.z0
+z0soil_var = cfg.input.names.z0soil
+LAI_var = cfg.input.names.LAI
+rmin_var = cfg.input.names.rmin
+rarc_var = cfg.input.names.rarc
+cv_var = cfg.input.names.cv
+elev_var = cfg.input.names.elev
+residmoist_var = cfg.input.names.residmoist
+init_moist_var = cfg.input.names.init_moist
+c_expt_var = cfg.input.names.c_expt
+AreaFract_var = cfg.input.names.AreaFract
+elevation_var = cfg.input.names.elevation
+Pfactor_var = cfg.input.names.Pfactor
+ksat_var = cfg.input.names.ksat
+albedo_var = cfg.input.names.albedo
+root_var = cfg.input.names.root
+Wcr_var = cfg.input.names.Wcr
+Wfc_var = cfg.input.names.Wfc
+Wpwp_var = cfg.input.names.Wpwp
+coverage_var = cfg.input.names.coverage
+quartz_var = cfg.input.names.quartz
+depth_var = cfg.input.names.depth
+bulk_dens_var = cfg.input.names.bulk_dens
+soil_dens_var = cfg.input.names.soil_dens
+expt_var = cfg.input.names.expt
+b_infilt_var = cfg.input.names.b_infilt
+Ds_var = cfg.input.names.Ds
+Dsmax_var = cfg.input.names.Dsmax
+Ws_var = cfg.input.names.Ws
+Tavg_var = cfg.input.names.Tavg
+dp_var = cfg.input.names.dp
+annual_prec_var = cfg.input.names.annual_prec
+prec_var = cfg.input.names.prec
+tair_var = cfg.input.names.tair
+wind_var = cfg.input.names.wind
+vp_var = cfg.input.names.vp
+swdown_var = cfg.input.names.swdown
+lwdown_var = cfg.input.names.lwdown
+psurf_var = cfg.input.names.psurf
+
+output_dir             = cfg.output.dir
+output_file_prefix     = cfg.output.file_prefix
+
+ensure_output_directory(output_dir)
+println("Running from year $start_year to year $end_year. \n")
