@@ -31,3 +31,12 @@ julia --project=. run.jl configs/mekong_config.toml
 ```
 
 This will provide output netCDF files for the Mekong region, years 1979 to 1984. Currently we only provide forcing and landsurface parameter files for the (small) Mekong region in this repo, due to file-size considerations. Data for the entire globe and the indus region will be made available at a later point in development, or can be made available upon request.
+
+### Configuration file
+
+The model uses configuration files for initialization and loading input data.
+Start and end years for a model run can be configured there.
+
+Note that all paths in the configuration file should be;
+1. Absolute (e.g. `/home/username/mgv/data/mekong/...`)
+2. or relative to the *config file*, to aid in portability of data+configs.
