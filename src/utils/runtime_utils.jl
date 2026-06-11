@@ -11,7 +11,7 @@ function parse_args()
     end
 
     if !isfile(config_file)
-        error("Provided config file does not exist, or is not reachable from this path!")
+        error("Provided config file '$config_file' does not exist, or is not reachable from this path!")
     end
 
     return config_file
