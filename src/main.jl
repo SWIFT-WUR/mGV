@@ -208,7 +208,6 @@ end
 
 function process_year(year)
     println("============ Start run for year: $year ============")
-    output_format = get_output_format()
     println("Output format selected: $output_format")
 
     # ------------------------------------------------------------------------

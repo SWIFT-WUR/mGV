@@ -1,10 +1,41 @@
-function parse_args()
-    # Notify the user if defaulting to "global"
-    if length(ARGS) != 1
-        error("run script requires a single argument, the path to the config file.")
+function get_output_format()
+    for arg in ARGS
+        if startswith(arg, "--output=")
+            val = split(arg, "=")[2]
+            if val in ["netcdf", "nc"]
+                return :netcdf
+            end
+        elseif arg in ["--netcdf", "--nc"]
+            return :netcdf
+        end
     end
-    
-    config_file = ARGS[1]
+    return :zarr
+end
+
+function parse_args()
+    config_file    = nothing
+    start_year_arg = nothing
+    end_year_arg   = nothing
+
+    for arg in ARGS
+        if startswith(arg, "--start-year=")
+            start_year_arg = parse(Int, split(arg, "=")[2])
+        elseif startswith(arg, "--end-year=")
+            end_year_arg = parse(Int, split(arg, "=")[2])
+        elseif arg in ["--nc", "--netcdf"] || startswith(arg, "--output=")
+            continue  # handled by get_output_format()
+        elseif startswith(arg, "--")
+            error("Unknown argument: '$arg'\nUsage: julia run.jl <config_file> [--start-year=YYYY] [--end-year=YYYY] [--nc|--netcdf|--output=nc]")
+        elseif isnothing(config_file)
+            config_file = arg
+        else
+            error("Unexpected positional argument '$arg' — config file is already set to '$config_file'.")
+        end
+    end
+
+    if isnothing(config_file)
+        error("Usage: julia run.jl <config_file> [--start-year=YYYY] [--end-year=YYYY] [--nc|--netcdf|--output=nc]")
+    end
 
     if !isabspath(config_file)
         config_file = abspath(config_file)
@@ -14,7 +45,7 @@ function parse_args()
         error("Provided config file '$config_file' does not exist, or is not reachable from this path!")
     end
 
-    return config_file
+    return config_file, start_year_arg, end_year_arg, get_output_format()
 end
 
 function ensure_output_directory(output_dir::String)

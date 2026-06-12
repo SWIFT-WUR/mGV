@@ -77,22 +77,3 @@ san_zero(A) = begin
 end
 
 convcv(A) = convert.(eltype(A), cv_gpu)  # cast cv to A's eltype
-
-
-function get_output_format()
-    # 1. Check for explicit assignment: --output=netcdf
-    for arg in ARGS
-        if startswith(arg, "--output=")
-            val = split(arg, "=")[2]
-            if val in ["netcdf", "nc"]
-                return :netcdf
-            end
-        # 2. Check for flags: --netcdf or --nc
-        elseif arg in ["--netcdf", "--nc"]
-            return :netcdf
-        end
-    end
-    
-    # 3. Default
-    return :zarr 
-end

@@ -17,7 +17,7 @@ function validate_path(file, dir)
 end
 
 
-config_file = parse_args()
+config_file, start_year_cli, end_year_cli, output_format = parse_args()
 
 println("Loading configuration file...")
 
@@ -35,8 +35,8 @@ end
 
 cfg = from_dict(Config, cfg_dict)
 
-start_year = cfg.start_year
-end_year   = cfg.end_year
+start_year = isnothing(start_year_cli) ? cfg.start_year : start_year_cli
+end_year   = isnothing(end_year_cli)   ? cfg.end_year   : end_year_cli
 
 lat_var = cfg.input.names.lat
 lon_var = cfg.input.names.lon
