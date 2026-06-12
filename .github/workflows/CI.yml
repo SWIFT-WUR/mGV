@@ -48,3 +48,9 @@ jobs:
       - name: Run validations
         run: bash run_validations.sh
 
+      # 5. Upload the generated plots
+      - name: Upload plot artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-dashboards
+          path: validations/*.png
