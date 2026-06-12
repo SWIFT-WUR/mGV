@@ -1,3 +1,5 @@
+const USAGE = "Usage: julia run.jl <config_file> [<start_year> [<end_year>]] [--start-year=YYYY] [--end-year=YYYY] [--nc|--netcdf|--output=nc]"
+
 function get_output_format()
     for arg in ARGS
         if startswith(arg, "--output=")
@@ -17,24 +19,47 @@ function parse_args()
     start_year_arg = nothing
     end_year_arg   = nothing
 
+    # Collect bare integer args (e.g. julia run.jl config.jl 1987 1989)
+    # Named flags --start-year= / --end-year= take priority over these if both are given.
+    year_positionals = Int[]
+
     for arg in ARGS
         if startswith(arg, "--start-year=")
             start_year_arg = parse(Int, split(arg, "=")[2])
+
         elseif startswith(arg, "--end-year=")
             end_year_arg = parse(Int, split(arg, "=")[2])
+
         elseif arg in ["--nc", "--netcdf"] || startswith(arg, "--output=")
-            continue  # handled by get_output_format()
+            continue  # handled separately by get_output_format()
+
         elseif startswith(arg, "--")
-            error("Unknown argument: '$arg'\nUsage: julia run.jl <config_file> [--start-year=YYYY] [--end-year=YYYY] [--nc|--netcdf|--output=nc]")
+            error("Unknown argument: '$arg'\n$USAGE")
+
         elseif isnothing(config_file)
             config_file = arg
+
+        elseif !isnothing(tryparse(Int, arg))
+            push!(year_positionals, parse(Int, arg))
+
         else
-            error("Unexpected positional argument '$arg' — config file is already set to '$config_file'.")
+            error("Unexpected argument: '$arg'\n$USAGE")
         end
     end
 
     if isnothing(config_file)
-        error("Usage: julia run.jl <config_file> [--start-year=YYYY] [--end-year=YYYY] [--nc|--netcdf|--output=nc]")
+        error(USAGE)
+    end
+
+    # Map positional years -> start/end (named flags win if both specified)
+    if length(year_positionals) > 2
+        error("Too many positional year arguments (got $(length(year_positionals)), expected at most 2).")
+    end
+    if length(year_positionals) >= 1
+        start_year_arg = something(start_year_arg, year_positionals[1])
+    end
+    if length(year_positionals) >= 2
+        end_year_arg = something(end_year_arg, year_positionals[2])
     end
 
     if !isabspath(config_file)
@@ -42,7 +67,7 @@ function parse_args()
     end
 
     if !isfile(config_file)
-        error("Provided config file '$config_file' does not exist, or is not reachable from this path!")
+        error("Config file '$config_file' does not exist or is not reachable from this path!")
     end
 
     return config_file, start_year_arg, end_year_arg, get_output_format()
@@ -71,7 +96,7 @@ function has_input_files(year)
     for prefix in input_prefixes
         file_path = "$(prefix)$(year).nc"
         if !isfile(file_path)
-            println("⚠️ WARNING: Input file for year $year not found: $file_path")
+            println("WARNING: Input file for year $year not found: $file_path")
             return false
         end
     end
