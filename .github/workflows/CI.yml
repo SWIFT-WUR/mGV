@@ -23,6 +23,8 @@ jobs:
         with:
           version: '1'
 
+      - uses: julia-actions/cache@v2
+
       - name: Install Julia dependencies
         run: julia --project -e 'using Pkg; Pkg.instantiate()'
 
@@ -30,6 +32,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          cache: 'pip'
 
       - name: Install Python dependencies
         run: pip install numpy netCDF4
