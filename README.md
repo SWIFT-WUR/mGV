@@ -32,6 +32,14 @@ julia --project=. run.jl configs/mekong_config.toml
 
 This will provide output netCDF files for the Mekong region, years 1979 to 1984. Currently we only provide forcing and landsurface parameter files for the (small) Mekong region in this repo, due to file-size considerations. Data for the entire globe and the indus region will be made available at a later point in development, or can be made available upon request.
 
+### GPU Acceleration
+
+If a GPU is available the code will try to run on GPU instead of CPU. Currently there is no configuration available here (such as device or backend selection).
+GPU acceleration is confirmed to work and actively supported for Nvidia and AMD hardware.
+
+- Apple Metal is currently not supported due to a lack of testing hardware.
+- Intel OneAPI is not supported due to [a bug in OneAPI.jl](https://github.com/JuliaGPU/oneAPI.jl/issues/575).
+
 ### Configuration file
 
 The model uses configuration files for initialization and loading input data.
