@@ -28,15 +28,9 @@ for (key, path) in cfg_dict["input"]["paths"]
     cfg_dict["input"]["paths"][key] = validate_path(path, dirname(config_file))
 end
 
-# Check that parent directory of output dir exists, make relative path abs to config
+# Make output dir path absolute, relative to the config file location
 if !isabspath(cfg_dict["output"]["dir"])
-    output_dir = joinpath(dirname(config_file), dirname(cfg_dict["output"]["dir"]))
-    if !isdir(output_dir)
-        error(
-            "Output parent directory '$output_dir' does not exist or is not a directory."
-        )
-    end
-    cfg_dict["output"]["dir"] = joinpath(output_dir, basename(cfg_dict["output"]["dir"]))
+    cfg_dict["output"]["dir"] = abspath(joinpath(dirname(config_file), cfg_dict["output"]["dir"]))
 end
 
 cfg = from_dict(Config, cfg_dict)
