@@ -14,17 +14,9 @@ struct SnowVariables{T <: AbstractArray, I <: AbstractArray, V <: AbstractArray}
     cold_content::T       # J/m² surface layer cold content
     pack_cold_content::T  # J/m² pack layer cold content (2-layer)
     melting_flag::I       # melt-season flag
-    # coverage
-    store::I                     # coverage state (1 = store)
-    depth_distribution_slope::T  # (m)
-    stored_swe::T                # stored SWE for coverage (mm)
-    stored_coverage::T           # stored coverage fraction
-    max_snow_depth::T            # max depth for coverage (m)
- 
+
     #3D (aggregations across veg tiles, for soil input)
     # (nx, ny, nbands)
-    aggregated_melt::V
-    aggregated_rain::V
     infiltration::V  # precipitation/melt reaching soil surface (old name: PPT)
 
     # Forcings
@@ -52,13 +44,6 @@ function SnowVariables(nx, ny, bands, nveg)
         zeros(Float32, snow_dims),
         zeros(Float32, snow_dims),
         zeros(Int32, snow_dims),
-        zeros(Int32, snow_dims),
-        zeros(Float32, snow_dims),
-        zeros(Float32, snow_dims),
-        zeros(Float32, snow_dims),
-        zeros(Float32, snow_dims),
-        zeros(Float32, band_dims),
-        zeros(Float32, band_dims),
         zeros(Float32, band_dims),
         zeros(Float32, band_dims),
         zeros(Float32, band_dims),
@@ -179,11 +164,6 @@ end
     cold_content,           # Surface layer cold content [J/m²]
     pack_cold_content,      # Deep pack layer cold content (SWE > 125mm) [J/m²]
     melting_flag,           # Binary flag indicating active melting [-]
-    store_snow,             # Sub-grid snow accumulation tracker
-    snow_distrib_slope,     # Sub-grid distribution slope tracker
-    store_swq,              # Tracked SWE for sub-grid distribution
-    store_coverage,         # Tracked coverage for sub-grid distribution
-    max_snow_depth,         # Maximum observed snow depth [m]
     
     # Atmospheric & Canopy Forcings
     @Const(throughfall_4d), # Throughfall from vegetation canopy [mm/day]
@@ -195,7 +175,6 @@ end
     @Const(wind_2d),        # Wind speed [m/s]
     @Const(AreaFract),      # Elevation band area fractions [-]
     @Const(cv_4d),          # Vegetation cover fractions [-]
-    @Const(annual_prec_2d), # Annual mean precipitation [mm/yr]
     
     # Temporal Context
     day_of_year,            # Current day of the year [1-366]
@@ -212,6 +191,28 @@ end
     active = (!isnan(area) & (area > 0f0) &
               !isnan(cv_wt) & (cv_wt > 0f0) &
               !isnan(t_band) & !isnan(tf_val))
+
+    # An inactive tile's outputs are constants, independent of everything this
+    # kernel computes, so write them and skip the physics entirely. Only ~1.5%
+    # of (cell, band, veg) tiles are active -- ocean, zero-area bands and
+    # zero-fraction veg tiles make up the rest -- and because the fastest index
+    # is `i`, whole warps are typically inactive together, so the branch is
+    # warp-uniform and the skipped work is real.
+    if !active
+        swe[i, j, b, v]                = 0f0
+        surf_water[i, j, b, v]         = 0f0
+        pack_water[i, j, b, v]         = 0f0
+        snow_depth[i, j, b, v]         = 0f0
+        snow_albedo[i, j, b, v]        = NaN32
+        snow_surf_temp[i, j, b, v]     = NaN32
+        snow_coverage[i, j, b, v]      = 0f0
+        melt_out[i, j, b, v]           = 0f0
+        soil_influx_out[i, j, b, v]    = 0f0
+        last_snow[i, j, b, v]          = Int32(0)
+        cold_content[i, j, b, v]       = 0f0
+        pack_cold_content[i, j, b, v]  = 0f0
+        melting_flag[i, j, b, v]       = Int32(0)
+    else
 
     # --------------------------------------------------------------------------
     # 0. Precipitation Partitioning
@@ -241,19 +242,12 @@ end
     p_rain_snowpack = p_rain * temp_coverage
     p_rain_bare     = p_rain * (1f0 - temp_coverage)
 
-    old_depth_m  = snow_depth[i, j, b, v] / 1f3
-
     current_cc    = cold_content[i, j, b, v]
     prior_cc_orig = current_cc
     current_pcc   = pack_cold_content[i, j, b, v]
     current_pcc   = ifelse(isnan(current_pcc), 0f0, current_pcc)
     lsnow         = last_snow[i, j, b, v]
     melt_flag     = melting_flag[i, j, b, v]
-    st_snow       = store_snow[i, j, b, v]
-    st_swq        = store_swq[i, j, b, v]
-    st_cov        = store_coverage[i, j, b, v]
-    dslope        = snow_distrib_slope[i, j, b, v]
-    mx_depth      = max_snow_depth[i, j, b, v]
 
     sw_in  = swdown_2d[i, j]
     lw_in  = lwdown_2d[i, j]
@@ -268,8 +262,6 @@ end
     ra = (ln_z_z0 * ln_z_z0) / (0.16f0 * u_2m)   # s/m, neutral stability
     ra = clamp(ra, 50f0, 300f0)        # Clip at bounds
 
-    ann_prec = annual_prec_2d[i, j]
-    max_distrib_slope = ifelse(isnan(ann_prec) | (ann_prec <= 0f0), 0.4, ann_prec / 5f2)
 
     # --------------------------------------------------------------------------
     # 2. Accumulation & Cold Content Dynamics
@@ -491,11 +483,7 @@ end
     cold_content[i, j, b, v]         = ifelse(active, ifelse(current_swe > 0f0, current_cc, 0f0), 0f0)
     pack_cold_content[i, j, b, v]    = ifelse(active, ifelse(current_swe > 0f0, current_pcc, 0f0), 0f0)
     melting_flag[i, j, b, v]         = ifelse(active, ifelse(current_swe > 0f0, melt_flag, Int32(0)), Int32(0))
-    store_snow[i, j, b, v]           = ifelse(active, ifelse(current_swe > 0f0, st_snow, Int32(0)), Int32(0))
-    snow_distrib_slope[i, j, b, v]   = ifelse(active, ifelse(current_swe > 0f0, dslope, 0f0), 0f0)
-    store_swq[i, j, b, v]            = ifelse(active, ifelse(current_swe > 0f0, st_swq, 0f0), 0f0)
-    store_coverage[i, j, b, v]       = ifelse(active, ifelse(current_swe > 0f0, st_cov, 0f0), 0f0)
-    max_snow_depth[i, j, b, v]       = ifelse(active, ifelse(current_swe > 0f0, mx_depth, 0f0), 0f0)
+    end  # if !active / else
 
     nothing
 end
@@ -505,10 +493,8 @@ function calculate_snow_dynamics!(
     swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
     snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
     last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
-    store_snow_gpu, snow_distrib_slope_gpu,
-    store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
     throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
-    AreaFract_gpu, cv_gpu, annual_prec_gpu,
+    AreaFract_gpu, cv_gpu,
     day_of_year::Int32, lat_mean::Float32
 )
     # Determine hemispheric context for seasonality checks
@@ -520,10 +506,8 @@ function calculate_snow_dynamics!(
         swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
         snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
         last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
-        store_snow_gpu, snow_distrib_slope_gpu,
-        store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
         throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
-        AreaFract_gpu, cv_gpu, annual_prec_gpu,
+        AreaFract_gpu, cv_gpu,
         day_of_year, lat_pos;
         ndrange=size(swe_gpu)
     )
@@ -532,11 +516,11 @@ end
 
 """
 Aggregate the per-tile soil influx over vegetation tiles (weighted by the
-vegetation fraction) into the per-band melt and infiltration, and broadcast it
-back to every vegetation tile of the 4D throughfall.
+vegetation fraction) into the per-band infiltration, and broadcast it back to
+every vegetation tile of the 4D throughfall.
 """
 @kernel function aggregate_soil_influx_kernel!(
-    aggregated_melt, infiltration, throughfall,
+    infiltration, throughfall,
     @Const(soil_influx), @Const(cv)
 )
     i, j, b = @index(Global, NTuple)
@@ -547,7 +531,6 @@ back to every vegetation tile of the 4D throughfall.
         acc += ifelse(isnan(influx), 0f0, influx)
     end
 
-    aggregated_melt[i, j, b] = acc
     infiltration[i, j, b] = acc
     for v in 1:size(throughfall, 4)
         throughfall[i, j, b, v] = acc
@@ -569,15 +552,13 @@ function update_snow!(model)
         snow_water_equivalent, surface_water, snowpack_water,
         depth, albedo, surface_temperature,
         coverage, melt, soil_influx, last_snow, cold_content, pack_cold_content,
-        melting_flag, store, depth_distribution_slope,
-        stored_swe, stored_coverage, max_snow_depth,
-        band_air_temperature, aggregated_melt
+        melting_flag, band_air_temperature
     ) = model.snow_variables
     (;
         shortwave_down, longwave_down, surface_pressure,
         vapor_pressure, wind_speed
     ) = model.forcing_variables
-    (; snow_band_area_fraction, annual_precipitation) = model.grid_parameters
+    (; snow_band_area_fraction) = model.grid_parameters
     (; vegetation_fraction) = model.vegetation_parameters
 
     # Compute mean latitude for hemisphere detection
@@ -588,11 +569,10 @@ function update_snow!(model)
     calculate_snow_dynamics!(
         snow_water_equivalent, surface_water, snowpack_water, depth, albedo, surface_temperature,
         coverage, melt, soil_influx, last_snow, cold_content, pack_cold_content,
-        melting_flag, store, depth_distribution_slope,
-        stored_swe, stored_coverage, max_snow_depth,
+        melting_flag,
         throughfall, band_air_temperature,
         shortwave_down, longwave_down, surface_pressure, vapor_pressure, wind_speed,
-        snow_band_area_fraction, vegetation_fraction, annual_precipitation,
+        snow_band_area_fraction, vegetation_fraction,
         doy, lat_mean
     )
 
@@ -600,7 +580,7 @@ function update_snow!(model)
     # Also broadcast back to 4D throughfall for downstream soil/runoff modules
     # (they expect throughfall[b,v] = same water input for all veg tiles)
     aggregate_soil_influx_kernel!(device_backend)(
-        aggregated_melt, infiltration, throughfall,
+        infiltration, throughfall,
         soil_influx, vegetation_fraction;
         ndrange = size(infiltration)
     )
