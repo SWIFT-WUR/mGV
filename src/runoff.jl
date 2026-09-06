@@ -260,7 +260,7 @@ end
             dpot_1 = calculate_interlayer_drainage(k1 * INV_STEPS, eff_sm1, max1, res1, exp1)
             # Bound drainage dynamically across the fractional scalar
             d_1 = min(dpot_1, max(eff_sm1 - res1, zero))
-            
+
             sm1 = sm1 + inflow_sub - (evap_sub + t1_sub) - d_1
 
             # ==================== LAYER 2 ====================
@@ -364,7 +364,9 @@ function solve_runoff_and_drainage!(
     return nothing
 end
 
-@kernel function infiltration_kernel!(infiltration, throughfall, surface_runoff, cv_grid)
+@kernel function infiltration_kernel!(
+    infiltration, throughfall, surface_runoff, cv_grid, area_fraction
+)
     i, j = @index(Global, NTuple)
 
     if i <= size(infiltration, 1) && j <= size(infiltration, 2)
@@ -372,13 +374,18 @@ end
         # 1. Initialize accumulator locally
         acc = -surface_runoff[i, j]
 
-        # 2. Accumulate throughfall
-        # We loop over the 4th dimension (vegetation tiles) 
+        # 2. Integrate all vegetation tiles and snow bands.
+        n_bands = size(throughfall, 3)
         n_tiles = size(throughfall, 4)
         for k in 1:n_tiles
-            # throughfall is (nx, ny, 1, nveg), so we index [i, j, 1, k]
-            # Multiply by fractional area cv_grid to preserve mass conservation!
-            acc += throughfall[i, j, 1, k] * cv_grid[i, j, 1, k]
+            for b in 1:n_bands
+                val = (
+                    throughfall[i, j, b, k] *
+                    cv_grid[i, j, 1, k] *
+                    area_fraction[i, j, b]
+                )
+                acc += ifelse(isnan(val), 0f0, val)
+            end
         end
 
         # 3. Write result
@@ -386,13 +393,18 @@ end
     end
 end
 
-function calculate_infiltration!(infiltration, throughfall, surface_runoff, cv_grid)
+function calculate_infiltration!(
+    infiltration, throughfall, surface_runoff, cv_grid, area_fraction
+)
 
     kernel! = infiltration_kernel!(device_backend)
     nx, ny  = size(infiltration)
 
     # Launch kernel
-    kernel!(infiltration, throughfall, surface_runoff, cv_grid; ndrange=(nx, ny))
+    kernel!(
+        infiltration, throughfall, surface_runoff, cv_grid, area_fraction;
+        ndrange=(nx, ny)
+    )
 
     return nothing
 end

@@ -120,8 +120,15 @@ end
 function load_config(config_file)
     cfg_dict = TOML.parsefile(config_file)
 
-    # Make all input paths absolute, make relative path abs to config
+    # Make all input paths absolute, make relative path abs to config.
+    # The routing parameter file is only needed when routing is enabled, so do
+    # not demand it otherwise -- a run with `enable_routing = false` should not
+    # require a file it never opens.
+    routing_enabled = get(cfg_dict, "enable_routing", true)
     for (key, path) in cfg_dict["input"]["paths"]
+        if key == "routing_param_file" && !routing_enabled
+            continue
+        end
         cfg_dict["input"]["paths"][key] = validate_path(path, dirname(config_file))
     end
 

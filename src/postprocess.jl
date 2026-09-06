@@ -2,63 +2,56 @@
     pe_out, nr_out, tr_out, ce_out, ws_out, # 2D Outputs
     @Const(pe_in), @Const(nr_in),       # 4D Inputs
     @Const(tr_in), @Const(ce_in), @Const(ws_in), # 4D Inputs
-    @Const(coverage), @Const(cv),       # 4D Weights
+    @Const(coverage), @Const(cv), @Const(AreaFract), # Weights
     threshold, fill_val                 # Scalars
 )
     i, j = @index(Global, NTuple)
 
-    # 1. Initialize Accumulators (sums for this grid cell)
-    # We use the type of the output array to ensure stability
+    # 1. Initialize Accumulators
     acc_pe = zero(eltype(pe_out))
     acc_nr = zero(eltype(nr_out))
     acc_tr = zero(eltype(tr_out))
     acc_ce = zero(eltype(ce_out))
     acc_ws = zero(eltype(ws_out))
 
-    # 2. Iterate over Vegetation Tiles (4th Dimension)
-    # We assume inputs are (nx, ny, 1, n_tiles)
+    n_bands = size(pe_in, 3)
     n_tiles = size(pe_in, 4)
-    total_cv = zero(eltype(pe_out))
-
-    # Pre-read bare soil PE (last tile = bare soil, k=n_tiles)
-    # Used for VIC's within-tile fcanopy blending:
-    # VIC: pe_tile = fcanopy * pe_veg + (1-fcanopy) * pe_soil
-    _pe_soil_raw = pe_in[i, j, 1, n_tiles]
-    pe_soil = isnan(_pe_soil_raw) || abs(_pe_soil_raw) > threshold ? zero(eltype(pe_out)) : eltype(pe_out)(_pe_soil_raw)
+    total_w = zero(eltype(pe_out))
 
     for k in 1:n_tiles
-        # A. Shared Weights
         _cv_raw = cv[i, j, 1, k]
         w_cv = ifelse(isnan(_cv_raw),  zero(eltype(pe_out)), eltype(pe_out)(_cv_raw))
         
         _cov_raw = coverage[i, j, 1, k]
         w_cov = ifelse(isnan(_cov_raw), zero(eltype(pe_out)), eltype(pe_out)(_cov_raw))
-        
-        total_cv += w_cv
 
-        # B. Potential Evaporation (PE) - simple Cv-weighted sum matching VIC's OUT_PET.
-        val = pe_in[i, j, 1, k]
-        acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_cv * val)
+        for b in 1:n_bands
+            _af_raw = AreaFract[i, j, b]
+            w_af = ifelse(isnan(_af_raw), zero(eltype(pe_out)), eltype(pe_out)(_af_raw))
+            
+            w_total = w_cv * w_af
+            w_total_cov = w_cv * w_cov * w_af
 
-        # C. Net Radiation (NR)
-        val = nr_in[i, j, 1, k]
-        acc_nr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(nr_out)), w_cv * val)
+            total_w += w_total # Accumulate total weight (should be close to 1)
 
-        # D. Transpiration (TR)
-        val = tr_in[i, j, 1, k]
-        acc_tr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(tr_out)), w_cov * val)
+            val = pe_in[i, j, b, k]
+            acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_total * val)
 
-        # E. Canopy Evaporation (CE)
-        val = ce_in[i, j, 1, k]
-        acc_ce += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ce_out)), w_cv * w_cov * val)
+            val = nr_in[i, j, b, k]
+            acc_nr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(nr_out)), w_total * val)
 
-        # F. Water Storage (WS)
-        val = ws_in[i, j, 1, k]
-        acc_ws += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ws_out)), w_cv * w_cov * val)
+            val = tr_in[i, j, b, k]
+            acc_tr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(tr_out)), w_cov * w_af * val) # tr is weighted by coverage in physics
+
+            val = ce_in[i, j, b, k]
+            acc_ce += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ce_out)), w_total_cov * val)
+
+            val = ws_in[i, j, b, k]
+            acc_ws += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ws_out)), w_total_cov * val)
+        end
     end
 
-    # 3. Write Final Sums or NaN to Global Memory
-    active = !isnan(total_cv) & (total_cv >= eltype(pe_out)(1f-6))
+    active = !isnan(total_w) & (total_w >= eltype(pe_out)(1f-6))
     pe_out[i, j] = ifelse(active, acc_pe, fill_val)
     nr_out[i, j] = ifelse(active, acc_nr, fill_val)
     tr_out[i, j] = ifelse(active, acc_tr, fill_val)
@@ -123,7 +116,6 @@ end
 
 
 function process_daily_outputs(model)
-    current_month = month(model.clock.time)
 
     (;
         surface_temperature, total_evapotranspiration, potential_evaporation, net_radiation
@@ -142,7 +134,7 @@ function process_daily_outputs(model)
     soil_evaporation = model.soil_variables.evaporation
 
     vegetation_fraction = model.vegetation_parameters.vegetation_fraction # Cv
-    canopy_coverage = @view(model.vegetation_parameters.canopy_coverage[:,:,[current_month],:]) # coverage
+    coverage_this_month = model.vegetation_parameters.canopy_coverage
 
     (; fillvalue_threshold) = model.config
 
@@ -160,7 +152,7 @@ function process_daily_outputs(model)
     kernel_launcher!(
         pe_summed, nr_summed, tr_summed, ce_summed, ws_summed,
         potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
-        canopy_coverage, vegetation_fraction,
+        coverage_this_month, vegetation_fraction, snow_band_area_fraction,
         fillvalue_threshold, NaN32;
         ndrange=(nx, ny)
     )

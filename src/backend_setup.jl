@@ -12,7 +12,7 @@ if HAS_CUDA && CUDA.functional()
     const StreamType = CUDA.CuStream
     create_stream() = CUDA.CuStream()
     
-    pin_memory!(arr) = CUDA.Mem.pin(arr)
+    pin_memory!(arr) = CUDA.pin(arr)
     println("✅ Active device: NVIDIA GPU (CUDA)")
 
 elseif HAS_AMDGPU && AMDGPU.functional()

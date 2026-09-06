@@ -2,7 +2,7 @@ name: CI tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, big-refactor-karun]
   pull_request:
     types: [opened, synchronize, reopened]
 

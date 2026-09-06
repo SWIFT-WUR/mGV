@@ -1,26 +1,28 @@
 start_year = 1979
 end_year = 1980  # data available up to 2010
-enable_routing = false
+enable_routing = true
+enable_snow = true
 nveg = 22
 
 [output]
-dir         = "../output_data/mekong/"
-file_prefix = "outputfile_mekong_"
+dir         = "../output_data/indus/"
+file_prefix = "outputfile_indus_"
+format      = "netcdf"
 
 [input]
 [input.paths]
 input_param_file    = "../input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
 routing_param_file  = "../input_data/indus/routing/VIC_rout_params_Indus.nc"
-coverage_file       = "../input_data/indus/vic_indus_50km_coverage.nc"
-input_prec_prefix   = "../input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
-input_tair_prefix   = "../input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_"
-input_wind_prefix   = "../input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_"
-input_vp_prefix     = "../input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_"
-input_swdown_prefix = "../input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_"
-input_lwdown_prefix = "../input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_"
-input_psurf_prefix  = "../input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_"
+coverage_file       = "../input_data/indus/domain_Indus.nc"
+precipitation_file    = "../input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_"
+air_temperature_file  = "../input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_"
+wind_speed_file       = "../input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_"
+vapor_pressure_file   = "../input_data/indus/forcing/vp/vp_daily_GFDL-ESM4_historical_"
+shortwave_down_file   = "../input_data/indus/forcing/swdown/swdown_daily_GFDL-ESM4adj_historical_"
+longwave_down_file    = "../input_data/indus/forcing/lwdown/lwdown_daily_GFDL-ESM4adj_historical_"
+surface_pressure_file = "../input_data/indus/forcing/psurf/psurf_daily_GFDL-ESM4_historical_"
 
 [input.names]
-prec = "pr"
-tair = "tas"
-wind = "wind10" 
+precipitation = "pr"
+air_temperature = "tas"
+wind_speed = "wind10"

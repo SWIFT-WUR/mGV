@@ -17,6 +17,7 @@ import matplotlib.ticker as ticker
 import warnings
 import os
 import sys
+import csv as csv_mod
 
 
 warnings.filterwarnings("ignore")
@@ -50,6 +51,120 @@ ET_VARS = [
     ("OUT_EVAP_BARE",  "soil_evaporation_output",            "Soil Evaporation",    "mm d$^{-1}$"),
     ("OUT_PET",        "potential_evaporation_summed_output","Potential ET",         "mm d$^{-1}$"),
 ]
+
+# ── CSV reference helpers ─────────────────────────────────────────────────────
+VIC_CSV_VARS = [
+    "OUT_SURF_TEMP", "OUT_R_NET", "OUT_EVAP", "OUT_TRANSP_VEG",
+    "OUT_EVAP_CANOP", "OUT_EVAP_BARE", "OUT_PET",
+    "OUT_RUNOFF", "OUT_BASEFLOW",
+    "OUT_SOIL_MOIST_L1", "OUT_SOIL_MOIST_L2", "OUT_SOIL_MOIST_L3",
+]
+
+def preprocess_vic_to_csv(vic_nc_path, out_csv_path):
+    """Extract spatially-averaged VIC timeseries from NetCDF and save as CSV."""
+    print(f"  Pre-processing VIC reference -> {out_csv_path}")
+    ds = nc.Dataset(vic_nc_path)
+    mask = get_land_mask(ds, "OUT_SURF_TEMP")
+
+    def _spatial_mean(raw):
+        if raw.ndim == 3:
+            T, nlat, nlon = raw.shape
+            if mask is not None:
+                m3 = np.broadcast_to(mask[np.newaxis], raw.shape).copy()
+                raw = np.where(m3, raw, np.nan)
+            return np.nanmean(raw.reshape(T, -1), axis=1)[:365]
+        return raw.ravel()[:365]
+
+    def _load(varname, layer=None):
+        if varname not in ds.variables:
+            return np.full(365, np.nan)
+        raw = np.ma.filled(ds.variables[varname][:], np.nan).astype(float)
+        raw[np.abs(raw) > 1e15] = np.nan
+        sh = raw.shape
+        if raw.ndim == 4 and layer is not None:
+            if sh[1] <= 5 and sh[0] > 50:
+                raw = raw[:, layer]
+            elif sh[0] <= 5 and sh[1] > 50:
+                raw = raw[layer]
+        return _spatial_mean(raw)
+
+    rows = []
+    scalar_vars = [v for v in VIC_CSV_VARS if not v.startswith("OUT_SOIL_MOIST_L")]
+    for i in range(365):
+        row = {"doy": i + 1}
+        for v in scalar_vars:
+            ts = _load(v)
+            row[v] = float(ts[i]) if i < len(ts) else float("nan")
+        for l in range(3):
+            ts = _load("OUT_SOIL_MOIST", layer=l)
+            row[f"OUT_SOIL_MOIST_L{l+1}"] = float(ts[i]) if i < len(ts) else float("nan")
+        rows.append(row)
+
+    ds.close()
+    out_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["doy"] + scalar_vars + ["OUT_SOIL_MOIST_L1", "OUT_SOIL_MOIST_L2", "OUT_SOIL_MOIST_L3"]
+    with open(out_csv_path, "w", newline="") as f:
+        writer = csv_mod.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  Saved reference CSV ({out_csv_path.stat().st_size / 1024:.1f} KB)")
+
+
+class VicCsvDataset:
+    """Thin wrapper around a VIC CSV reference file, mimicking the nc.Dataset interface
+    just enough for the load_ts / load_sm helpers to work."""
+    def __init__(self, path):
+        self._data = {}  # varname -> np.array of shape (365, 1, 1)
+        with open(path, newline="") as f:
+            reader = csv_mod.DictReader(f)
+            rows = list(reader)
+        for col in rows[0].keys():
+            if col == "doy":
+                continue
+            arr = np.array([float(r[col]) for r in rows])  # (365,)
+            self._data[col] = arr[:, np.newaxis, np.newaxis]  # (365, 1, 1)
+        # Soil moisture: merge L1/L2/L3 -> (time, layer, lat, lon)
+        layers = []
+        for l in range(1, 4):
+            key = f"OUT_SOIL_MOIST_L{l}"
+            if key in self._data:
+                layers.append(self._data.pop(key))
+        if layers:
+            self._data["OUT_SOIL_MOIST"] = np.stack(layers, axis=1)  # (365, 3, 1, 1)
+        self.variables = self._data
+
+    def close(self):
+        pass
+
+
+def open_vic(nc_path, csv_path, label):
+    """Open VIC data: prefer the NetCDF, fall back to the pre-processed CSV.
+
+    The CSV holds VIC's basin average over VIC's own land mask. mGV is averaged over
+    mGV's mask, which is not the same set of cells, so CSV-based scores are NOT
+    comparable -- on Indus the CSV path reported surface runoff NSE -1.04 where the
+    shared-mask value is +1.00. Only the NetCDF path can build a shared mask.
+    """
+    if nc_path.exists():
+        if not csv_path.exists():
+            print(f"  Found NetCDF for {label}, building CSV cache...")
+            preprocess_vic_to_csv(nc_path, csv_path)
+        else:
+            print(f"  Found NetCDF for {label} (CSV cache already present)")
+        return nc.Dataset(nc_path)
+    if csv_path.exists():
+        print(
+            f"WARNING: {label}: no VIC NetCDF, falling back to the pre-processed CSV.\n"
+            f"         The CSV is averaged over VIC's land mask while mGV is averaged\n"
+            f"         over its own, so NSE/PBIAS below are NOT a like-for-like\n"
+            f"         comparison and may be badly misleading. Restore {nc_path.name}\n"
+            f"         for a valid shared-mask comparison.",
+            file=sys.stderr,
+        )
+        return VicCsvDataset(csv_path)
+    print(f"WARNING: No VIC data found for {label} (neither NetCDF nor CSV)", file=sys.stderr)
+    return None
+
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 def open_dataset(path, label):
@@ -145,16 +260,38 @@ def style_ax(ax, ylabel=None, xlabels=True):
 def annotate(ax, v, m):
     ok = np.isfinite(v) & np.isfinite(m)
     if ok.sum() < 5: return
-    denom = np.sum(np.abs(v[ok]))
-    pbias = 100.0 * np.sum(v[ok] - m[ok]) / denom if denom > 0 else np.nan
-    ss_res = np.sum((v[ok] - m[ok])**2)
-    ss_tot = np.sum((v[ok] - np.mean(v[ok]))**2)
-    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
-    ax.text(0.98, 0.97,
-            f"PBIAS = {pbias:+.1f}%   R² = {r2:.3f}",
-            transform=ax.transAxes, ha='right', va='top', fontsize=8,
-            color="#444444",
-            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#CCCCCC', lw=0.6))
+    
+    vo, mo = v[ok], m[ok]
+    sum_abs_v = np.sum(np.abs(vo))
+    mean_v = np.mean(vo)
+    
+    # PBIAS & NMAE
+    pbias = 100.0 * np.sum(vo - mo) / sum_abs_v if sum_abs_v > 0 else np.nan
+    nmae = 100.0 * np.sum(np.abs(vo - mo)) / sum_abs_v if sum_abs_v > 0 else np.nan
+    
+    # NSE
+    ss_res = np.sum((vo - mo)**2)
+    ss_tot = np.sum((vo - mean_v)**2)
+    nse = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else np.nan
+    
+    # Proper R^2
+    r2 = np.nan
+    if len(vo) > 1:
+        corr_matrix = np.corrcoef(vo, mo)
+        if corr_matrix.shape == (2, 2):
+            r2 = corr_matrix[0, 1]**2
+            
+    textstr = (
+        f"PBIAS: {pbias:+.1f}%\n"
+        f"NMAE:  {nmae:.1f}%\n"
+        f"NSE:   {nse:.3f}\n"
+        f"R²:    {r2:.3f}"
+    )
+    
+    ax.text(0.98, 0.97, textstr,
+            transform=ax.transAxes, ha='right', va='top', fontsize=7.5,
+            color="#444444", linespacing=1.3,
+            bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#CCCCCC', lw=0.6, alpha=0.9))
 
 def plot_var(ax, v_ts, m_ts, title, unit, xlabels=True):
     style_ax(ax, ylabel=unit, xlabels=xlabels)
@@ -184,6 +321,10 @@ def plot_sm_combined(ax, vds, mds, mask_v, mask_m, xlabels=True):
     style_ax(ax, ylabel="mm", xlabels=xlabels)
     ax.set_title("Soil Moisture (L1 / L2 / L3)")
     leg = []
+    v_sum = np.zeros(365)
+    m_sum = np.zeros(365)
+    valid_count = 0
+    
     for l in range(3):
         v = load_sm(vds, l, is_mgv=False, mask=mask_v)
         m = load_sm(mds, l, is_mgv=True,  mask=mask_m)
@@ -192,6 +333,9 @@ def plot_sm_combined(ax, vds, mds, mask_v, mask_m, xlabels=True):
         if v is not None and m is not None:
             n = min(len(v), len(m), 365)
             ax.fill_between(DOY[:n], v[:n], m[:n], color=c, alpha=0.08)
+            v_sum[:n] += v[:n]
+            m_sum[:n] += m[:n]
+            valid_count += 1
         if v is not None:
             n = min(len(v), 365)
             ax.plot(DOY[:n], v[:n], color=c, lw=0.9, ls='-',  alpha=0.9)
@@ -201,7 +345,12 @@ def plot_sm_combined(ax, vds, mds, mask_v, mask_m, xlabels=True):
         leg.append(Line2D([0],[0], color=c, lw=2, label=f"L{l+1}"))
     leg += [Line2D([0],[0], color='grey', lw=1.4, ls='-',  label='VIC'),
             Line2D([0],[0], color='grey', lw=1.4, ls='--', label='VIC-WUR-Julia')]
-    ax.legend(handles=leg, fontsize=7.5, loc='upper right', ncol=2, framealpha=0.95)
+    ax.legend(handles=leg, fontsize=7.5, loc='upper left', ncol=2, framealpha=0.95)
+    
+    if valid_count == 3:
+        ok = (v_sum > 0) & (m_sum > 0)
+        if np.any(ok):
+            annotate(ax, v_sum[ok], m_sum[ok])
 
 def save(fig, path):
     fig.savefig(path, dpi=300, bbox_inches='tight', facecolor='white')
@@ -226,7 +375,7 @@ def make_water_fig(title, vds, mds, mask_v, mask_m):
                  load_ts(vds, vv, mask=mask_v),
                  load_ts(mds, mv, mask=mask_m),
                  ttl, unit, xlabels=True)
-    ax_et[0].legend(handles=LEGEND_ELEMS, fontsize=8.5, loc='upper right')
+    ax_et[0].legend(handles=LEGEND_ELEMS, fontsize=8.5, loc='lower right')
 
     plot_var(ax_hy[0],
              load_ts(vds, "OUT_RUNOFF",   mask=mask_v),
@@ -256,19 +405,21 @@ if __name__ == "__main__":
     outdir = Path(__file__).parent.resolve()
 
     if case == "Mekong":
-        vic_file = outdir / "mekong_VICrun" / "results" / "mekong_test.1979-01-01.nc"
+        vic_nc   = outdir / "mekong_VICrun" / "results" / "mekong_test.1979-01-01.nc"
+        vic_csv  = outdir / "mekong_VICrun" / "vic_reference_mekong.csv"
         mgv_file = outdir / ".." / "output_data" / "mekong" / "outputfile_mekong_1979.nc"
     elif case == "Indus":
-        vic_file = outdir / "indus_VICrun" / "results" / "indus_test.1979-01-01.nc"
+        vic_nc   = outdir / "indus_VICrun" / "results" / "indus_test.1979-01-01.nc"
+        vic_csv  = outdir / "indus_VICrun" / "vic_reference_indus.csv"
         mgv_file = outdir / ".." / "output_data" / "indus" / "outputfile_indus_1979.nc"
 
-    # Exit only if BOTH files are missing (no data at all to plot)
-    if not vic_file.exists() and not mgv_file.exists():
+    # Exit only if BOTH VIC source and mGV output are missing
+    if not vic_nc.exists() and not vic_csv.exists() and not mgv_file.exists():
         print("WARNING: Both input files missing, skipping dashboard.", file=sys.stderr)
         sys.exit(0)
 
     print(f"=== {case} ===")
-    vic_mek = open_dataset(vic_file, f"VIC {case}")
+    vic_mek = open_vic(vic_nc, vic_csv, case)
     mgv_mek = open_dataset(mgv_file, f"mGV {case}")
     mask_v_mek, mask_m_mek = get_masks(vic_mek, mgv_mek, "OUT_SURF_TEMP", "tsurf_output")
 

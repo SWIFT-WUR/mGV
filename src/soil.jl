@@ -218,10 +218,11 @@ function update_soil!(model)
     (; vegetation_fraction, canopy_coverage) = model.vegetation_parameters
     (; snow_band_area_fraction) = model.grid_parameters
     (; throughfall, transpiration_layers) = model.canopy_variables
+    coverage_this_month = canopy_coverage
 
     calculate_soil_evaporation!(
         evaporation, moisture, maximum_moisture, soil_potential_evaporation,  # Step 2 (snow-blended) PE
-        nijssen_infilt_b, vegetation_fraction, canopy_coverage, residual_moisture, snow_band_area_fraction
+        nijssen_infilt_b, vegetation_fraction, coverage_this_month, residual_moisture, snow_band_area_fraction
     )
 
     calculate_surface_runoff!(
@@ -230,10 +231,13 @@ function update_soil!(model)
         maximum_moisture, nijssen_infilt_b, vegetation_fraction, snow_band_area_fraction
     )
 
-    calculate_infiltration!(infiltration, throughfall, surface_runoff, vegetation_fraction)
+    calculate_infiltration!(
+        infiltration, throughfall, surface_runoff,
+        vegetation_fraction, snow_band_area_fraction
+    )
 
     # Soil moisture update
-    transpiration_grid = sum(transpiration_layers .* vegetation_fraction, dims=4)
+    transpiration_grid = sum(transpiration_layers .* coverage_this_month, dims=4)
     solve_runoff_and_drainage!(
         moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
         infiltration, evaporation, transpiration_grid,
@@ -348,21 +352,23 @@ end
 function estimate_soil_layer_temperature!(model)
     (; temperature) = model.soil_variables
     (; depth, column_depth) = model.soil_parameters
+    (; average_temperature) = model.grid_parameters
     (; surface_temperature) = model.surface_energy_variables
-    (; air_temperature) = model.forcing_variables
 
     # Define views for clarity
     T_L1 = @view temperature[:, :, 1]
     T_L2 = @view temperature[:, :, 2]
     T_L3 = @view temperature[:, :, 3]
-    
+
     D_L2 = @view depth[:, :, 2]
     D_L3 = @view depth[:, :, 3]
 
     # --- 1. Update Layer 3 ---
     # Must be done FIRST because it depends on the OLD values of L1 and L2
     # We inline the calculation of top_avg = (L1 + L2) * 0.5
-    @. T_L3 = air_temperature - (column_depth / D_L3) * (((T_L1 + T_L2) * 0.5f0) - air_temperature) * (exp(-(D_L2 + D_L3) / column_depth) - exp(-D_L2 / column_depth))
+    # Layer 3 relaxes toward the annual-mean/deep soil temperature (average_temperature),
+    # not today's air temperature -- the deep soil boundary condition is ~constant.
+    @. T_L3 = average_temperature - (column_depth / D_L3) * (((T_L1 + T_L2) * 0.5f0) - average_temperature) * (exp(-(D_L2 + D_L3) / column_depth) - exp(-D_L2 / column_depth))
 
     # --- 2. Update Layer 1 ---
     # We inline top_avg again 

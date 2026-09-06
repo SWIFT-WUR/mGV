@@ -93,6 +93,7 @@ require.
     clock::Clock   # to keep track of simulation time
     grid_parameters::GridParameters
     vegetation_parameters::VegetationParameters
+    monthly_vegetation_parameters::MonthlyVegetationParameters
     soil_parameters::SoilParameters
     surface_energy_variables::SurfaceEnergyVariables
     canopy_variables::CanopyVariables
@@ -100,7 +101,7 @@ require.
     snow_variables::SnowVariables
     forcing_variables::ForcingVariables
     forcing_readers::ForcingReaders
-    routing::RoutingState
+    routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter, Nothing} # writes model output
 end
 
@@ -112,7 +113,8 @@ function Model(config_file::AbstractString)
 
     clock = Clock(config)
     forcing_readers, forcing_variables = initialize_forcing(config_file, config)
-    grid_parameters, vegetation_parameters, soil_parameters = read_parameters(config)
+    grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters =
+        read_parameters(config)
 
     # Check dim order!
     nx = length(grid_parameters.longitude)
@@ -128,7 +130,9 @@ function Model(config_file::AbstractString)
     canopy_variables = CanopyVariables(tile_dims)
     soil_variables = SoilVariables(grid_dims, soil_dims)
     snow_variables = SnowVariables(nx, ny, nbands, nveg)
-    routing = RoutingState(config, grid_parameters.elevation)
+    # Only build routing state when it is actually used; otherwise the run
+    # would require a routing parameter file it never reads.
+    routing = config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
 
     # Move data to backend during model initialization
     if backend_name != "CPU"
@@ -140,11 +144,29 @@ function Model(config_file::AbstractString)
         soil_variables = adapt(ArrayType, soil_variables)
         snow_variables = adapt(ArrayType, snow_variables)
         forcing_variables = adapt(ArrayType, forcing_variables)
-        routing = adapt(ArrayType, routing)
+        if !isnothing(routing)
+            routing = adapt(ArrayType, routing)
+        end
     end
+
+    # Seed the single-month vegetation buffers with the starting month so the
+    # first timestep sees real parameters rather than zeros.
+    load_monthly_parameters!(
+        vegetation_parameters, monthly_vegetation_parameters, month(clock.time)
+    )
 
     derive_soil_parameters!(soil_parameters)
     convert_nijssen2001_to_arno!(soil_parameters)
+
+    # Initialize soil moisture and clamp between 0 and maximum_moisture
+    @. soil_variables.moisture = clamp(soil_parameters.initial_moisture, 0.0f0, soil_parameters.maximum_moisture)
+
+    # Seed soil column temperature from the annual mean/deep soil temperature parameter,
+    # not 0degC -- otherwise the surface/soil thermal solve starts from a physically wrong
+    # state and biases tsurf, PE and ET from day 1.
+    for layer in axes(soil_variables.temperature, 3)
+        @views soil_variables.temperature[:, :, layer] .= grid_parameters.average_temperature
+    end
 
     writer = start_io_service(config, grid_parameters, year(clock.time), clock.dt)
 
@@ -154,6 +176,7 @@ function Model(config_file::AbstractString)
         clock,
         grid_parameters,
         vegetation_parameters,
+        monthly_vegetation_parameters,
         soil_parameters,
         surface_energy_variables,
         canopy_variables,
@@ -170,6 +193,13 @@ end
     advance!(model.clock)
 
     update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
+
+    # Refresh the active-month vegetation parameters
+    load_monthly_parameters!(
+        model.vegetation_parameters,
+        model.monthly_vegetation_parameters,
+        month(model.clock.time),
+    )
 
     # Initialize surface temperature on first timestep
     if model.clock.iteration == 1
@@ -200,7 +230,9 @@ end
 
     # run routing
     #  Note: fix violation_counter
-    update_routing!(model)
+    if model.config.enable_routing
+        update_routing!(model)
+    end
 
     update_soil_conductivity!(model)
     update_soil_volumetric_heat_capacity!(model)

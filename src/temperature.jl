@@ -84,7 +84,6 @@ end
 
 """
 function update_surface_temperature!(model)
-    current_month = month(model.clock.time)
 
     (; surface_temperature, aerodynamic_resistance, total_evapotranspiration) = model.surface_energy_variables
     (; air_temperature, surface_pressure, shortwave_down, longwave_down) = model.forcing_variables
@@ -94,7 +93,7 @@ function update_surface_temperature!(model)
     (; snow_band_area_fraction) = model.grid_parameters
 
     soil_temperature = model.soil_variables.temperature
-    albedo = @view(model.vegetation_parameters.albedo[:,:,[current_month],:])
+    albedo = model.vegetation_parameters.albedo
 
     # 1. Calculate weighted albedo correctly across all tiles (Veg + Soil)
     # This ensures the bare soil albedo is included 

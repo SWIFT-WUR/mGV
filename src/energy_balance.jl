@@ -62,10 +62,8 @@ function aerodynamic_kernel(z0, d0, tsurf, tair, wind, Z2, Kt, gt, Tf, Ric, z_fl
 end
 
 function update_aerodynamic_resistance!(model)
-    current_month = month(model.clock.time)
-
-    displacement_height = @view(model.vegetation_parameters.displacement_height[:,:,[current_month],:])
-    roughness_length = @view(model.vegetation_parameters.roughness_length[:,:,[current_month],:])
+    displacement_height = model.vegetation_parameters.displacement_height
+    roughness_length = model.vegetation_parameters.roughness_length
 
     (; surface_temperature, aerodynamic_resistance) = model.surface_energy_variables
     (; air_temperature, wind_speed) = model.forcing_variables
@@ -241,13 +239,13 @@ function calculate_potential_evaporation!(
 
     EPS = 1.0f-6
 
-    # Pre-allocate arrays
-    slope = ArrayType{Float32}(undef, size(air_temperature))
-    latent_heat = ArrayType{Float32}(undef, size(air_temperature))
-    scale_height = ArrayType{Float32}(undef, size(air_temperature))
-    gamma = ArrayType{Float32}(undef, size(air_temperature))
-    vpd = ArrayType{Float32}(undef, size(air_temperature))
-    air_dens_term = ArrayType{Float32}(undef, size(air_temperature))
+    # Scratch buffers live on the model, not allocated per timestep
+    slope = surface_energy_variables.pe_slope
+    latent_heat = surface_energy_variables.pe_latent_heat
+    scale_height = surface_energy_variables.pe_scale_height
+    gamma = surface_energy_variables.pe_gamma
+    vpd = surface_energy_variables.pe_vpd
+    air_dens_term = surface_energy_variables.pe_air_dens_term
 
     # 2. Pre-calculate 2D Meteorological Terms
     potential_evaporation_precompute!(
@@ -289,8 +287,6 @@ end
 Perform the initial energy balance and atmospheric calculations
 """
 function update_energy_balance!(model::Model)
-    current_month = month(model.clock.time)
-
     calculate_band_forcings!(
         model.grid_parameters, model.forcing_variables, model.snow_variables
     )
@@ -301,7 +297,7 @@ function update_energy_balance!(model::Model)
     calculate_net_radiation!(
         model.forcing_variables,
         model.surface_energy_variables,
-        @view model.vegetation_parameters.albedo[:,:,[current_month],:]
+        model.vegetation_parameters.albedo
     )
 
     calculate_potential_evaporation!(
@@ -311,7 +307,7 @@ function update_energy_balance!(model::Model)
         model.surface_energy_variables,
         model.vegetation_parameters.architectural_resistance,
         model.vegetation_parameters.minimum_resistance,
-        @view(model.vegetation_parameters.lai[:,:,[current_month],:]),
+        model.vegetation_parameters.lai,
     )
 
     # Step 2: recompute WITH snow for the full energy balance
@@ -319,7 +315,7 @@ function update_energy_balance!(model::Model)
         model.forcing_variables,
         model.surface_energy_variables,
         model.snow_variables,
-        @view model.vegetation_parameters.albedo[:,:,[current_month],:]
+        model.vegetation_parameters.albedo
     )
 
     calculate_potential_evaporation!(
@@ -329,18 +325,16 @@ function update_energy_balance!(model::Model)
         model.surface_energy_variables,
         model.vegetation_parameters.architectural_resistance,
         model.vegetation_parameters.minimum_resistance,
-        @view(model.vegetation_parameters.lai[:,:,[current_month],:]),
+        model.vegetation_parameters.lai,
     )
     return nothing
 end
 
 function update_net_radiation_post_closure!(model)
-    current_month = month(model.clock.time)
-
     calculate_net_radiation!(
         model.forcing_variables,
         model.surface_energy_variables,
         model.snow_variables,
-        @view model.vegetation_parameters.albedo[:,:,[current_month],:]
+        model.vegetation_parameters.albedo
     )
 end
