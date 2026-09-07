@@ -90,6 +90,28 @@ function open_forcing_netcdf(config_file::AbstractString, cfg::Cfg)
 end
 
 """
+Path to the Zarr store for one forcing variable's prefix and year, as
+written by scripts/convert_forcing_to_zarr.jl.
+"""
+zarr_store_path(config_dir, prefix, year) = abspath(joinpath(config_dir, "$(prefix)$(year).zarr"))
+
+"""
+True if every forcing variable has a Zarr store on disk for every configured
+year. Used to decide what `forcing_format = "auto"` should do.
+"""
+function zarr_forcing_available(config_file::AbstractString, cfg::Cfg)
+    config_dir = dirname(config_file)
+    years = cfg.start_year:cfg.end_year
+    for var in FORCING_VARS
+        prefix = getval(cfg.input.paths, "$(var)_file")
+        for year in years
+            isdir(zarr_store_path(config_dir, prefix, year)) || return false
+        end
+    end
+    return true
+end
+
+"""
 Open the per-year Zarr stores of every forcing variable, written by
 scripts/convert_forcing_to_zarr.jl.
 """
@@ -97,15 +119,13 @@ function open_forcing_zarr(config_file::AbstractString, cfg::Cfg)
     years = cfg.start_year:cfg.end_year
     config_dir = dirname(config_file)
 
-    store_path(prefix, year) = abspath(joinpath(config_dir, "$(prefix)$(year).zarr"))
-
     sources = Dict{String, ZarrForcingVar}()
     times = DateTime[]
 
     for var in FORCING_VARS
         prefix = getval(cfg.input.paths, "$(var)_file")
         groups = map(years) do year
-            path = store_path(prefix, year)
+            path = zarr_store_path(config_dir, prefix, year)
             isdir(path) || error("Cannot find Zarr forcing store '$path'")
             zopen(path)
         end
@@ -132,11 +152,38 @@ function open_forcing_zarr(config_file::AbstractString, cfg::Cfg)
 end
 
 """
+Decide whether to read forcing as Zarr or NetCDF, from `cfg.input.forcing_format`.
+
+"zarr" and "netcdf" pick that format directly. "auto" (the default) checks
+whether a complete set of Zarr stores exists for the configured years and
+uses it if so, otherwise falls back to NetCDF. Either way it prints which
+one was picked, so the choice is never silent.
+"""
+function use_zarr_forcing(config_file::AbstractString, cfg::Cfg)
+    format = lowercase(cfg.input.forcing_format)
+    if format == "zarr"
+        return true
+    elseif format == "netcdf"
+        return false
+    elseif format == "auto"
+        found = zarr_forcing_available(config_file, cfg)
+        if found
+            println("forcing_format=auto: found Zarr forcing stores, using zarr.")
+        else
+            println("forcing_format=auto: no complete set of Zarr forcing stores found, using netcdf.")
+        end
+        return found
+    else
+        error("Unknown forcing_format '$(cfg.input.forcing_format)'. Use \"auto\", \"zarr\", or \"netcdf\".")
+    end
+end
+
+"""
 Open the forcing input data files to prepare for stepwise data
 loading.
 """
 function open_forcing(config_file::AbstractString, cfg::Cfg)
-    sources, times, (nx, ny) = if lowercase(cfg.input.forcing_format) == "zarr"
+    sources, times, (nx, ny) = if use_zarr_forcing(config_file, cfg)
         open_forcing_zarr(config_file, cfg)
     else
         open_forcing_netcdf(config_file, cfg)
