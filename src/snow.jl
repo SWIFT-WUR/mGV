@@ -175,10 +175,10 @@ end
     @Const(wind_2d),        # Wind speed [m/s]
     @Const(AreaFract),      # Elevation band area fractions [-]
     @Const(cv_4d),          # Vegetation cover fractions [-]
-    
+    @Const(lat_1d),         # Latitude of each grid row [degrees]
+
     # Temporal Context
-    day_of_year,            # Current day of the year [1-366]
-    lat_positive            # Hemisphere flag (1 = Northern, 0 = Southern)
+    day_of_year             # Current day of the year [1-366]
 )
     i, j, b, v = @index(Global, NTuple)
 
@@ -305,7 +305,8 @@ end
     # --------------------------------------------------------------------------
     # 4. Seasonal Melting State Transition
     # --------------------------------------------------------------------------
-    in_melt_season = ifelse(lat_positive == Int32(1),
+    # Check hemisphere per row: a global run has cells in both hemispheres.
+    in_melt_season = ifelse(lat_1d[j] >= 0f0,
                             (day_of_year > Int32(60)) & (day_of_year < Int32(273)),
                             (day_of_year < Int32(60)) | (day_of_year > Int32(273)))
 
@@ -495,12 +496,9 @@ function calculate_snow_dynamics!(
     snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
     last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
     throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
-    AreaFract_gpu, cv_gpu,
-    day_of_year::Int32, lat_mean::Float32
+    AreaFract_gpu, cv_gpu, lat_1d,
+    day_of_year::Int32
 )
-    # Determine hemispheric context for seasonality checks
-    lat_pos = Int32(lat_mean >= 0.0 ? 1 : 0)
-
     # Dispatch the compute kernel
     kernel! = snow_dynamics_kernel!(device_backend)
     kernel!(
@@ -508,8 +506,8 @@ function calculate_snow_dynamics!(
         snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
         last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
         throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
-        AreaFract_gpu, cv_gpu,
-        day_of_year, lat_pos;
+        AreaFract_gpu, cv_gpu, lat_1d,
+        day_of_year;
         ndrange=size(swe_gpu)
     )
     
@@ -540,8 +538,6 @@ function update_snow!(model)
     (; snow_band_area_fraction) = model.grid_parameters
     (; vegetation_fraction) = model.vegetation_parameters
 
-    # Compute mean latitude for hemisphere detection
-    lat_mean = mean(latitude)
     doy = Int32(dayofyear(model.clock.time))
 
     # 4D snow kernel: partitions throughfall[b,v] per tile internally
@@ -551,8 +547,8 @@ function update_snow!(model)
         melting_flag,
         throughfall, band_air_temperature,
         shortwave_down, longwave_down, surface_pressure, vapor_pressure, wind_speed,
-        snow_band_area_fraction, vegetation_fraction,
-        doy, lat_mean
+        snow_band_area_fraction, vegetation_fraction, latitude,
+        doy
     )
 
     # Total per-band soil influx: pack drainage + rain on bare ground
