@@ -1,3 +1,5 @@
+TransferBuffer = Results{Matrix{Float32}, Array{Float32, 3}}
+
 struct AsyncBufferService
     free_pool::Channel{TransferBuffer}             # Buffers ready for the GPU to fill
     job_queue::Channel{Tuple{Int, TransferBuffer}} # Buffers full of data, waiting for disk
@@ -27,11 +29,11 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
         println("  -> Async writer started on thread $(Threads.threadid())")
         try
             # Loop forever: wait for a job, write it, recycle the buffer
-            for (day, buf) in job_queue
+            for (time_index, buf) in job_queue
                 
                 # A. Write to disk
                 # This calls the function in io_writer.jl
-                write_slice!(day, buf, output_store)
+                write_slice!(time_index, buf, output_store)
                 
                 # B. Recycle buffer
                 # Send the buffer back to the free_pool so the GPU can use it again.
@@ -60,8 +62,8 @@ end
 Hand off a full buffer to the background thread.
 - Returns immediately (microseconds).
 """
-function submit_buffer(service::AsyncBufferService, day, buf)
-    put!(service.job_queue, (day, buf))
+function submit_buffer(service::AsyncBufferService, time_index, buf)
+    put!(service.job_queue, (time_index, buf))
 end
 
 """
