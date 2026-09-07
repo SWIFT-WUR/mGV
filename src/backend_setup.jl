@@ -1,6 +1,8 @@
 const HAS_CUDA   = try using CUDA;   true catch; false end
 const HAS_AMDGPU = try using AMDGPU; true catch; false end
 const HAS_METAL  = try using Metal;  true catch; false end
+const HAS_OPENCL = try using OpenCL; true catch; false end
+const OPENCL_FUNCTIONAL = try OpenCL.zeros(1); true catch; false end
 
 if HAS_CUDA && CUDA.functional()
     const device_backend = CUDABackend()
@@ -23,6 +25,21 @@ elseif HAS_AMDGPU && AMDGPU.functional()
     
     pin_memory!(arr) = nothing
     println("✅ Active device: AMD GPU (ROCm)")
+
+elseif HAS_OPENCL && OPENCL_FUNCTIONAL
+    const device_backend = OpenCLBackend()
+    const ArrayType = CLArray
+    const backend_name = "OpenCL"
+
+    const StreamType = Nothing
+    create_stream() = nothing
+
+    local platforms = OpenCL.cl.platforms()
+    # grab first device from first platform
+    local device = OpenCL.cl.devices(OpenCL.cl.platforms()[1])[1]
+    
+    pin_memory!(arr) = nothing
+    println("✅ Active device: OpenCL ($(device.name))")
 
 elseif HAS_METAL && Metal.functional()
     const device_backend = MetalBackend()

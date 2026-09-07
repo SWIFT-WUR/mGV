@@ -138,31 +138,30 @@ function calculate_total_runoff!(total_runoff, surface_runoff, subsurface_runoff
 end
 
 function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moist, expt)
-    # Cast entirely to Float64 strictly to mirror VIC's double-precision root solving 
-    # preventing catastrophic cancellation against the exponent 19 limits natively.
-    Z64 = 0.0
-    EPS64 = 1e-9
-    ONE64 = 1.0
+    EPS = 1f-6  # limit eps to 1e-6 as 
 
-    m = max(Float64(expt), 3.001)
-    
-    W_m = max(Float64(max_moist) - Float64(resid_moist), EPS64)
-    W_a = max(Float64(current_moist) - Float64(resid_moist), Z64)
+    m = max(expt, 3.001f0)
 
-    F = clamp((W_a / W_m), Z64, ONE64)
-    
-    tiny_mask = F < 0.01
+    W_m = max(max_moist - resid_moist, EPS)
+    W_a = max(current_moist - resid_moist, 0f0)
 
-    term1 = F ^ (ONE64 - m)
-    term2 = (Float64(Ksat) / W_m) * (ONE64 - m)
-    
-    inner = max(term1 - term2, EPS64)
-    W_new = W_m * (inner ^ (ONE64 / (ONE64 - m)))
-    
+    F = clamp((W_a / W_m), 0f0, 1f0)
+
+    # F^(1-m) computed as exp((1-m)*log F) so the exponent can be clamped
+    #  before overflow, not after.
+    exponent = (1f0 - m) * log(F)
+    if exponent > 80f0  # term 1 will be too large to compute; interlayer drainage is 0
+        return 0f0
+    end
+
+    term1 = exp(exponent)
+    term2 = (Ksat / W_m) * (1f0 - m)
+
+    inner = max(term1 - term2, EPS)
+    W_new = W_m * (inner ^ (1f0 / (1f0 - m)))
+
     Q12 = W_a - W_new
-    Q12 = tiny_mask ? Z64 : Q12
-
-    return Float32(clamp(Q12, Z64, W_a))
+    return clamp(Q12, 0f0, W_a)
 end
 
 # Eq. 21a–21b (Liang 1994)
