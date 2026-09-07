@@ -113,7 +113,7 @@ function validate_path(file, dir)
         if n_matching_files < 1
             error("No files found in ", dirname(file), "starting with", basename(file))
         end
-    elseif !isfile(file)
+    elseif !isfile(file) && !isdir(file)
         error("Cannot find file '$file'")
     end
     return file

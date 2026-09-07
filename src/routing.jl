@@ -41,17 +41,16 @@ function RoutingState(config, elevation)
     println("Initializing Kinematic Wave Routing...")
     println("  -> Source: $param_file")
 
-    if !isfile(param_file)
+    if !isfile(param_file) && !isdir(param_file)
         error("Routing parameter file not found: $param_file")
     end
 
-    ds = NCDataset(param_file)
+    ds = open_param_source(param_file)
 
-    # 1. Load raw data (CPU) 
+    # 1. Load raw data (CPU)
     # Helper: Load and sanitize
     function load_safe(varname, T, fallback)
-        data = ds[varname][:, :]
-        return T.(replace(data, missing => fallback))
+        return T.(readfull(ds, varname, fallback))
     end
 
     println("  -> Loading variables...")
@@ -65,7 +64,7 @@ function RoutingState(config, elevation)
     raw_area = load_safe("cell_area", Float32, NaN32)
     raw_acc = load_safe("accumulation", Float32, NaN32)
 
-    close(ds)
+    close_param_source(ds)
 
     nx, ny = size(raw_ids)
     n_total = nx * ny
