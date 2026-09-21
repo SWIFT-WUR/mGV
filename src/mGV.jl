@@ -32,21 +32,6 @@ include("io.jl")
 
 const to = TimerOutputs.TimerOutput()
 
-"""Validate the path of a file relative to the given directory."""
-function validate_path(file, dir)
-    file = abspath(joinpath(dir, file))
-    if endswith(file, "_")
-        files = readdir(dirname(file))
-        n_matching_files = sum(startswith.(files, basename(file)))
-        if n_matching_files < 1
-            error("No files found in ", dirname(file), "starting with", basename(file))
-        end
-    elseif !isfile(file)
-        error("Cannot find file '$file'")
-    end
-    return file
-end
-
 """
 Clock struct for timekeeping.
 
@@ -112,7 +97,7 @@ function Model(config_file::AbstractString)
     config = load_config(config_file)
 
     clock = Clock(config)
-    forcing_readers, forcing_variables = initialize_forcing(config_file, config)
+    forcing_readers, forcing_variables = initialize_forcing(config)
     grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters =
         read_parameters(config)
 

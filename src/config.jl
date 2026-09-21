@@ -102,16 +102,12 @@ end
 end
 
 """Validate the path of a file relative to the given directory."""
-function validate_path(file, dir)
+function validate_path(file, dir, years)
     file = abspath(joinpath(dir, file))
-    if endswith(file, "_")
-        files = readdir(dirname(file))
-        n_matching_files = sum(startswith.(files, basename(file)))
-        if n_matching_files < 1
-            error("No files found in ", dirname(file), "starting with", basename(file))
+    for year_file in unique(replace(file, "{year}" => string(year)) for year in years)
+        if !isfile(year_file)
+            error("Cannot find file '$year_file'")
         end
-    elseif !isfile(file)
-        error("Cannot find file '$file'")
     end
     return file
 end
@@ -125,11 +121,12 @@ function load_config(config_file)
     # not demand it otherwise -- a run with `enable_routing = false` should not
     # require a file it never opens.
     routing_enabled = get(cfg_dict, "enable_routing", true)
+    years = cfg_dict["start_year"]:cfg_dict["end_year"]
     for (key, path) in cfg_dict["input"]["paths"]
         if key == "routing_param_file" && !routing_enabled
             continue
         end
-        cfg_dict["input"]["paths"][key] = validate_path(path, dirname(config_file))
+        cfg_dict["input"]["paths"][key] = validate_path(path, dirname(config_file), years)
     end
 
     # Make output dir path absolute, relative to the config file location
