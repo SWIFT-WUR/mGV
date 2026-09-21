@@ -99,17 +99,11 @@ function load_monthly_parameters!(
 )
     current_month == monthly.loaded_month && return nothing
 
-    field_pairs = (
-        (monthly.displacement_height, veg_params.displacement_height),
-        (monthly.roughness_length,    veg_params.roughness_length),
-        (monthly.lai,                 veg_params.lai),
-        (monthly.albedo,              veg_params.albedo),
-        (monthly.canopy_coverage,     veg_params.canopy_coverage),
-    )
-
-    for (host, device) in field_pairs
-        copyto!(device, host[:, :, current_month:current_month, :])
-    end
+    veg_params.displacement_height[:] = monthly.displacement_height[:, :, current_month, :]
+    veg_params.roughness_length[:]    = monthly.roughness_length[:, :, current_month, :]
+    veg_params.lai[:]                 = monthly.lai[:, :, current_month, :]
+    veg_params.albedo[:]              = monthly.albedo[:, :, current_month, :]
+    veg_params.canopy_coverage[:]     = monthly.canopy_coverage[:, :, current_month, :]
 
     monthly.loaded_month = current_month
     return nothing
