@@ -47,11 +47,12 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
 function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
     println("Initializing Zarr store at: $output_path")
     isdir(output_path) && rm(output_path, recursive=true)
-    mkpath(output_path)
+    mkdir(output_path)
 
     # Initialize the group
     group = zgroup(output_path)
 
+    # Shuffle options: shuffle = 0 = none, 1 = byte shuffle, 2 = bitshuffle, -1 = auto
     compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=1)
 
     chunk_2d = (nx, ny, 1)
@@ -120,7 +121,6 @@ end
 
 function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
     println("Creating NetCDF output file at: $output_file")
-    mkpath(dirname(output_file))
     out_ds = NCDataset(output_file, "c")
     
     # Dimensions

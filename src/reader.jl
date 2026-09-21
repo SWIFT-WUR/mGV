@@ -38,8 +38,8 @@ end
 const ForcingVar = Union{CFVariable, MFCFVariable}
 
 """
-One variable's per-year Zarr stores as a single time axis. `offsets[i]` is the
-run-wide index of the first timestep in `arrays[i]`.
+One forcing variable read from one Zarr store per year. `offsets[i]` is the
+timestep, counted from the start of the run, at which year `i` begins.
 """
 struct ZarrForcingVar{A}
     arrays::Vector{A}
@@ -49,7 +49,7 @@ end
 mutable struct ForcingReaders{S}
     # NetCDF variables or Zarr stores; only `load_block!` knows which.
     sources::Dict{String, S}
-    # Read many timesteps per disk hit, then serve single days from memory.
+    # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
     cache::Dict{String, Vector{Matrix{Float32}}}
     cache_start::Int   # index of the first cached timestep, 0 when empty
@@ -62,21 +62,14 @@ end
 Open the per-year NetCDF files of every forcing variable as one aggregated
 time series.
 """
-function open_forcing_netcdf(config_file::AbstractString, cfg::Cfg)
+function open_forcing_netcdf(cfg::Cfg)
     years = cfg.start_year:cfg.end_year
-    var_prefixes = [getval(cfg.input.paths, "$(var)_file") for var in FORCING_VARS]
-    files = Vector{String}(undef, length(years))
-    datasets = Vector{Any}(undef,  length(var_prefixes))
+    var_paths = [getval(cfg.input.paths, "$(var)_file") for var in FORCING_VARS]
+    datasets = Vector{Any}(undef, length(var_paths))
 
-    for i = eachindex(var_prefixes)
-        for j = eachindex(years)
-            ncfile = validate_path(
-                "$(var_prefixes[i])$(years[j]).nc",
-                dirname(config_file)
-            )
-            files[j] = ncfile
-        end
-        datasets[i] = NCDataset(unique(files), aggdim = "time", deferopen = false)
+    for i = eachindex(var_paths)
+        files = unique(replace(var_paths[i], "{year}" => string(year)) for year in years)
+        datasets[i] = NCDataset(files, aggdim = "time", deferopen = false)
     end
 
     sources = Dict{String, ForcingVar}(
@@ -90,45 +83,18 @@ function open_forcing_netcdf(config_file::AbstractString, cfg::Cfg)
 end
 
 """
-Path to the Zarr store for one forcing variable's prefix and year, as
-written by scripts/convert_forcing_to_zarr.jl.
-"""
-zarr_store_path(config_dir, prefix, year) = abspath(joinpath(config_dir, "$(prefix)$(year).zarr"))
-
-"""
-True if every forcing variable has a Zarr store on disk for every configured
-year. Used to decide what `forcing_format = "auto"` should do.
-"""
-function zarr_forcing_available(config_file::AbstractString, cfg::Cfg)
-    config_dir = dirname(config_file)
-    years = cfg.start_year:cfg.end_year
-    for var in FORCING_VARS
-        prefix = getval(cfg.input.paths, "$(var)_file")
-        for year in years
-            isdir(zarr_store_path(config_dir, prefix, year)) || return false
-        end
-    end
-    return true
-end
-
-"""
 Open the per-year Zarr stores of every forcing variable, written by
 scripts/convert_forcing_to_zarr.jl.
 """
-function open_forcing_zarr(config_file::AbstractString, cfg::Cfg)
+function open_forcing_zarr(cfg::Cfg)
     years = cfg.start_year:cfg.end_year
-    config_dir = dirname(config_file)
 
     sources = Dict{String, ZarrForcingVar}()
     times = DateTime[]
 
     for var in FORCING_VARS
-        prefix = getval(cfg.input.paths, "$(var)_file")
-        groups = map(years) do year
-            path = zarr_store_path(config_dir, prefix, year)
-            isdir(path) || error("Cannot find Zarr forcing store '$path'")
-            zopen(path)
-        end
+        path = getval(cfg.input.paths, "$(var)_file")
+        groups = [zopen(replace(path, "{year}" => string(year))) for year in years]
 
         arrays = [group[getval(cfg.input.names, var)] for group in groups]
         offsets = Int[]
@@ -152,42 +118,16 @@ function open_forcing_zarr(config_file::AbstractString, cfg::Cfg)
 end
 
 """
-Decide whether to read forcing as Zarr or NetCDF, from `cfg.input.forcing_format`.
-
-"zarr" and "netcdf" pick that format directly. "auto" (the default) checks
-whether a complete set of Zarr stores exists for the configured years and
-uses it if so, otherwise falls back to NetCDF. Either way it prints which
-one was picked, so the choice is never silent.
+Open the forcing files, as NetCDF or Zarr depending on their file extension,
+and set up the cache that the model reads its daily forcing from.
 """
-function use_zarr_forcing(config_file::AbstractString, cfg::Cfg)
-    format = lowercase(cfg.input.forcing_format)
-    if format == "zarr"
-        return true
-    elseif format == "netcdf"
-        return false
-    elseif format == "auto"
-        found = zarr_forcing_available(config_file, cfg)
-        if found
-            println("forcing_format=auto: found Zarr forcing stores, using zarr.")
-        else
-            println("forcing_format=auto: no complete set of Zarr forcing stores found, using netcdf.")
-        end
-        return found
-    else
-        error("Unknown forcing_format '$(cfg.input.forcing_format)'. Use \"auto\", \"zarr\", or \"netcdf\".")
+function open_forcing(cfg::Cfg)
+    # Paths ending in ".zarr" are Zarr stores, anything else is NetCDF
+    is_zarr = [endswith(getval(cfg.input.paths, "$(var)_file"), ".zarr") for var in FORCING_VARS]
+    if !(all(is_zarr) || !any(is_zarr))
+        error("Forcing paths must either all be Zarr stores (.zarr) or all NetCDF files")
     end
-end
-
-"""
-Open the forcing input data files to prepare for stepwise data
-loading.
-"""
-function open_forcing(config_file::AbstractString, cfg::Cfg)
-    sources, times, (nx, ny) = if use_zarr_forcing(config_file, cfg)
-        open_forcing_zarr(config_file, cfg)
-    else
-        open_forcing_netcdf(config_file, cfg)
-    end
+    sources, times, (nx, ny) = all(is_zarr) ? open_forcing_zarr(cfg) : open_forcing_netcdf(cfg)
 
     bytes_per_step = nx * ny * sizeof(Float32) * length(FORCING_VARS)
     capacity = clamp(FORCING_CACHE_BUDGET_BYTES ÷ max(bytes_per_step, 1), 1, length(times))
@@ -289,8 +229,8 @@ end
 Initialize forcing reader and read the first timestep of
 forcing data.
 """
-function initialize_forcing(config_file::AbstractString, cfg::Cfg)
-    forcing_readers = open_forcing(config_file, cfg)
+function initialize_forcing(cfg::Cfg)
+    forcing_readers = open_forcing(cfg)
     start_time = DateTime(cfg.start_year,1,1)
     forcing_vars = ForcingVariables(;
         ((Symbol(var) => read_var(start_time, forcing_readers, var)) for var in FORCING_VARS)...

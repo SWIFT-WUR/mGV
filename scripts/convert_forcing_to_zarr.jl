@@ -1,5 +1,5 @@
 # Convert a config's per-year NetCDF forcing files into per-year Zarr stores
-# next to them, so a run can set `forcing_format = "zarr"` under `[input]`.
+# next to them, so a run can point its forcing paths at `..._{year}.zarr`.
 #
 #   julia --project=. scripts/convert_forcing_to_zarr.jl configs/mekong_config.toml
 #
@@ -97,10 +97,10 @@ end
 
 function convert_forcing(config_file)
     cfg = load_config(config_file)
-    config_dir = dirname(abspath(config_file))
 
     for var in FORCING_VARS
-        prefix = getfield(cfg.input.paths, Symbol("$(var)_file"))
+        path = getfield(cfg.input.paths, Symbol("$(var)_file"))
+        endswith(path, ".nc") || error("Expected a NetCDF path ending in .nc for $var, got '$path'")
         names = (
             variable = getfield(cfg.input.names, Symbol(var)),
             time = cfg.input.names.time,
@@ -110,8 +110,8 @@ function convert_forcing(config_file)
         println("$var ($(names.variable)):")
 
         for year in cfg.start_year:cfg.end_year
-            nc_path = abspath(joinpath(config_dir, "$(prefix)$(year).nc"))
-            zarr_path = abspath(joinpath(config_dir, "$(prefix)$(year).zarr"))
+            nc_path = replace(path, "{year}" => string(year))
+            zarr_path = nc_path[1:end-3] * ".zarr"
             convert_year(nc_path, zarr_path, names)
         end
     end

@@ -157,67 +157,62 @@ function calculate_net_radiation!(
 end
 
 
-@kernel function potential_evaporation_precompute_kernel!(
+@kernel function potential_evaporation_kernel!(
+    potential_evaporation,
     air_temperature,
     surface_pressure,
     vapor_pressure,
-    latent_heat,
     elevation,
-    slope,
-    scale_height,
-    gamma,
-    vpd,
-    air_dens_term
+    net_radiation,
+    aerodynamic_resistance,
+    architectural_resistance,
+    minimum_resistance,
+    lai,
+    nbands,
+    nveg
 )
-    I = @index(Global)
+    i, j = @index(Global, NTuple)
 
     # Local coefficients
     G_COEFF = 1628.6f0
     AIR_C = 0.003486f0
+    EPS = 1.0f-6
 
-    slope[I] = calculate_svp_slope(air_temperature[I])
-    latent_heat[I] = calculate_latent_heat(air_temperature[I])
-
-    scale_height[I] = calculate_scale_height(air_temperature[I], elevation[I])
-    gamma[I] = G_COEFF * (
-        P_STD * exp(-elevation[I] / scale_height[I])
-        ) / latent_heat[I]
-
-    vpd[I] = calculate_vpd(air_temperature[I], vapor_pressure[I])
-
-    air_dens_term[I] = (
-        (AIR_C * surface_pressure[I] * PA_PER_KPA) / 
-        (T_FREEZE + air_temperature[I]) * 
-        (C_P_AIR * vpd[I] * DAY_SEC)
+    # Meteo terms of this grid cell, the same for all its tiles
+    tair = air_temperature[i, j]
+    slope = calculate_svp_slope(tair)
+    latent_heat = calculate_latent_heat(tair)
+    scale_height = calculate_scale_height(tair, elevation[i, j])
+    gamma = G_COEFF * (
+        P_STD * exp(-elevation[i, j] / scale_height)
+        ) / latent_heat
+    vpd = calculate_vpd(tair, vapor_pressure[i, j])
+    air_dens_term = (
+        (AIR_C * surface_pressure[i, j] * PA_PER_KPA) /
+        (T_FREEZE + tair) *
+        (C_P_AIR * vpd * DAY_SEC)
     )
-end
 
-function potential_evaporation_precompute!(
-    air_temperature,
-    surface_pressure,
-    vapor_pressure,
-    latent_heat,
-    elevation,
-    slope,
-    scale_height,
-    gamma,
-    vpd,
-    air_dens_term
-)
-    potential_evaporation_precompute_kernel!(device_backend)(
-        air_temperature,
-        surface_pressure,
-        vapor_pressure,
-        latent_heat,
-        elevation,
-        slope,
-        scale_height,
-        gamma,
-        vpd,
-        air_dens_term,    
-        ndrange = length(air_temperature)
-    )
-    return nothing
+    for v in 1:nveg, b in 1:nbands
+        ra = aerodynamic_resistance[i, j, b, v]
+        if v < nveg
+            # Vegetation: canopy resistance without water stress (rmin / LAI)
+            resistance_ratio = (
+                (minimum_resistance[i, j, 1, v] / max(lai[i, j, 1, v], EPS)) +
+                architectural_resistance[i, j, 1, v]
+            ) / ra
+        else
+            # Bare soil (last vegetation class): no canopy resistance
+            resistance_ratio = architectural_resistance[i, j, 1, v] / ra
+        end
+
+        potential_evaporation[i, j, b, v] = max(
+            (
+                (slope * (net_radiation[i, j, b, v] * DAY_SEC) + (air_dens_term / ra)) /
+                (latent_heat * (slope + gamma * (1f0 + resistance_ratio)))
+            ), 0f0
+        )
+    end
 end
 
 function calculate_potential_evaporation!(
@@ -233,52 +228,20 @@ function calculate_potential_evaporation!(
     (; net_radiation, aerodynamic_resistance) = surface_energy_variables
     (; air_temperature, surface_pressure, vapor_pressure) = forcing_variables
 
-    # Grid dimensions
-    nveg = size(aerodynamic_resistance, 4)
-    veg_dim = 1:(nveg - 1)
-
-    EPS = 1.0f-6
-
-    # Scratch buffers live on the model, not allocated per timestep
-    slope = surface_energy_variables.pe_slope
-    latent_heat = surface_energy_variables.pe_latent_heat
-    scale_height = surface_energy_variables.pe_scale_height
-    gamma = surface_energy_variables.pe_gamma
-    vpd = surface_energy_variables.pe_vpd
-    air_dens_term = surface_energy_variables.pe_air_dens_term
-
-    # 2. Pre-calculate 2D Meteorological Terms
-    potential_evaporation_precompute!(
+    potential_evaporation_kernel!(device_backend)(
+        potential_evaporation,
         air_temperature,
         surface_pressure,
         vapor_pressure,
-        latent_heat,
         elevation,
-        slope,
-        scale_height,
-        gamma,
-        vpd,
-        air_dens_term
-    )
-
-    ## ToDo; fold the following lines into the kernel as well if possible
-    # Vegetation tiles: PE at minimum canopy resistance (gsm_inv=1)
-    @views @. potential_evaporation[:, :, :, veg_dim] = max(
-        (
-            (slope * (net_radiation[:, :, :, veg_dim] * DAY_SEC) + 
-            (air_dens_term / aerodynamic_resistance[:, :, :, veg_dim])) / 
-            (latent_heat * (slope + gamma * (1f0 + 
-            ((minimum_resistance[:, :, :, veg_dim] / max(lai[:, :, :, veg_dim], EPS)) + 
-            architectural_resistance[:, :, :, veg_dim]) / aerodynamic_resistance[:, :, :, veg_dim])))
-        ), 0f0
-    )
-
-    # Bare Soil Tile (rc=0, compute_pot_evap bare soil PE)
-    @views @. potential_evaporation[:, :, :, nveg] = max(
-        (
-            (slope * (net_radiation[:, :, :, nveg] * DAY_SEC) + (air_dens_term / aerodynamic_resistance[:, :, :, nveg])) / 
-            (latent_heat * (slope + gamma * (1f0 + architectural_resistance[:, :, :, nveg] / aerodynamic_resistance[:, :, :, nveg])))
-        ), 0f0
+        net_radiation,
+        aerodynamic_resistance,
+        architectural_resistance,
+        minimum_resistance,
+        lai,
+        size(potential_evaporation, 3),
+        size(potential_evaporation, 4),
+        ndrange = size(air_temperature)
     )
     return nothing
 end
