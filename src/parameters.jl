@@ -18,9 +18,7 @@ struct VegetationParameters{T <: AbstractArray}
     vegetation_fraction::T
     minimum_resistance::T
     architectural_resistance::T
-    # Active monthly values. These hold ONLY the currently simulated month,
-    # with shape (nx, ny, 1, nveg); `load_monthly_parameters!` refreshes them
-    # from the host-side `MonthlyVegetationParameters` on each month change.
+    # Active monthly values
     displacement_height::T
     roughness_length::T
     lai::T
@@ -63,14 +61,11 @@ end
 @adapt_structure SoilParameters
 
 """
-Host-side store of the full 12-month vegetation parameter cycle.
+Full 12-month vegetation parameters
 
-Only the active month is mirrored onto the compute device (see
-`VegetationParameters`). At global 5 arcmin resolution one
-(nx, ny, 12, nveg) field is 4.5 GiB, so keeping all five resident on the
-device would cost 22.7 GiB of memory for data that is 11/12 unused on any
-given day. This struct deliberately has no `@adapt_structure`: it must stay
-on the host.
+Due to storage constraints, storing all months of data on GPU uses too
+much VRAM. Instead, copy over the active monthly values at the start of
+each month.
 """
 mutable struct MonthlyVegetationParameters{T <: AbstractArray}
     displacement_height::T
@@ -141,8 +136,6 @@ function read_parameters(config::Cfg)
     rarc = nomissing(ds_params[config.input.names.architectural_resistance][:,:,:], 0.0)
     architectural_resistance = ndims(rarc) == 3 ? reshape(rarc, size(rarc, 1), size(rarc, 2), 1, size(rarc, 3)) : rarc
 
-    # The 12-month vegetation cycle stays on the host; only the active month is
-    # mirrored into the device-resident `VegetationParameters` buffers below.
     monthly_veg_params = MonthlyVegetationParameters(
         nomissing(ds_params[config.input.names.displacement_height][:,:,:,:], 0.0),
         nomissing(ds_params[config.input.names.roughness_length][:,:,:,:], 0.0),

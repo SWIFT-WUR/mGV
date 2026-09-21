@@ -52,6 +52,7 @@ function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_
     # Initialize the group
     group = zgroup(output_path)
 
+    # Shuffle options: shuffle = 0 = none, 1 = byte shuffle, 2 = bitshuffle, -1 = auto
     compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=1)
 
     chunk_2d = (nx, ny, 1)

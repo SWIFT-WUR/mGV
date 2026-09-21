@@ -130,8 +130,6 @@ function Model(config_file::AbstractString)
     canopy_variables = CanopyVariables(tile_dims)
     soil_variables = SoilVariables(grid_dims, soil_dims)
     snow_variables = SnowVariables(nx, ny, nbands, nveg)
-    # Only build routing state when it is actually used; otherwise the run
-    # would require a routing parameter file it never reads.
     routing = config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
 
     # Move data to backend during model initialization
@@ -149,8 +147,6 @@ function Model(config_file::AbstractString)
         end
     end
 
-    # Seed the single-month vegetation buffers with the starting month so the
-    # first timestep sees real parameters rather than zeros.
     load_monthly_parameters!(
         vegetation_parameters, monthly_vegetation_parameters, month(clock.time)
     )
@@ -158,12 +154,9 @@ function Model(config_file::AbstractString)
     derive_soil_parameters!(soil_parameters)
     convert_nijssen2001_to_arno!(soil_parameters)
 
-    # Initialize soil moisture and clamp between 0 and maximum_moisture
     @. soil_variables.moisture = clamp(soil_parameters.initial_moisture, 0.0f0, soil_parameters.maximum_moisture)
 
-    # Seed soil column temperature from the annual mean/deep soil temperature parameter,
-    # not 0degC -- otherwise the surface/soil thermal solve starts from a physically wrong
-    # state and biases tsurf, PE and ET from day 1.
+    # Initialize soil column temperature using annual mean
     for layer in axes(soil_variables.temperature, 3)
         @views soil_variables.temperature[:, :, layer] .= grid_parameters.average_temperature
     end
@@ -194,7 +187,6 @@ end
 
     update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
 
-    # Refresh the active-month vegetation parameters
     load_monthly_parameters!(
         model.vegetation_parameters,
         model.monthly_vegetation_parameters,

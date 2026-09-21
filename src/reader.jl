@@ -55,9 +55,7 @@ mutable struct ForcingReaders
     shortwave_down::ForcingVar
     longwave_down::ForcingVar
     surface_pressure::ForcingVar
-    # Block cache: reading one timestep at a time costs a NetCDF round trip per
-    # variable per step, which dominated the run loop. Instead read a block of
-    # timesteps once and serve the individual steps from host memory.
+    # Cache multiple forcing time steps to reduce NetCDF read overhead
     times::Vector{DateTime}
     cache::Dict{String, Vector{Matrix{Float32}}}
     cache_start::Int   # index of the first cached timestep, 0 when empty
