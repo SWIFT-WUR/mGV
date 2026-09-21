@@ -136,6 +136,9 @@ function load_config(config_file)
     if !isabspath(cfg_dict["output"]["dir"])
         cfg_dict["output"]["dir"] = abspath(joinpath(dirname(config_file), cfg_dict["output"]["dir"]))
     end
+    if !isdir(cfg_dict["output"]["dir"])
+        error("Output directory '$(cfg_dict["output"]["dir"])' does not exist")
+    end
 
     return from_dict(Cfg, cfg_dict)
 end
