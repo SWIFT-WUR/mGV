@@ -109,21 +109,15 @@ function load_monthly_parameters!(
     return nothing
 end
 
-"""
-Open a static input file for reading: NetCDF, or Zarr when `path` ends in
-".zarr". (NetCDF input files can be converted to a Zarr store using 
-scripts/convert_params_to_zarr.jl / convert_routing_to_zarr.jl / 
-convert_domain_to_zarr.jl) 
-"""
+"""Open a static input file: Zarr if `path` ends in ".zarr", NetCDF otherwise."""
 open_param_source(path::AbstractString) =
     endswith(path, ".zarr") ? zopen(path) : NCDataset(path)
 
 """
-Read variable `name` fully into memory as a plain array, with any missing
-values filled in with `fallback`. For a NetCDF file this does the same thing 
-`nomissing(...)` did everywhere before. For a Zarr store there's nothing to 
-fill in (already replaced missing values with `fallback` when the .zarr was
-generated so this just reads the array as-is.
+Read one variable, e.g. "elev" or "downstream_id", from the land surface
+parameter file or the routing parameter file into memory. For NetCDF, missing
+values are replaced by `fallback` (e.g. 0 or NaN). Zarr stores are assumed to
+have no missing values, so they are read as-is.
 """
 readfull(ds::NCDataset, name::AbstractString, fallback) = nomissing(Array(ds[name]), fallback)
 readfull(ds, name::AbstractString, fallback) = Array(ds[name])
