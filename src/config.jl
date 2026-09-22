@@ -105,7 +105,7 @@ end
 function validate_path(file, dir, years)
     file = abspath(joinpath(dir, file))
     for year_file in unique(replace(file, "{year}" => string(year)) for year in years)
-        if !isfile(year_file) && !isdir(year_file)
+        if !(isfile(year_file) || (isdir(year_file) && endswith(year_file, ".zarr")))
             error("Cannot find file '$year_file'")
         end
     end
