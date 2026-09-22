@@ -187,17 +187,11 @@ end
     t_band = tair_band[i, j, b]
     tf_val = throughfall_4d[i, j, b, v]
 
-    # Active mask for branchless execution
     active = (!isnan(area) & (area > 0f0) &
               !isnan(cv_wt) & (cv_wt > 0f0) &
               !isnan(t_band) & !isnan(tf_val))
 
-    # An inactive tile's outputs are constants, independent of everything this
-    # kernel computes, so write them and skip the physics entirely. Only ~1.5%
-    # of (cell, band, veg) tiles are active -- ocean, zero-area bands and
-    # zero-fraction veg tiles make up the rest -- and because the fastest index
-    # is `i`, whole warps are typically inactive together, so the branch is
-    # warp-uniform and the skipped work is real.
+    # Inactive tiles (~98.5%: ocean, empty bands/veg) get fixed values and skip the physics
     if !active
         swe[i, j, b, v]                = 0f0
         surf_water[i, j, b, v]         = 0f0
