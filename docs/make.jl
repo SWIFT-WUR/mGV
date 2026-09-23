@@ -1,0 +1,22 @@
+using Documenter
+using mGV
+
+makedocs(;
+    sitename = "mGV",
+    modules = [mGV],
+    checkdocs = :exports,
+    format = Documenter.HTML(;
+        prettyurls = get(ENV, "CI", "false") == "true",
+        canonical = "https://SWIFT-WUR.github.io/mGV",
+        edit_link = "main",
+    ),
+    pages = [
+        "Introduction" => "index.md",
+    ],
+)
+
+deploydocs(;
+    repo = "github.com/SWIFT-WUR/mGV.git",
+    devbranch = "main",
+    push_preview = true,
+)
