@@ -16,6 +16,10 @@ makedocs(;
         "Model input data" => "input_data.md",
         "Running on GPU" => "gpu.md",
         "Model coupling" => "coupling.md",
+        "Developer documentation" => [
+            "developer/index.md",
+            "Optimizing GPU performance" => "developer/gpu_performance.md",
+        ],
     ],
 )
 
