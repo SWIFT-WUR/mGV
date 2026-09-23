@@ -99,14 +99,35 @@ function load_monthly_parameters!(
 )
     current_month == monthly.loaded_month && return nothing
 
-    veg_params.displacement_height[:] = monthly.displacement_height[:, :, current_month, :]
-    veg_params.roughness_length[:]    = monthly.roughness_length[:, :, current_month, :]
-    veg_params.lai[:]                 = monthly.lai[:, :, current_month, :]
-    veg_params.albedo[:]              = monthly.albedo[:, :, current_month, :]
-    veg_params.canopy_coverage[:]     = monthly.canopy_coverage[:, :, current_month, :]
+    copy_month!(veg_params.displacement_height, monthly.displacement_height, current_month)
+    copy_month!(veg_params.roughness_length,    monthly.roughness_length,    current_month)
+    copy_month!(veg_params.lai,                 monthly.lai,                 current_month)
+    copy_month!(veg_params.albedo,              monthly.albedo,              current_month)
+    copy_month!(veg_params.canopy_coverage,     monthly.canopy_coverage,     current_month)
 
     monthly.loaded_month = current_month
     return nothing
+end
+
+"""
+    copy_month!(dest, src, month)
+
+Copy `src[:, :, month, :]` of a (nx, ny, 12, nveg) host array into the
+(nx, ny, 1, nveg) buffer `dest`. Each (nx, ny) block is contiguous in `src`, so
+it is copied directly with one `copyto!` per vegetation class. This avoids the
+host temporary of slicing and the device temporary + kernel of `dest[:] = ...`.
+"""
+function copy_month!(dest::AbstractArray, src::Array, month::Integer)
+    nx, ny, _, nveg = size(src)
+    @assert size(dest) == (nx, ny, 1, nveg)
+    n = nx * ny
+    # Loop through vegetation index as it's not contiguous in memory.
+    # Reordering input data to (nx, ny, nveg, month) would simplify this, but does
+    # not match input data.
+    for v in 1:nveg
+        copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, 1, month, v], n)
+    end
+    return dest
 end
 
 function read_parameters(config::Cfg)
