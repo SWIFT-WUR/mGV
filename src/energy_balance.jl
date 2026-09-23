@@ -129,6 +129,31 @@ function calculate_net_radiation!(
     return nothing
 end
 
+@kernel function net_radiation_snow_kernel!(
+    net_radiation,
+    @Const(albedo), @Const(surface_temperature),
+    @Const(shortwave_down), @Const(longwave_down),
+    @Const(coverage), @Const(snow_albedo), @Const(snow_surface_temperature)
+)
+    (; EMISSIVITY, SIGMA) = Constants
+    i, j, b, v = @index(Global, NTuple)
+
+    alb = albedo[i, j, 1, v]
+    ts = surface_temperature[i, j]
+    sc = coverage[i, j, b, v]
+
+    # Blend albedo and surface temperature with the snow values where snow is present
+    snowy = !(isnan(sc) || sc <= 0f0)
+    eff_alb = snowy ? sc * snow_albedo[i, j, b, v] + (1f0 - sc) * alb : alb
+    eff_t = snowy ? sc * snow_surface_temperature[i, j, b, v] + (1f0 - sc) * ts : ts
+
+    net_radiation[i, j, b, v] = (
+        (1f0 - eff_alb) * shortwave_down[i, j] +
+        longwave_down[i, j] -
+        EMISSIVITY * SIGMA * (eff_t + 273.15f0)^4
+    )
+end
+
 """
 Compute the net radiation, including the effect of snow cover
 """
@@ -141,17 +166,13 @@ function calculate_net_radiation!(
     (; shortwave_down, longwave_down) = forcing_variables 
     (; surface_temperature, net_radiation) = surface_energy_variables
     (; coverage) = snow_variables
-    (; EMISSIVITY, SIGMA) = Constants
 
-    eff_alb(alb, sc, s_alb) = (isnan(sc) || sc <= 0f0) ? alb : (sc * s_alb + (1f0 - sc) * alb)
-    eff_t(ts, sc, s_ts) = (isnan(sc) || sc <= 0f0) ? ts : (sc * s_ts + (1f0 - sc) * ts)
-    
-    @. net_radiation = (
-        (1f0 - eff_alb(albedo, coverage, snow_variables.albedo)) * shortwave_down + 
-        longwave_down -
-        EMISSIVITY * SIGMA * (
-            eff_t(surface_temperature, coverage, snow_variables.surface_temperature) + 273.15f0
-        )^4
+    net_radiation_snow_kernel!(device_backend)(
+        net_radiation,
+        albedo, surface_temperature,
+        shortwave_down, longwave_down,
+        coverage, snow_variables.albedo, snow_variables.surface_temperature;
+        ndrange = size(net_radiation)
     )
     return nothing
 end
