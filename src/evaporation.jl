@@ -393,6 +393,25 @@ function update_water_canopy_storage!(model::Model)
     return nothing
 end
 
+@kernel function total_evapotranspiration_kernel!(
+    total_evapotranspiration,
+    @Const(soil_evaporation), @Const(canopy_evaporation), @Const(transpiration),
+    @Const(vegetation_fraction), @Const(canopy_coverage), @Const(AreaFract)
+)
+    i, j = @index(Global, NTuple)
+
+    # 1. Initialize with Soil Evaporation
+    acc = soil_evaporation[i, j]
+
+    # 2. Accumulate Vegetation Fluxes
+    for v in 1:size(canopy_evaporation, 4), b in 1:size(canopy_evaporation, 3)
+        acc += (
+            canopy_evaporation[i, j, b, v] * vegetation_fraction[i, j, 1, v] + transpiration[i, j, b, v]
+        ) * canopy_coverage[i, j, 1, v] * AreaFract[i, j, b]
+    end
+    total_evapotranspiration[i, j] = acc
+end
+
 # Eq. (23): Total evapotranspiration
 function update_total_evapotranspiration!(model)
     (; total_evapotranspiration) = model.surface_energy_variables
@@ -401,18 +420,11 @@ function update_total_evapotranspiration!(model)
     (; vegetation_fraction, canopy_coverage) = model.vegetation_parameters
     (; snow_band_area_fraction) = model.grid_parameters
 
-    # 1. Initialize with Soil Evaporation
-    @. total_evapotranspiration = soil_evaporation
-
-    # 2. Accumulate Vegetation Fluxes
-    # We loop over tiles to avoid allocating massive intermediate arrays.
-    for i in 1:size(canopy_evaporation, 4)
-        for b in 1:size(canopy_evaporation, 3)
-            @views @. total_evapotranspiration += (
-                canopy_evaporation[:,:,b,i] * vegetation_fraction[:,:,1,i] + transpiration[:,:,b,i]
-            ) * canopy_coverage[:,:,1,i] * snow_band_area_fraction[:,:,b]
-        end
-    end
-
+    total_evapotranspiration_kernel!(device_backend)(
+        total_evapotranspiration,
+        soil_evaporation, canopy_evaporation, transpiration,
+        vegetation_fraction, canopy_coverage, snow_band_area_fraction;
+        ndrange = size(total_evapotranspiration)
+    )
     return nothing
 end
