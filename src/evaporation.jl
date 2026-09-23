@@ -352,6 +352,30 @@ function update_transpiration!(model::Model)
     return nothing
 end
 
+@kernel function water_canopy_storage_kernel!(
+    throughfall, water_storage,
+    @Const(maximum_water_storage), @Const(canopy_evaporation),
+    @Const(band_precipitation), @Const(canopy_coverage)
+)
+    i, j, b, v = @index(Global, NTuple)
+
+    w = water_storage[i, j, b, v]
+    mx = maximum_water_storage[i, j, b, v]
+    e = canopy_evaporation[i, j, b, v]
+    p = band_precipitation[i, j, b]
+    c = canopy_coverage[i, j, 1, v]
+
+    # 1. Update Throughfall FIRST
+    # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
+    # Logic: excess = max(0, (W + P - E) - Wm)
+    # Throughfall = (excess * coverage) + (precipitation * (1 - coverage))
+    throughfall[i, j, b, v] = (max(0f0, w + p - e - mx) * c) + (p * (1f0 - c))
+
+    # 2. Update Water Storage SECOND
+    # Logic: clamped new storage
+    water_storage[i, j, b, v] = clamp(w + p - e, 0f0, mx)
+end
+
 function update_water_canopy_storage!(model::Model)
     # Band-adjusted precipitation (Pfactor / AreaFract), not the grid-cell mean
     (; band_precipitation) = model.snow_variables
@@ -360,18 +384,12 @@ function update_water_canopy_storage!(model::Model)
 
     (; canopy_coverage) = model.vegetation_parameters
 
-    # 1. Update Throughfall FIRST
-    # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
-    # Logic: excess = max(0, (W + P - E) - Wm)
-    # Throughfall = (excess * coverage) + (precipitation * (1 - coverage))
-    @. throughfall = (max(0f0, water_storage + band_precipitation - canopy_evaporation - maximum_water_storage) * canopy_coverage) +
-                     (band_precipitation * (1f0 - canopy_coverage))
-
-    # 2. Update Water Storage SECOND
-    # Now we can safely mutate water_storage.
-    # Logic: clamped new storage
-    @. water_storage = clamp(water_storage + band_precipitation - canopy_evaporation, 0f0, maximum_water_storage)
-
+    water_canopy_storage_kernel!(device_backend)(
+        throughfall, water_storage,
+        maximum_water_storage, canopy_evaporation,
+        band_precipitation, canopy_coverage;
+        ndrange = size(water_storage)
+    )
     return nothing
 end
 
