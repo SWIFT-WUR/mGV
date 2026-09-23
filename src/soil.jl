@@ -122,9 +122,12 @@ function convert_nijssen2001_to_arno!(soil_parameters)
 end
 
 """
-Scalar Physics Kernel (Inner Function)
+ARNO soil evaporation scaling for the top soil layer.
+
+Returns whether the top layer is saturated, and the evaporation scaling factor
+beta. Both depend only on the grid cell, not on the tile.
 """
-function soil_evap_kernel(sm_top, sm_max_top, resid_top, pe, b_i, cv, cov)
+function arno_evaporation_beta(sm_top, sm_max_top, b_i)
     # 1. Calculate Max Infiltration
     max_infil = (1f0 + b_i) * sm_max_top
     
@@ -157,48 +160,52 @@ function soil_evap_kernel(sm_top, sm_max_top, resid_top, pe, b_i, cv, cov)
     end
 
     beta_asp = as_val + (1f0 - as_val) * (1f0 - ratio_beta) * dummy
-    
-    # 7. Final Calculation 
-    # Apply the mathematically selected multiplier (beta_asp) directly 
-    # unless full saturation naturally demands maximum potential evaporation.
-    esoil = is_saturated ? pe : pe * beta_asp
-    esoil = esoil * (1f0 - cov) * cv
-    
-    # 8. Cap at Available Moisture
-    avail = max(sm_top - resid_top, 0f0)
-    esoil = clamp(esoil, 0f0, avail)
-    
-    return esoil
+    return is_saturated, beta_asp
 end
 
+@kernel function soil_evaporation_kernel!(
+    soil_evap,
+    @Const(soil_moisture), @Const(soil_moisture_max), @Const(residual_moisture),
+    @Const(potential_evaporation), @Const(b_infilt),
+    @Const(cv), @Const(coverage), @Const(AreaFract)
+)
+    i, j = @index(Global, NTuple)
+
+    sm_top = soil_moisture[i, j, 1]
+    is_saturated, beta_asp = arno_evaporation_beta(
+        sm_top, soil_moisture_max[i, j, 1], b_infilt[i, j]
+    )
+    avail = max(sm_top - residual_moisture[i, j, 1], 0f0)
+
+    # Accumulate over Veg Types and Bands
+    acc = 0f0
+    for v in 1:size(potential_evaporation, 4), b in 1:size(potential_evaporation, 3)
+        # Esoil = Esoil_pot * beta(sm) * (1-fcanopy) * Cv per tile.
+        # Apply the mathematically selected multiplier (beta_asp) directly 
+        # unless full saturation naturally demands maximum potential evaporation.
+        pe = potential_evaporation[i, j, b, v]
+        esoil = is_saturated ? pe : pe * beta_asp
+        esoil = esoil * (1f0 - coverage[i, j, 1, v]) * (cv[i, j, 1, v] * AreaFract[i, j, b])
+
+        # Cap at Available Moisture
+        acc += clamp(esoil, 0f0, avail)
+    end
+    soil_evap[i, j] = acc
+end
 
 function calculate_soil_evaporation!(
     soil_evap,
     soil_moisture, soil_moisture_max, potential_evaporation, 
     b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
 )
-    # Clear the output array first (since we accumulate into it)
-    fill!(soil_evap, 0f0)
-
-    # --- 2. Apply Logic (Accumulate over Veg Types and Bands) ---
-    N_veg = size(cv_gpu, 4)
-    N_bands = size(AreaFract_gpu, 3)
-    for i in 1:N_veg
-        for b in 1:N_bands
-            # Esoil = Esoil_pot * beta(sm) * (1-fcanopy) * Cv per tile.
-            # pe passed in is Step 2 (snow-blended) PE which captures snow energy effects.
-            @views @. soil_evap += soil_evap_kernel(
-                soil_moisture[:,:,1],           
-                soil_moisture_max[:,:,1],       
-                residual_moisture[:,:,1],       
-                potential_evaporation[:,:,b,i],
-                b_infilt_gpu,                   
-                cv_gpu[:,:,1,i] * AreaFract_gpu[:,:,b],
-                coverage_gpu[:,:,1,i]           
-            )
-        end
-    end
-    
+    # pe passed in is Step 2 (snow-blended) PE which captures snow energy effects.
+    soil_evaporation_kernel!(device_backend)(
+        soil_evap,
+        soil_moisture, soil_moisture_max, residual_moisture,
+        potential_evaporation, b_infilt_gpu,
+        cv_gpu, coverage_gpu, AreaFract_gpu;
+        ndrange = size(soil_evap)
+    )
     return nothing
 end
 
