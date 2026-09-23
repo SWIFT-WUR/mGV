@@ -1,79 +1,103 @@
+#!/usr/bin/env julia
+# Convert a NetCDF file's Float64 variables to Float32.
+#
+#   julia --project=. scripts/convert_to_f32.jl <input.nc> <output.nc>
+#
+# Also repairs a bug seen in some VIC parameter files, where a variable's
+# fill value attribute is spelled backwards (e.g. "eulaVlliF_" instead of
+# "_FillValue"), so NCDatasets never masks it and raw NaN leaks through.
+
 using NCDatasets
 
-# 1. Configuration
-input_file  = "vic_global_5min_params_fix2.nc"
-output_file = "vic_global_5min_params_fix2_f32.nc"
+const REVERSED_FILLVALUE_KEY = reverse("_FillValue")  # "eulaVlliF_"
 
-# 2. Conversion Function
 function convert_to_float32(in_path, out_path)
     println("Opening $in_path...")
     ds_in = NCDataset(in_path, "r")
-    
-    if isfile(out_path)
-        rm(out_path)
-    end
+
+    isfile(out_path) && rm(out_path)
     ds_out = NCDataset(out_path, "c")
 
     try
-        # --- Copy Dimensions ---
         for (dname, dlen) in ds_in.dim
             defDim(ds_out, dname, dlen)
         end
 
-        # --- Copy Global Attributes ---
         for (k, v) in ds_in.attrib
             ds_out.attrib[k] = v
         end
 
-        # --- Copy Variables ---
         for (vname, var) in ds_in
-            # FIX: Strip 'Missing' from the type using nonmissingtype()
             orig_type = nonmissingtype(eltype(var))
-            
-            # DECISION LOGIC: Only change Float64 -> Float32
-            if orig_type == Float64
-                new_type = Float32
-                println("  Converting $vname (Float64 -> Float32)")
+
+            new_type = if orig_type == Float64
+                println("  Converting $vname (Float64 to Float32)")
+                Float32
             else
-                new_type = orig_type
                 println("  Keeping    $vname ($orig_type)")
+                orig_type
             end
 
-            # Handle Attributes (specifically _FillValue)
             att_dict = Dict(var.attrib)
-            
-            # If we are converting to Float32, we must also convert the _FillValue
-            if haskey(att_dict, "_FillValue") && new_type == Float32
-                val = att_dict["_FillValue"]
-                # Convert the fill value if it's a number
-                if val isa Number
-                    att_dict["_FillValue"] = Float32(val)
+
+            has_reversed_fill = haskey(att_dict, REVERSED_FILLVALUE_KEY)
+            reversed_fill_value = nothing
+            if has_reversed_fill
+                reversed_fill_value = att_dict[REVERSED_FILLVALUE_KEY]
+                println("  WARNING: $vname has reversed fill-value attribute " *
+                        "'$REVERSED_FILLVALUE_KEY' = $reversed_fill_value (not auto-masked by NCDatasets). " *
+                        "Repairing to a proper _FillValue.")
+                delete!(att_dict, REVERSED_FILLVALUE_KEY)
+            end
+
+            fill_value = if haskey(att_dict, "_FillValue")
+                att_dict["_FillValue"]
+            elseif has_reversed_fill
+                reversed_fill_value
+            else
+                nothing
+            end
+
+            # The reversed attribute's own value is NaN, so it can't be used
+            # as the real fill value either. Fall back to 0.0.
+            if has_reversed_fill && (fill_value === nothing || (fill_value isa AbstractFloat && isnan(fill_value)))
+                fill_value = 0.0
+            end
+
+            if new_type == Float32 && fill_value isa Number
+                fill_value = Float32(fill_value)
+            end
+            if fill_value !== nothing
+                att_dict["_FillValue"] = fill_value
+            end
+
+            v_out = defVar(ds_out, vname, new_type, dimnames(var); attrib=att_dict)
+
+            data = Array(var)
+
+            if has_reversed_fill && eltype(data) <: AbstractFloat
+                n_nan = count(isnan, data)
+                if n_nan > 0
+                    println("  Scrubbing $n_nan raw NaN cells in $vname to fill value $fill_value")
+                    data = map(x -> isnan(x) ? fill_value : x, data)
                 end
             end
 
-            # Define Variable in new file (using the concrete new_type)
-            v_out = defVar(ds_out, vname, new_type, dimnames(var); attrib=att_dict)
-
-            # Copy Data
-            # We load data into memory
-            data = var[:]
-            
-            if new_type != orig_type
-                # Convert data elements to Float32, preserving Missing
-                # This map handles: Missing -> Missing, Float64 -> Float32
-                v_out[:] = map(x -> ismissing(x) ? missing : Float32(x), data)
+            v_out[:] = if new_type != orig_type
+                map(x -> ismissing(x) ? missing : Float32(x), data)
             else
-                # Direct copy for Integers / Strings
-                v_out[:] = data
+                data
             end
         end
         println("\nSuccess! Output saved to: $out_path")
-        
+
     finally
         close(ds_in)
         close(ds_out)
     end
 end
 
-# 3. Run it
-convert_to_float32(input_file, output_file)
+if length(ARGS) != 2
+    error("Usage: julia --project=. scripts/convert_to_f32.jl <input.nc> <output.nc>")
+end
+convert_to_float32(ARGS[1], ARGS[2])
