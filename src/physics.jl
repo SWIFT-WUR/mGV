@@ -10,6 +10,8 @@ struct SurfaceEnergyVariables{M <: AbstractMatrix, T <: AbstractArray}
 
     # Derived/intermediate
     aerodynamic_resistance::T
+    grid_albedo::M                  # tile-weighted albedo
+    grid_aerodynamic_resistance::M  # tile-weighted (inverse-sum) resistance
 
     # Errors
     energy_error::M
@@ -26,6 +28,8 @@ function SurfaceEnergyVariables(grid_dims, tile_dims)
         zeros(Float32, tile_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, tile_dims),
+        zeros(Float32, grid_dims),
+        zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims)
     )

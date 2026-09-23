@@ -81,11 +81,36 @@
 end
 
 """
+Compute the grid-cell albedo and effective aerodynamic resistance, weighted by
+the snow band area fraction and vegetation fraction of every tile.
+"""
+@kernel function grid_albedo_resistance_kernel!(
+    albedo_grid, ra_eff,
+    @Const(AreaFract), @Const(cv), @Const(albedo), @Const(ra)
+)
+    i, j = @index(Global, NTuple)
+
+    acc_albedo = 0f0
+    acc_ra_inv = 0f0
+    for v in 1:size(ra, 4), b in 1:size(ra, 3)
+        w = AreaFract[i, j, b] * cv[i, j, 1, v]
+        acc_albedo += w * albedo[i, j, 1, v]
+        acc_ra_inv += w / max(ra[i, j, b, v], 1f-9)
+    end
+
+    albedo_grid[i, j] = acc_albedo
+    ra_eff[i, j] = 1f0 / max(acc_ra_inv, 1f-9)
+end
+
+"""
 
 """
 function update_surface_temperature!(model)
 
-    (; surface_temperature, aerodynamic_resistance, total_evapotranspiration) = model.surface_energy_variables
+    (;
+        surface_temperature, aerodynamic_resistance, total_evapotranspiration,
+        grid_albedo, grid_aerodynamic_resistance
+    ) = model.surface_energy_variables
     (; air_temperature, surface_pressure, shortwave_down, longwave_down) = model.forcing_variables
     (; thermal_conductivity, heat_capacity) = model.soil_variables
     (; depth) = model.soil_parameters
@@ -97,41 +122,24 @@ function update_surface_temperature!(model)
 
     # 1. Calculate weighted albedo correctly across all tiles (Veg + Soil)
     # This ensures the bare soil albedo is included 
-    albedo_grid = sum(snow_band_area_fraction .* vegetation_fraction .* albedo, dims=(3,4)) 
-    
     # 2. Calculate ra_eff correctly (Inverse weighted sum)
-    ra_eff_inv = sum(snow_band_area_fraction .* vegetation_fraction ./ max.(aerodynamic_resistance, 1f-9), dims=(3,4))
-    ra_eff = 1f0 ./ max.(ra_eff_inv, 1f-9)
+    grid_albedo_resistance_kernel!(device_backend)(
+        grid_albedo, grid_aerodynamic_resistance,
+        snow_band_area_fraction, vegetation_fraction, albedo, aerodynamic_resistance;
+        ndrange = size(surface_temperature)
+    )
 
-    # 3. Call the broadcast
-    # println(size(surface_temperature))
-    # println(size(soil_temperature[:,:,2]))
-    # println(size(soil_temperature[:,:,3]))
-    # println(size(albedo_grid))
-    # println(size(shortwave_down))
-    # println(size(longwave_down))
-    # println(size(ra_eff))
-    # println(size(thermal_conductivity[:,:,1]))
-    # println(size(depth[:,:,1]))
-    # println(size(depth[:,:,2]))
-    # println(size(depth[:,:,3]))
-    # println(size(heat_capacity[:,:,1]))
-    # println(size(total_evapotranspiration))
-    # println(size(air_temperature))
-    # println(size(surface_pressure))
-
-    # ag = @view(albedo_grid[:,:,1,1])
-    # raf = @view(ra_eff[:,:,1,1])
+    # 3. Call the kernel
     kernel = surface_temp_kernel!(device_backend)
     
     @views kernel(
         surface_temperature,
         soil_temperature[:,:,2],
         soil_temperature[:,:,3],
-        albedo_grid,
+        grid_albedo,
         shortwave_down,
         longwave_down,
-        ra_eff,
+        grid_aerodynamic_resistance,
         thermal_conductivity[:,:,1],
         depth[:,:,1],
         depth[:,:,2],
