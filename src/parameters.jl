@@ -122,8 +122,8 @@ function copy_month!(dest::AbstractArray, src::Array, month::Integer)
     @assert size(dest) == (nx, ny, 1, nveg)
     n = nx * ny
     # Loop through vegetation index as it's not contiguous in memory.
-    #  reordering input data to (nx, ny, nveg, month) would simplify this, but does
-    #  not match input data.
+    # Reordering input data to (nx, ny, nveg, month) would simplify this, but does
+    # not match input data.
     for v in 1:nveg
         copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, 1, month, v], n)
     end
