@@ -37,7 +37,7 @@ end
 const ForcingVar = Union{CFVariable, MFCFVariable}
 
 """
-One forcing variable (e.g. precipitation) stored as one Zarr array per year.
+One forcing variable stored as one Zarr array per year.
 `arrays[i]` holds year `i` of the run, and `offsets[i]` is the run timestep of
 its first day. E.g. for a 1979-1980 daily run: `offsets = [1, 366]`.
 """
@@ -164,7 +164,8 @@ cache (`buffers`).
 """
 function load_block!(buffers::Vector{Matrix{Float32}}, src::ForcingVar, start::Int, len::Int)
     raw = src[:, :, start:(start + len - 1)]
-    # A declared _FillValue yields Union{Missing,Float32}; the model wants NaN.
+    # Missing values in the forcing file (its _FillValue) are read as `missing`: replace
+    # them with NaN and convert to a plain Float32 array.
     block = raw isa Array{Float32, 3} ? raw : Array{Float32, 3}(coalesce.(raw, NaN32))
     for k in 1:len
         copyto!(buffers[k], view(block, :, :, k))
@@ -174,7 +175,7 @@ end
 
 """
 Read `len` timesteps starting at `start` from a Zarr variable into the forcing
-cache (`buffers`), crossing year boundaries.
+cache (`buffers`). Handles crossing year boundaries.
 """
 function load_block!(buffers::Vector{Matrix{Float32}}, src::ZarrForcingVar, start::Int, len::Int)
     nx, ny = size(first(buffers))
