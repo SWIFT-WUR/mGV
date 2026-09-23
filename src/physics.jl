@@ -78,6 +78,7 @@ struct SoilVariables{M <: AbstractMatrix, T <: AbstractArray}
     subsurface_runoff::M
     total_runoff::M
     interlayer_drainage::T
+    transpiration::T  # per soil layer, weighted by canopy coverage
 
     # Derived/intermediate
     thermal_conductivity::T
@@ -98,6 +99,7 @@ function SoilVariables(grid_dims, soil_dims)
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, (grid_dims[1], grid_dims[2], soil_dims[3]-1)),
+        zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
         zeros(Float32, grid_dims)
