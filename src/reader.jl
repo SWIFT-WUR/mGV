@@ -11,12 +11,11 @@ const FORCING_VARS = [
     "surface_pressure"
 ]
 
-# Cache RAM budget; cached timesteps = this / grid size. 2 GiB measured 25-38%
-# faster than 256 MiB at global resolution, with no gain going higher.
+# RAM for caching forcing timesteps (all 7 variables per step). 2 GiB measured
+# 25-38% faster than 256 MiB at global resolution, with no gain going higher.
 const FORCING_CACHE_BUDGET_BYTES = 2 * 1024^3
 
-# Zarr has no date type, so its time axis counts milliseconds from here.
-# Milliseconds are exact for a DateTime, so dates survive the round trip.
+# Zarr forcing stores time as milliseconds since this date
 const ZARR_TIME_EPOCH = DateTime(1970, 1, 1)
 
 function getval(data::Any, name::String)
@@ -38,8 +37,9 @@ end
 const ForcingVar = Union{CFVariable, MFCFVariable}
 
 """
-One forcing variable read from one Zarr store per year. `offsets[i]` is the
-timestep, counted from the start of the run, at which year `i` begins.
+One forcing variable (e.g. precipitation) stored as one Zarr array per year.
+`arrays[i]` holds year `i` of the run, and `offsets[i]` is the run timestep of
+its first day. E.g. for a 1979-1980 daily run: `offsets = [1, 366]`.
 """
 struct ZarrForcingVar{A}
     arrays::Vector{A}
@@ -47,7 +47,7 @@ struct ZarrForcingVar{A}
 end
 
 mutable struct ForcingReaders{S}
-    # NetCDF variables or Zarr stores; only `load_block!` knows which.
+    # NetCDF variables or ZarrForcingVars; `load_block!` has a version for each.
     sources::Dict{String, S}
     # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
@@ -59,8 +59,8 @@ mutable struct ForcingReaders{S}
 end
 
 """
-Open the per-year NetCDF files of every forcing variable as one aggregated
-time series.
+Open the NetCDF forcing files of all years so they can be read as if they were
+one file. E.g. day 366 of a 1979-1980 run is 1 Jan 1980.
 """
 function open_forcing_netcdf(cfg::Cfg)
     years = cfg.start_year:cfg.end_year
@@ -83,8 +83,8 @@ function open_forcing_netcdf(cfg::Cfg)
 end
 
 """
-Open the per-year Zarr stores of every forcing variable, written by
-scripts/convert_forcing_to_zarr.jl.
+Open the Zarr forcing stores of all years so they can be read as if they were
+one store (see `ZarrForcingVar`). E.g. day 366 of a 1979-1980 run is 1 Jan 1980.
 """
 function open_forcing_zarr(cfg::Cfg)
     years = cfg.start_year:cfg.end_year
@@ -159,7 +159,8 @@ function nearest_time_index(times::Vector{DateTime}, time::DateTime)
 end
 
 """
-Read `len` timesteps starting at `start` from a NetCDF variable into `buffers`.
+Read `len` timesteps starting at `start` from a NetCDF variable into the forcing
+cache (`buffers`).
 """
 function load_block!(buffers::Vector{Matrix{Float32}}, src::ForcingVar, start::Int, len::Int)
     raw = src[:, :, start:(start + len - 1)]
@@ -172,7 +173,8 @@ function load_block!(buffers::Vector{Matrix{Float32}}, src::ForcingVar, start::I
 end
 
 """
-Read `len` timesteps from `start` into `buffers`, crossing year boundaries.
+Read `len` timesteps starting at `start` from a Zarr variable into the forcing
+cache (`buffers`), crossing year boundaries.
 """
 function load_block!(buffers::Vector{Matrix{Float32}}, src::ZarrForcingVar, start::Int, len::Int)
     nx, ny = size(first(buffers))
