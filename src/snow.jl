@@ -528,8 +528,31 @@ function calculate_snow_dynamics!(
         day_of_year, lat_pos;
         ndrange=size(swe_gpu)
     )
-    
-    KernelAbstractions.synchronize(device_backend)
+    return nothing
+end
+
+"""
+Aggregate the per-tile soil influx over vegetation tiles (weighted by the
+vegetation fraction) into the per-band melt and infiltration, and broadcast it
+back to every vegetation tile of the 4D throughfall.
+"""
+@kernel function aggregate_soil_influx_kernel!(
+    aggregated_melt, infiltration, throughfall,
+    @Const(soil_influx), @Const(cv)
+)
+    i, j, b = @index(Global, NTuple)
+
+    acc = 0f0
+    for v in 1:size(soil_influx, 4)
+        influx = soil_influx[i, j, b, v] * cv[i, j, 1, v]
+        acc += ifelse(isnan(influx), 0f0, influx)
+    end
+
+    aggregated_melt[i, j, b] = acc
+    infiltration[i, j, b] = acc
+    for v in 1:size(throughfall, 4)
+        throughfall[i, j, b, v] = acc
+    end
 end
 
 function update_snow!(model)
@@ -574,18 +597,13 @@ function update_snow!(model)
         doy, lat_mean
     )
 
-    # Total per-band soil influx: pack drainage + rain on bare ground
-    aggregated_melt .= dropdims(
-            sum(ifelse.(
-                isnan.(soil_influx .* vegetation_fraction),
-                0f0,
-                soil_influx .* vegetation_fraction
-            ), dims=4),
-        dims=4)
-    infiltration .= aggregated_melt
-
-    # Broadcast back to 4D throughfall for downstream soil/runoff modules
+    # Total per-band soil influx: pack drainage + rain on bare ground.
+    # Also broadcast back to 4D throughfall for downstream soil/runoff modules
     # (they expect throughfall[b,v] = same water input for all veg tiles)
-    nx_s, ny_s, nb_s = size(infiltration)
-    throughfall .= reshape(infiltration, nx_s, ny_s, nb_s, 1)
+    aggregate_soil_influx_kernel!(device_backend)(
+        aggregated_melt, infiltration, throughfall,
+        soil_influx, vegetation_fraction;
+        ndrange = size(infiltration)
+    )
+    return nothing
 end
