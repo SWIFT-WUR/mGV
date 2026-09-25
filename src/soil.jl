@@ -216,7 +216,7 @@ coverage. `transpiration_layers` holds the soil layers in its third
 (band-sized) dimension.
 """
 @kernel function layer_transpiration_kernel!(
-    transpiration, @Const(transpiration_layers), @Const(canopy_coverage)
+    transpiration_uptake, @Const(transpiration_layers), @Const(canopy_coverage)
 )
     i, j, l = @index(Global, NTuple)
 
@@ -226,13 +226,13 @@ coverage. `transpiration_layers` holds the soil layers in its third
             acc += transpiration_layers[i, j, l, v] * canopy_coverage[i, j, 1, v]
         end
     end
-    transpiration[i, j, l] = acc
+    transpiration_uptake[i, j, l] = acc
 end
 
 function update_soil!(model)
     (;
         moisture, evaporation, surface_runoff, subsurface_runoff, 
-        saturated_fraction, infiltration, interlayer_drainage, transpiration
+        saturated_fraction, infiltration, interlayer_drainage, transpiration_uptake
     ) = model.soil_variables
     (;
         nijssen_infilt_b, residual_moisture, maximum_moisture,
@@ -263,12 +263,12 @@ function update_soil!(model)
 
     # Soil moisture update
     layer_transpiration_kernel!(device_backend)(
-        transpiration, transpiration_layers, canopy_coverage;
-        ndrange = size(transpiration)
+        transpiration_uptake, transpiration_layers, canopy_coverage;
+        ndrange = size(transpiration_uptake)
     )
     solve_runoff_and_drainage!(
         moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
-        infiltration, evaporation, transpiration,
+        infiltration, evaporation, transpiration_uptake,
         maximum_moisture, hydraulic_conductivity, residual_moisture, campbell_n,
         nijssen_nonlin_reservoir, nijssen_lin_reservoir, 
         moisture_depth_baseflow_transition, baseflow_curve_exp

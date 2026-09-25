@@ -78,7 +78,7 @@ struct SoilVariables{M <: AbstractMatrix, T <: AbstractArray}
     subsurface_runoff::M
     total_runoff::M
     interlayer_drainage::T
-    transpiration::T  # per soil layer, weighted by canopy coverage
+    transpiration_uptake::T  # per soil layer, weighted by canopy coverage
 
     # Derived/intermediate
     thermal_conductivity::T
