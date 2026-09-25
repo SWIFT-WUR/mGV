@@ -1,0 +1,195 @@
+
+using Test 
+
+import BasicModelInterface as BMI
+using Statistics: mean
+using mGV
+
+@testset "BMI functions" begin
+    
+    tomlpath = "../configs/mekong_config.toml" 
+    model = BMI.initialize(mGV.Model, tomlpath)
+    config = mGV.load_config(tomlpath)
+    clock = mGV.Clock(config)
+
+    # @testset "initialization and time functions" begin
+    @test BMI.get_time_units(model) == "y-m-d-h-m-s-ms"
+    @test BMI.get_time_step(model) == clock.dt
+    @test BMI.get_start_time(model) == clock.time
+    @test BMI.get_current_time(model) == clock.time
+    @test BMI.get_end_time(model) == config.end_year
+    # end
+
+#     @testset "model information functions" begin
+#         @test BMI.get_component_name(model) == "sbm"
+#         @test BMI.get_input_item_count(model) == 7
+#         @test BMI.get_output_item_count(model) == 7
+#         to_check = [
+#             "river_water__volume_flow_rate",
+#             "soil_water_unsaturated_zone__depth",
+#             "soil_water__transpiration_volume_flux",
+#             "soil_layer_2_water_unsaturated_zone__depth",
+#         ]
+#         retrieved_vars = BMI.get_input_var_names(model)
+#         @test all(x -> x in retrieved_vars, to_check)
+#         retrieved_vars = BMI.get_output_var_names(model)
+#         @test all(x -> x in retrieved_vars, to_check)
+#     end
+
+#     @testset "variable information functions" begin
+#         @test BMI.get_var_grid(model, "soil_water__infiltration_volume_flux") == 5
+#         @test BMI.get_var_grid(model, "river_water__volume_flow_rate") == 2
+#         @test BMI.get_var_grid(model, "reservoir_water__outgoing_volume_flow_rate") == 0
+#         @test BMI.get_var_type(model, "reservoir_water__incoming_volume_flow_rate") ==
+#             "Float64"
+#         @test BMI.get_var_units(model, "river_water__volume_flow_rate") == "m3 s-1"
+#         @test BMI.get_var_itemsize(model, "subsurface_water__volume_flow_rate") ==
+#             sizeof(Float64)
+#         @test BMI.get_var_nbytes(model, "river_water__instantaneous_volume_flow_rate") ==
+#             length(model.routing.river_flow.variables.q) * sizeof(Float64)
+#         @test BMI.get_var_location(model, "river_water__volume_flow_rate") == "node"
+#     end
+
+#     BMI.update(model)
+
+#     @testset "update and get and set functions" begin
+#         @test BMI.get_current_time(model) == 86400.0
+#         dest = zeros(Float64, size(model.land.soil.variables.water_table_depth))
+#         var_name = "soil_water_saturated_zone_top__depth"
+#         BMI.get_value(model, var_name, dest)
+#         @test mean(dest) ≈ 0.278737829100285
+#         @test BMI.get_value_at_indices(
+#             model,
+#             "soil_layer_1_water__volume_fraction",
+#             zeros(3),
+#             [1, 2, 3],
+#         ) ≈ getindex.(model.land.soil.variables.volumetric_water_content, 1)[1:3]
+#         BMI.set_value_at_indices(
+#             model,
+#             "soil_layer_2_water__volume_fraction",
+#             [1, 2, 3],
+#             [0.1, 0.15, 0.2],
+#         ) ≈ getindex.(model.land.soil.variables.volumetric_water_content, 2)[1:3]
+#         var_name = "river_water__instantaneous_volume_flow_rate"
+#         @test BMI.get_value_at_indices(model, var_name, zeros(3), [1, 100, 5617]) ≈
+#             [0.5310990487057508, 7.196755768938445, 0.023139100812763765]
+#         BMI.set_value(
+#             model,
+#             "soil_water_saturated_zone_top__depth",
+#             fill(300.0, length(model.land.soil.variables.water_table_depth)),
+#         )
+#         var_name = "soil_water_saturated_zone_top__depth"
+#         BMI.set_value(
+#             model,
+#             var_name,
+#             fill(300.0, length(model.land.soil.variables.water_table_depth)),
+#         )
+#         @test mean(
+#             BMI.get_value(
+#                 model,
+#                 var_name,
+#                 zeros(Float64, size(model.land.soil.variables.water_table_depth)),
+#             ),
+#         ) == 300.0
+#         BMI.set_value_at_indices(model, var_name, [1], [250.0])
+#         @test BMI.get_value_at_indices(model, var_name, zeros(Float64, 2), [1, 2]) ==
+#             [250.0, 300.0]
+#     end
+
+#     @testset "Request invalid variable" begin
+#         @test_throws "Accessing 'glacier_ice__initial_leq_depth' is not supported" BMI.get_value_ptr(
+#             model,
+#             "glacier_ice__initial_leq_depth",
+#         )
+#     end
+
+#     @testset "model grid functions" begin
+#         @test BMI.get_grid_type(model, 0) == "points"
+#         @test BMI.get_grid_type(model, 2) == "points"
+#         @test BMI.get_grid_type(model, 6) == "unstructured"
+#         @test_throws ErrorException BMI.get_grid_rank(model, 8)
+#         @test BMI.get_grid_rank(model, 0) == 2
+#         @test BMI.get_grid_rank(model, 6) == 2
+#         @test_throws ErrorException BMI.get_grid_rank(model, 8)
+#         @test BMI.get_grid_node_count(model, 0) == 2
+#         @test BMI.get_grid_node_count(model, 2) == 5809
+#         @test BMI.get_grid_node_count(model, 3) == 50063
+#         @test BMI.get_grid_node_count(model, 4) == 50063
+#         @test BMI.get_grid_size(model, 0) == 2
+#         @test BMI.get_grid_size(model, 2) == 5809
+#         @test BMI.get_grid_size(model, 3) == 50063
+#         @test BMI.get_grid_size(model, 4) == 50063
+#         @test minimum(BMI.get_grid_x(model, 5, zeros(50063))) ≈ 5.426666666666667
+#         @test maximum(BMI.get_grid_x(model, 5, zeros(50063))) ≈ 7.843333333333344
+#         @test BMI.get_grid_x(model, 0, zeros(2)) ≈ [5.760000000000002, 5.918333333333336]
+#         @test BMI.get_grid_y(model, 0, zeros(2)) ≈ [48.92583333333333, 49.909166666666664]
+#         @test BMI.get_grid_node_count(model, 0) == 2
+#         @test BMI.get_grid_edge_count(model, 3) == 5808
+#         @test BMI.get_grid_edge_nodes(model, 3, fill(0, 2 * 5808))[1:6] ==
+#             [1, 5, 2, 1, 3, 2]
+#     end
+
+#     @testset "update until and finalize" begin
+#         time = BMI.get_current_time(model) + 2 * BMI.get_time_step(model)
+#         BMI.update_until(model, time)
+#         @test model.clock.iteration == 3
+#         time_off = BMI.get_current_time(model) + 1 * BMI.get_time_step(model) + 1.0e-6
+#         @test_throws ErrorException BMI.update_until(model, time_off)
+#         @test_throws ErrorException BMI.update_until(model, time - BMI.get_time_step(model))
+#         BMI.finalize(model)
+#     end
+# end
+
+# @testset "BMI grid edges and element type" begin
+#     import BasicModelInterface as BMI
+#     tomlpath = joinpath(@__DIR__, "sbm_river-land-local-inertial_config.toml")
+#     model = BMI.initialize(Wflow.Model, tomlpath)
+#     @test BMI.get_var_grid(
+#         model,
+#         "land_surface_water__x_component_of_instantaneous_volume_flow_rate",
+#     ) == 3
+#     @test BMI.get_var_grid(
+#         model,
+#         "land_surface_water__y_component_of_instantaneous_volume_flow_rate",
+#     ) == 4
+#     @test BMI.get_grid_edge_count(model, 4) == 50063
+#     @test BMI.get_grid_edge_count(model, 5) == 50063
+#     @test_logs (
+#         :warn,
+#         "edges are not provided for grid type 2 (variables are located at nodes)",
+#     ) BMI.get_grid_edge_count(model, 2)
+#     @test_throws ErrorException BMI.get_grid_edge_count(model, 7)
+#     @test BMI.get_grid_edge_nodes(model, 4, fill(0, 2 * 50063))[1:4] == [1, -999, 2, 3]
+#     @test BMI.get_grid_edge_nodes(model, 5, fill(0, 2 * 50063))[1:4] == [1, 4, 2, 10]
+#     @test_logs (
+#         :warn,
+#         "edges are not provided for grid type 2 (variables are located at nodes)",
+#     ) BMI.get_grid_edge_nodes(model, 2, fill(0, 2 * 50063))
+#     @test_throws ErrorException BMI.get_grid_edge_nodes(model, 7, fill(0, 2 * 50063))
+#     @test BMI.get_var_location(model, "river_water__volume_flow_rate") == "edge"
+#     @test BMI.get_var_location(
+#         model,
+#         "land_surface_water__y_component_of_instantaneous_volume_flow_rate",
+#     ) == "edge"
+#     @test BMI.get_var_location(model, "river_water__depth") == "node"
+#     BMI.finalize(model)
+# end
+
+# @testset "BMI extension functions" begin
+#     import BasicModelInterface as BMI
+#     using Statistics: mean
+#     tomlpath = joinpath(@__DIR__, "sbm_config.toml")
+#     model = BMI.initialize(Wflow.Model, tomlpath)
+#     @test Wflow.get_start_unix_time(model) == 9.466848e8
+#     saturated_water_depth = mean(model.land.soil.variables.saturated_water_depth)
+#     model.config.model.cold_start__flag = false
+#     Wflow.load_state(model)
+#     @test saturated_water_depth ≠ mean(model.land.soil.variables.saturated_water_depth)
+#     @test_logs (
+#         :info,
+#         "Write output states to netCDF file `$(model.writer.endstate_writer.output_path)`.",
+#     ) Wflow.save_state(model)
+#     @test !isopen(model.writer.endstate_writer.output_dataset)
+# end
+
+end

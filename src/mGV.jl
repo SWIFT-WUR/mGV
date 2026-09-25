@@ -12,7 +12,9 @@ using Printf
 using Statistics
 using KernelAbstractions
 using Adapt: adapt, @adapt_structure
-using Accessors: @set
+using Accessors: @set, @optic
+using StaticArrays: SVector, pushfirst, setindex
+using OrderedCollections: OrderedDict
 
 include("config.jl")
 using .Config: load_config, Cfg
@@ -29,6 +31,7 @@ include("routing.jl")
 include("temperature.jl")
 include("postprocess.jl")
 include("io.jl")
+
 
 const to = TimerOutputs.TimerOutput()
 
@@ -167,6 +170,8 @@ function Model(config_file::AbstractString)
     )
 end
 
+
+
 @timeit_all to function update!(model::Model)
     advance!(model.clock)
 
@@ -277,5 +282,11 @@ function run()
     end
     return run(cfg_path)
 end
+
+
+include("standard_name_utils.jl")
+
+include("standard_name.jl")
+include("bmi.jl")
 
 end # module end
