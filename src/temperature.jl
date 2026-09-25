@@ -84,8 +84,8 @@ end
 Compute the grid-cell albedo and effective aerodynamic resistance, weighted by
 the snow band area fraction and vegetation fraction of every tile.
 """
-@kernel function grid_albedo_resistance_kernel!(
-    albedo_grid, ra_eff,
+@kernel function mean_albedo_resistance_kernel!(
+    mean_albedo, ra_eff,
     @Const(AreaFract), @Const(cv), @Const(albedo), @Const(ra)
 )
     i, j = @index(Global, NTuple)
@@ -98,7 +98,7 @@ the snow band area fraction and vegetation fraction of every tile.
         acc_ra_inv += w / max(ra[i, j, b, v], 1f-9)
     end
 
-    albedo_grid[i, j] = acc_albedo
+    mean_albedo[i, j] = acc_albedo
     ra_eff[i, j] = 1f0 / max(acc_ra_inv, 1f-9)
 end
 
@@ -109,7 +109,7 @@ function update_surface_temperature!(model)
 
     (;
         surface_temperature, aerodynamic_resistance, total_evapotranspiration,
-        grid_albedo, grid_aerodynamic_resistance
+        mean_albedo, effective_aerodynamic_resistance
     ) = model.surface_energy_variables
     (; air_temperature, surface_pressure, shortwave_down, longwave_down) = model.forcing_variables
     (; thermal_conductivity, heat_capacity) = model.soil_variables
@@ -123,8 +123,8 @@ function update_surface_temperature!(model)
     # 1. Calculate weighted albedo correctly across all tiles (Veg + Soil)
     # This ensures the bare soil albedo is included 
     # 2. Calculate ra_eff correctly (Inverse weighted sum)
-    grid_albedo_resistance_kernel!(device_backend)(
-        grid_albedo, grid_aerodynamic_resistance,
+    mean_albedo_resistance_kernel!(device_backend)(
+        mean_albedo, effective_aerodynamic_resistance,
         snow_band_area_fraction, vegetation_fraction, albedo, aerodynamic_resistance;
         ndrange = size(surface_temperature)
     )
@@ -136,10 +136,10 @@ function update_surface_temperature!(model)
         surface_temperature,
         soil_temperature[:,:,2],
         soil_temperature[:,:,3],
-        grid_albedo,
+        mean_albedo,
         shortwave_down,
         longwave_down,
-        grid_aerodynamic_resistance,
+        effective_aerodynamic_resistance,
         thermal_conductivity[:,:,1],
         depth[:,:,1],
         depth[:,:,2],
