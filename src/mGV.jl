@@ -88,6 +88,8 @@ require.
     forcing_readers::ForcingReaders
     routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter, Nothing} # writes model output
+    # preallocated 2D daily output buffers
+    output_buffers::OutputBuffers = OutputBuffers(surface_energy_variables.surface_temperature)
 end
 
 include("energy_balance.jl")

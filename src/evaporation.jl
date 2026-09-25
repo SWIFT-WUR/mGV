@@ -352,6 +352,30 @@ function update_transpiration!(model::Model)
     return nothing
 end
 
+@kernel function water_canopy_storage_kernel!(
+    throughfall, water_storage,
+    @Const(maximum_water_storage), @Const(canopy_evaporation),
+    @Const(band_precipitation), @Const(canopy_coverage)
+)
+    i, j, b, v = @index(Global, NTuple)
+
+    w = water_storage[i, j, b, v]
+    mx = maximum_water_storage[i, j, b, v]
+    e = canopy_evaporation[i, j, b, v]
+    p = band_precipitation[i, j, b]
+    c = canopy_coverage[i, j, 1, v]
+
+    # 1. Update Throughfall FIRST
+    # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
+    # Logic: excess = max(0, (W + P - E) - Wm)
+    # Throughfall = (excess * coverage) + (precipitation * (1 - coverage))
+    throughfall[i, j, b, v] = (max(0f0, w + p - e - mx) * c) + (p * (1f0 - c))
+
+    # 2. Update Water Storage SECOND
+    # Logic: clamped new storage
+    water_storage[i, j, b, v] = clamp(w + p - e, 0f0, mx)
+end
+
 function update_water_canopy_storage!(model::Model)
     # Band-adjusted precipitation (Pfactor / AreaFract), not the grid-cell mean
     (; band_precipitation) = model.snow_variables
@@ -360,19 +384,32 @@ function update_water_canopy_storage!(model::Model)
 
     (; canopy_coverage) = model.vegetation_parameters
 
-    # 1. Update Throughfall FIRST
-    # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
-    # Logic: excess = max(0, (W + P - E) - Wm)
-    # Throughfall = (excess * coverage) + (precipitation * (1 - coverage))
-    @. throughfall = (max(0f0, water_storage + band_precipitation - canopy_evaporation - maximum_water_storage) * canopy_coverage) +
-                     (band_precipitation * (1f0 - canopy_coverage))
-
-    # 2. Update Water Storage SECOND
-    # Now we can safely mutate water_storage.
-    # Logic: clamped new storage
-    @. water_storage = clamp(water_storage + band_precipitation - canopy_evaporation, 0f0, maximum_water_storage)
-
+    water_canopy_storage_kernel!(device_backend)(
+        throughfall, water_storage,
+        maximum_water_storage, canopy_evaporation,
+        band_precipitation, canopy_coverage;
+        ndrange = size(water_storage)
+    )
     return nothing
+end
+
+@kernel function total_evapotranspiration_kernel!(
+    total_evapotranspiration,
+    @Const(soil_evaporation), @Const(canopy_evaporation), @Const(transpiration),
+    @Const(vegetation_fraction), @Const(canopy_coverage), @Const(AreaFract)
+)
+    i, j = @index(Global, NTuple)
+
+    # 1. Initialize with Soil Evaporation
+    acc = soil_evaporation[i, j]
+
+    # 2. Accumulate Vegetation Fluxes
+    for v in 1:size(canopy_evaporation, 4), b in 1:size(canopy_evaporation, 3)
+        acc += (
+            canopy_evaporation[i, j, b, v] * vegetation_fraction[i, j, 1, v] + transpiration[i, j, b, v]
+        ) * canopy_coverage[i, j, 1, v] * AreaFract[i, j, b]
+    end
+    total_evapotranspiration[i, j] = acc
 end
 
 # Eq. (23): Total evapotranspiration
@@ -383,18 +420,11 @@ function update_total_evapotranspiration!(model)
     (; vegetation_fraction, canopy_coverage) = model.vegetation_parameters
     (; snow_band_area_fraction) = model.grid_parameters
 
-    # 1. Initialize with Soil Evaporation
-    @. total_evapotranspiration = soil_evaporation
-
-    # 2. Accumulate Vegetation Fluxes
-    # We loop over tiles to avoid allocating massive intermediate arrays.
-    for i in 1:size(canopy_evaporation, 4)
-        for b in 1:size(canopy_evaporation, 3)
-            @views @. total_evapotranspiration += (
-                canopy_evaporation[:,:,b,i] * vegetation_fraction[:,:,1,i] + transpiration[:,:,b,i]
-            ) * canopy_coverage[:,:,1,i] * snow_band_area_fraction[:,:,b]
-        end
-    end
-
+    total_evapotranspiration_kernel!(device_backend)(
+        total_evapotranspiration,
+        soil_evaporation, canopy_evaporation, transpiration,
+        vegetation_fraction, canopy_coverage, snow_band_area_fraction;
+        ndrange = size(total_evapotranspiration)
+    )
     return nothing
 end
