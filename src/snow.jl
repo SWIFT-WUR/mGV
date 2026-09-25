@@ -299,11 +299,10 @@ end
     lsnow = ifelse(is_trace, Int32(0), ifelse(has_swe, lsnow + Int32(1), Int32(0)))
     ls_f  = Float32(lsnow)
 
-    alb_accum = NEW_SNOW_ALB * (ALB_ACCUM_A ^ (ls_f ^ ALB_ACCUM_B))
-    alb_thaw  = NEW_SNOW_ALB * (ALB_THAW_A  ^ (ls_f ^ ALB_THAW_B))
     is_accum  = (current_cc < 0f0) & (melt_flag == Int32(0))
-
-    alb_age = ifelse(is_accum, alb_accum, alb_thaw)
+    alb_a = ifelse(is_accum, ALB_ACCUM_A, ALB_THAW_A)
+    alb_b = ifelse(is_accum, ALB_ACCUM_B, ALB_THAW_B)
+    alb_age = NEW_SNOW_ALB * (alb_a ^ (ls_f ^ alb_b))
 
     # Albedo resets to max ONLY when new snow falls on a cold pack
     pack_is_cold = current_cc < 0f0
