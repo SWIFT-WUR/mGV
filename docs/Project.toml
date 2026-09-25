@@ -1,0 +1,9 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+mGV = "b1af0ff3-f930-4051-bc19-f789759b7f7a"
+
+[sources]
+mGV = {path = ".."}
+
+[compat]
+Documenter = "1"
