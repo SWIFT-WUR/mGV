@@ -240,6 +240,10 @@ end
         if dest > 0
             @atomic inflow_next[dest] += Q_new
         end
+
+        # Clear inflow_current for reuse next sub-step. Keep this store at the end:
+        # placed before the loads above, it made kernel twice as slow.
+        inflow_current[i] = 0f0
     end
 end
 
@@ -256,13 +260,15 @@ function update_routing!(model)
 
     kernel_launcher! = kinematic_wave_kernel!(device_backend)
 
+    # Swap inflow buffers instead of copy+clear
+    inflow_current, inflow_next = routing.inflow_current, routing.inflow_next
     for t in 1:n_substeps
 
         kernel_launcher!(
             routing.area,
             routing.discharge,
-            routing.inflow_next,
-            routing.inflow_current,
+            inflow_next,
+            inflow_current,
             routing.cfl,
             routing.travel_time,
             runoff_flat,
@@ -276,15 +282,17 @@ function update_routing!(model)
             ndrange=n_pixels # Define the total number of items to process
         )
 
-        # Ensure GPU finishes this step before we swap buffers
-        KernelAbstractions.synchronize(device_backend)
-
         # # Diagnostics: copy the single integer from GPU to CPU to print it
         # if routing.violation_counter[1] > 0
         #     @warn "Velocity capped!" substep=t count=routing.violation_counter[1] max_allowed=MAX_RIVER_VELOCITY
         # end
 
-        copyto!(routing.inflow_current, routing.inflow_next)
+        inflow_current, inflow_next = inflow_next, inflow_current
+    end
+
+    # With an odd number of sub-steps the next inflow ends up in routing.inflow_next
+    if inflow_current !== routing.inflow_current
+        copyto!(routing.inflow_current, inflow_current)
         fill!(routing.inflow_next, 0f0)
     end
     return nothing
