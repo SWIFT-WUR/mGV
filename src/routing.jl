@@ -17,6 +17,7 @@ struct RoutingState{F <: AbstractVector, I <:AbstractVector}
     width::F
     cell_area::F
     accumulation::F
+    alpha::F  # Manning coefficient sqrt(slope) / n * width^(-2/3), Q = alpha * A^(5/3)
 
     # --- State ---
     area::F
@@ -135,6 +136,10 @@ function RoutingState(config, elevation)
         end
     end
 
+    # Manning coefficient only depends on static geometry, so compute it once here
+    # instead of in every routing sub-step
+    flat_alpha = @. (sqrt(flat_slope) / MANNING_N) * (flat_width^-0.66666667f0) # -2/3
+
     # 4. Allocate GPU state 
     println("  -> Allocating Routing State on GPU...")
 
@@ -145,6 +150,7 @@ function RoutingState(config, elevation)
         Float32.(flat_width),
         Float32.(flat_area),
         Float32.(flat_acc),
+        Float32.(flat_alpha),
         # State vectors initialized to zero
         # alloc(n_total) defaults to FloatType
         zeros(Float32, n_total), # area
@@ -164,7 +170,7 @@ end
 @kernel function kinematic_wave_kernel!(area, discharge, inflow_next, inflow_current,
     cfl_buffer, travel_time_buffer,
     runoff_forcing_flat, downstream_idx, lengths,
-    slopes, widths, cell_areas, dt, n)
+    alphas, cell_areas, dt, n)
     # violation_counter)
 
     # Backend-agnostic indexing
@@ -186,10 +192,7 @@ end
         A_new = max(A_old + dAdt * dt, 0f0) # Update amount of water in channel
 
         # Momentum (Manning's equation)
-        width = widths[i]
-        slope = slopes[i]
-        alpha = (sqrt(slope) / MANNING_N) * (width^-0.66666667f0) # -2/3
-        Q_new = alpha * (A_new^1.66666667f0)  # 5/3
+        Q_new = alphas[i] * (A_new^1.66666667f0)  # 5/3
 
         # Velocity capping
         # We calculate the theoretical velocity
@@ -264,8 +267,7 @@ function update_routing!(model)
             runoff_flat,
             routing.downstream_idx,
             routing.length,
-            routing.slope,
-            routing.width,
+            routing.alpha,
             routing.cell_area,
             dt_step,
             n_pixels,
