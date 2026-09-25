@@ -192,7 +192,8 @@ end
         A_new = max(A_old + dAdt * dt, 0f0) # Update amount of water in channel
 
         # Momentum (Manning's equation)
-        Q_new = alphas[i] * (A_new^1.66666667f0)  # 5/3
+        # A_new^(5/3) as A_new * cbrt(A_new)^2: ~5x cheaper than pow on GPU
+        Q_new = alphas[i] * (A_new * cbrt(A_new)^2)
 
         # Velocity capping
         # We calculate the theoretical velocity
