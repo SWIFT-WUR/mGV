@@ -135,10 +135,10 @@ open_param_source(path::AbstractString) =
     endswith(path, ".zarr") ? zopen(path) : NCDataset(path)
 
 """
-Read one variable, e.g. "elev" or "downstream_id", from the land surface
+Read one variable, from the land surface
 parameter file or the routing parameter file into memory. For NetCDF, missing
 values are replaced by `fallback` (e.g. 0 or NaN). Zarr stores are assumed to
-have no missing values, so they are read as-is.
+have no missing values.
 """
 readfull(ds::NCDataset, name::AbstractString, fallback) = nomissing(Array(ds[name]), fallback)
 readfull(ds, name::AbstractString, fallback) = Array(ds[name])
