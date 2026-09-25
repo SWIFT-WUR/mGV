@@ -124,7 +124,7 @@ function calculate_net_radiation!(
     @. net_radiation = (
         (1.0f0 - albedo) * shortwave_down
         + longwave_down
-        - EMISSIVITY * SIGMA * (surface_temperature + 273.15f0) ^ 4
+        - EMISSIVITY * SIGMA * @fastmath((surface_temperature + 273.15f0) ^ 4)
     )
     return nothing
 end
@@ -150,7 +150,7 @@ end
     net_radiation[i, j, b, v] = (
         (1f0 - eff_alb) * shortwave_down[i, j] +
         longwave_down[i, j] -
-        EMISSIVITY * SIGMA * (eff_t + 273.15f0)^4
+        EMISSIVITY * SIGMA * @fastmath((eff_t + 273.15f0)^4)
     )
 end
 

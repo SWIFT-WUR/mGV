@@ -66,8 +66,6 @@ function SnowVariables(nx, ny, bands, nveg)
 end
 
 # Solve surface energy balance via Newton-Raphson to find snow surface temp (max 0°C).
-# The powers use @fastmath so they lower to multiplications; AMDGPU otherwise calls a
-# full-precision pow, which made this solver ~40% slower.
 @inline function snow_surface_temp_nr(
     tsurf_init,   # Initial temperature guess from previous timestep [°C] (OldTSurf)
     Ta,           # Air temperature [°C]
