@@ -66,6 +66,8 @@ function SnowVariables(nx, ny, bands, nveg)
 end
 
 # Solve surface energy balance via Newton-Raphson to find snow surface temp (max 0°C).
+# The powers use @fastmath so they lower to multiplications; AMDGPU otherwise calls a
+# full-precision pow, which made this solver ~40% slower.
 @inline function snow_surface_temp_nr(
     tsurf_init,   # Initial temperature guess from previous timestep [°C] (OldTSurf)
     Ta,           # Air temperature [°C]
@@ -115,7 +117,7 @@ end
     ts = tsurf_init
     for _ in 1:12
         Ts_K   = ts + 273.15f0
-        lw_out = sig_eps * (Ts_K ^ 4f0)
+        lw_out = sig_eps * @fastmath(Ts_K ^ 4)
         h_sens = ha * ts
         
         # Compute LE at capped surface temp (snow surface can't be > 0°C)
@@ -127,7 +129,7 @@ end
         f_val  = lw_out + h_sens - le_ts - rhs_base
         dles_dts = 21.87f0 * es_ts_cap / max(265.5f0 + ts_cap, 1f0)
         dle_dts = ifelse(ts < 0f0, Ls_Ra * dles_dts, 0f0)
-        df_val = 4f0 * sig_eps * (Ts_K ^ 3f0) + ha - dle_dts
+        df_val = 4f0 * sig_eps * @fastmath(Ts_K ^ 3) + ha - dle_dts
         
         # Step update with clamping for stability
         step   = f_val / max(abs(df_val), 1f-6)
@@ -139,7 +141,7 @@ end
     # 6. Evaluate Melt Potential
     # Melt energy at Ts=0 (using LE at 0°C, per standard convention)
     Ts0_K           = 273.15f0
-    lw_out0         = sig_eps * (Ts0_K ^ 4f0)
+    lw_out0         = sig_eps * @fastmath(Ts0_K ^ 4)
     melt_energy_net = rhs_melt - lw_out0   # Melt energy using LE_sub_0
     ts_melt         = 0f0
     melt_heat_out   = max(melt_energy_net, 0f0)
@@ -150,7 +152,7 @@ end
 
     # Sublimation mass is computed from the energy balance residual at ts_no_melt.
     Ts0_no_melt_K    = ts_no_melt + 273.15f0
-    lw_out_no_melt   = sig_eps * (Ts0_no_melt_K ^ 4f0)
+    lw_out_no_melt   = sig_eps * @fastmath(Ts0_no_melt_K ^ 4)
     le_eb_no_melt    = rhs_base - lw_out_no_melt - ha * ts_no_melt  # LE from energy balance
     sub_flux_Wm2     = max(le_eb_no_melt, 0f0)             # Positive LE = sublimation
     sub_mass_mm_cold = sub_flux_Wm2 / L_sub * 86400f0 * 1f3
