@@ -58,6 +58,26 @@ using mGV
     var_name = "nijssen_nonlin_reservoir"
     BMI.get_value(model, var_name, dest)
     @test isapprox(mean(dest),mean(model.soil_parameters.nijssen_nonlin_reservoir))
+
+    dest = zeros(Float32, length(model.soil_parameters.nijssen_infilt_b))
+    var_name = "nijssen_infilt_b"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.soil_parameters.nijssen_infilt_b))
+
+    dest = zeros(Float32, length(model.grid_parameters.snow_band_precipitation_factor))
+    var_name = "snow_band_precipitation_factor"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor))
+
+    println("Type of", typeof(dest))
+    println("Eltype", eltype(dest))
+
+    # dest = zeros(Float32, length(model.snow_band_precipitation_factor))
+    # var_name = "snow_band_precipitation_factor"
+    # BMI.get_value(model, var_name, dest)
+    # println(model.snow_band_precipitation_factor)
+
+
     # @allowscalar println("Variable reservoir coefficient for Nijssen baseflow:\n", dest)
 #         dest = zeros(Float64, size(model.land.soil.variables.water_table_depth))
 #         var_name = "soil_water_saturated_zone_top__depth"
