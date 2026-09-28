@@ -5,41 +5,37 @@ import BasicModelInterface as BMI
 using Statistics: mean
 using mGV
 
-@testset "BMI functions" begin
+@testset "BMI tests" begin
     
     tomlpath = "../configs/mekong_config.toml" 
     model = BMI.initialize(mGV.Model, tomlpath)
     config = mGV.load_config(tomlpath)
     clock = mGV.Clock(config)
 
-    # @testset "initialization and time functions" begin
+    # initialization and time functions
     @test BMI.get_time_units(model) == "y-m-d-h-m-s-ms"
     @test BMI.get_time_step(model) == clock.dt
     @test BMI.get_start_time(model) == clock.time
     @test BMI.get_current_time(model) == clock.time
     @test BMI.get_end_time(model) == config.end_year
-    # end
 
-#     @testset "model information functions" begin
-#         @test BMI.get_component_name(model) == "sbm"
-#         @test BMI.get_input_item_count(model) == 7
-#         @test BMI.get_output_item_count(model) == 7
-#         to_check = [
-#             "river_water__volume_flow_rate",
-#             "soil_water_unsaturated_zone__depth",
-#             "soil_water__transpiration_volume_flux",
-#             "soil_layer_2_water_unsaturated_zone__depth",
-#         ]
-#         retrieved_vars = BMI.get_input_var_names(model)
-#         @test all(x -> x in retrieved_vars, to_check)
-#         retrieved_vars = BMI.get_output_var_names(model)
-#         @test all(x -> x in retrieved_vars, to_check)
-#     end
+    # "model information functions" begin
+    # @test BMI.get_component_name(model) == "sbm"
+    # @test BMI.get_input_item_count(model) == 7
+    # @test BMI.get_output_item_count(model) == 7
+    # to_check = [
+    #     "river_water__volume_flow_rate",
+    #     "soil_water_unsaturated_zone__depth",
+    #     "soil_water__transpiration_volume_flux",
+    #     "soil_layer_2_water_unsaturated_zone__depth",
+    # ]
+    # retrieved_vars = BMI.get_input_var_names(model)
+    # @test all(x -> x in retrieved_vars, to_check)
+    # retrieved_vars = BMI.get_output_var_names(model)
+    # @test all(x -> x in retrieved_vars, to_check)
 
-#     @testset "variable information functions" begin
-#         @test BMI.get_var_grid(model, "soil_water__infiltration_volume_flux") == 5
-#         @test BMI.get_var_grid(model, "river_water__volume_flow_rate") == 2
-#         @test BMI.get_var_grid(model, "reservoir_water__outgoing_volume_flow_rate") == 0
+    #"variable information functions" begin
+    @test BMI.get_var_grid(model) == 0
 #         @test BMI.get_var_type(model, "reservoir_water__incoming_volume_flow_rate") ==
 #             "Float64"
 #         @test BMI.get_var_units(model, "river_water__volume_flow_rate") == "m3 s-1"
@@ -48,12 +44,21 @@ using mGV
 #         @test BMI.get_var_nbytes(model, "river_water__instantaneous_volume_flow_rate") ==
 #             length(model.routing.river_flow.variables.q) * sizeof(Float64)
 #         @test BMI.get_var_location(model, "river_water__volume_flow_rate") == "node"
-#     end
 
-#     BMI.update(model)
 
-#     @testset "update and get and set functions" begin
-#         @test BMI.get_current_time(model) == 86400.0
+
+    # "BMI update and get and set functions" begin
+    BMI.update(model)
+
+    #Note: at iteration 0 the clock is not advanced in time,
+    #to have the model start time at iteration 1.
+    @test BMI.get_current_time(model) == clock.time 
+    # dest = zeros(Float64, length(size(model.soil_parameters.nijssen_nonlin_reservoir)))
+    dest = zeros(Float32, length(model.soil_parameters.nijssen_nonlin_reservoir))
+    var_name = "nijssen_nonlin_reservoir"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.soil_parameters.nijssen_nonlin_reservoir))
+    # @allowscalar println("Variable reservoir coefficient for Nijssen baseflow:\n", dest)
 #         dest = zeros(Float64, size(model.land.soil.variables.water_table_depth))
 #         var_name = "soil_water_saturated_zone_top__depth"
 #         BMI.get_value(model, var_name, dest)
@@ -191,5 +196,4 @@ using mGV
 #     ) Wflow.save_state(model)
 #     @test !isopen(model.writer.endstate_writer.output_dataset)
 # end
-
 end

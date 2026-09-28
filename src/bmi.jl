@@ -45,8 +45,7 @@ end
 # end
 
 
-# <<<<<< to be done
-# should return the model name/type
+# <<<<<< TODO: should return the model name/type
 
 function BMI.get_component_name(model::Model)
     # return string(model.config.model.type)
@@ -82,9 +81,9 @@ end
 
 
 function BMI.get_var_grid(model::Model)
-    resLat = diff(model.grid_parameters.latitude) 
-    resLon = diff(model.grid_parameters.longitude)
-    if all(isapprox.(resLat, resLat[1])) && all(isapprox.(resLon, resLon[1]))
+    resLat_min, resLat_max = extrema(diff(model.grid_parameters.latitude))
+    resLon_min, resLon_max = extrema(diff(model.grid_parameters.longitude))
+    if all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max))
         return 0 #Uniform rectilinear
     else 
         return 1 #Rectilinear
@@ -148,8 +147,9 @@ function BMI.get_time_step(model::Model)
     return Second(model.config.timestep)
 end
 
-function BMI.get_value(model::Model, name::String, dest::Vector{Float64})
-    dest .= copy(BMI.get_value_ptr(model, name))
+function BMI.get_value(model::Model, name::String, dest::Vector{Float32})
+    # dest .= copy(BMI.get_value_ptr(model, name)) #messes GPU and CPU array
+    copyto!(dest,copy(BMI.get_value_ptr(model, name)))
     return dest
 end
 
@@ -158,8 +158,12 @@ function BMI.get_value_ptr(model::Model, name::String)
     if isnothing(lens)
         error("Accessing '$name' is not supported.")
     else
-        vec = lens(model)
-        return @view(vec[1:n])
+        dest = lens(model)
+        if ndims(dest)>1
+            dest = vec(dest)
+        end
+        n = length(dest)
+        return @view(dest[1:n])
     end
 end
 
