@@ -1,4 +1,76 @@
 const standard_name_map = OrderedDict{String, ParameterMetadata}(
+
+    "latitude" => ParameterMetadata(; 
+        lens = @optic(_.grid_parameters.latitude),
+        unit = Unit(; deg = 1),
+        default = 1.0,
+        description = "Latitude",
+        tags = [:grid_parameters],
+    ),
+    "longitude" => ParameterMetadata(;
+        lens = @optic(_.grid_parameters.longitude),
+        unit = Unit(; deg = 1),
+        default = 1.0,
+        description = "longitude",
+        tags = [:grid_parameters],
+    ),
+    "time" => ParameterMetadata(;
+        lens = @optic(_.grid_parameters.time),
+        unit = Unit(; s = 1),
+        default = 1.0,
+        description = "time",
+        tags = [:grid_parameters],
+    ),
+    "elevation" => ParameterMetadata(; #(lat, lon) 
+        lens = @optic(_.grid_parameters.elevation),
+        unit = Unit(; m = 1),
+        default = 1.0,
+        description = "Elevation of grid cell center",
+        tags = [:grid_parameters],
+    ),
+    "average_temperature" => ParameterMetadata(; # (lat, lon) 
+        lens = @optic(_.grid_parameters.average_temperature),
+        unit = Unit(; degC = 1),
+        default = 1.0,
+        description = "average temperature",
+        tags = [:grid_parameters],
+    ),
+    "annual_precipitation" => ParameterMetadata(; # (lat, lon) 
+        lens = @optic(_.grid_parameters.annual_precipitation),
+        unit = Unit(; mm = 1, y = -1),
+        default = 1.0,
+        description = "annual precipitation",
+        tags = [:grid_parameters],
+    ),
+    "snow_band_area_fraction" => ParameterMetadata(; #(snow_band, lat, lon)
+        lens = @optic(_.grid_parameters.snow_band_area_fraction),
+        unit = Unit(),
+        default = 1.0,
+        description = "Fraction of grid cell area in each snow band",
+        tags = [:grid_parameters],
+    ),
+    "snow_band_elevation" => ParameterMetadata(; #(snow_band, lat, lon)
+        lens = @optic(_.grid_parameters.snow_band_elevation),
+        unit = Unit(; m=1),
+        default = 1.0,
+        description = "Elevation of snow bands",
+        tags = [:grid_parameters],
+    ),
+    "snow_band_elevation" => ParameterMetadata(; #(snow_band, lat, lon)
+        lens = @optic(_.grid_parameters.snow_band_elevation),
+        unit = Unit(; m=1),
+        default = 1.0,
+        description = "Elevation of snow bands",
+        tags = [:grid_parameters],
+    ),
+    "snow_band_precipitation_factor" => ParameterMetadata(; #(snow_band, lat, lon)
+        lens = @optic(_.grid_parameters.snow_band_precipitation_factor),
+        unit = Unit(),
+        default = 1.0,
+        description = "Fraction of cell precipitation that falls on each elevation band",
+        tags = [:grid_parameters],
+    ),
+
     "hydraulic_conductivity" => ParameterMetadata(;
         lens = @optic(_.soil_parameters.hydraulic_conductivity),
         unit = Unit(; mm = 1, d = -1),
@@ -12,5 +84,12 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         default = 1.0,
         description = "Nonlinear reservoir coefficient for Nijssen baseflow",
         tags = [:soil_input],    
-    )
+    ),
+    "nijssen_infilt_b" => ParameterMetadata(;
+        lens = @optic(_.soil_parameters.nijssen_infilt_b),
+        unit = Unit(),
+        default = 1.0,
+        description = "Variable infiltration curve parameter (binfilt) for Nijssen baseflow.",
+        tags = [:soil_input],    
+    ),
 )

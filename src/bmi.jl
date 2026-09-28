@@ -161,6 +161,8 @@ function BMI.get_value_ptr(model::Model, name::String)
         dest = lens(model)
         if ndims(dest)>1
             dest = vec(dest)
+        # elseif ndims(dest) == 3
+        # elseif ndims(dist) == 4
         end
         n = length(dest)
         return @view(dest[1:n])

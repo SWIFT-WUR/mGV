@@ -14,6 +14,7 @@ struct Unit
     min::PowersType # minute
     h::PowersType # hour
     d::PowersType # day
+    y::PowersType #year
     dt::PowersType # time step
     # Length
     m::PowersType # meter, SI standard
@@ -31,6 +32,8 @@ struct Unit
     # Fraction
     percentage::PowersType # percentage, converted to unitless fraction in the SI standard
     ppm::PowersType # parts per million, converted to unitless fraction in the SI standard
+    # degree
+    deg::PowersType # degree (latitude and longitude)
     # Factor for converting a value in this unit to the above mentioned standard SI units (apart from dt)
     to_SI_factor_without_dt::Float64 # Expected to be last field!
 end
@@ -96,6 +99,7 @@ const to_SI_data = @NamedTuple{factor::Float64, unit_SI::Unit}[
     (factor = 60.0, unit_SI = Unit(; s = 1)), # min
     (factor = 3600, unit_SI = Unit(; s = 1)), # h
     (factor = 86400.0, unit_SI = Unit(; s = 1)), # d
+    (factor = 31536000.0, unit_SI = Unit(; s = 1)), # y
     (factor = NaN, unit_SI = Unit(; s = 1)), # dt
     (factor = 1.0, unit_SI = Unit(; m = 1)), # m
     (factor = 1.0e-2, unit_SI = Unit(; m = 1)), # cm
@@ -108,6 +112,7 @@ const to_SI_data = @NamedTuple{factor::Float64, unit_SI::Unit}[
     (factor = 1.0, unit_SI = Unit(; kg = 1, m = 2, s = -2)), # J
     (factor = 1.0e-2, unit_SI = Unit()), # percentage
     (factor = 1.0e-6, unit_SI = Unit()), # ppm
+    (factor = 1.0, unit_SI = Unit()), # degree
 ]
 
 
