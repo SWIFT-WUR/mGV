@@ -69,11 +69,27 @@ using mGV
     BMI.get_value(model, var_name, dest)
     @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor))
 
-    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_precipitation_factor)[2:end]))
-    var_name = "snow_band_precipitation_factor_layer_1"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor[1,:,:]))
 
+
+
+    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_area_fraction)[2:end]))
+    var_name = "snow_band_area_fraction_layer_1"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_area_fraction[1,:,:]))
+
+    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_elevation)[2:end]))
+    var_name = "snow_band_elevation_layer_2"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_elevation[2,:,:]))
+
+    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_precipitation_factor)[2:end]))
+    var_name = "snow_band_precipitation_factor_layer_3"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor[3,:,:]))
+    
+    
+    
+    
 
     # dest = zeros(Float32, length(model.snow_band_precipitation_factor))
     # var_name = "snow_band_precipitation_factor"
