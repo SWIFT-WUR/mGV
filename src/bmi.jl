@@ -69,7 +69,7 @@ function BMI.get_input_var_names(model::Model)
     # or compatible with, an output variable in another model. This
     #  allows the framework to automatically connect components. 
     # Standard Names do not have to be used within the model.
-    return nothing
+    return Vector{String}()
 end
 
 function BMI.get_output_var_names(model::Model)
@@ -145,7 +145,7 @@ function BMI.get_time_step(model::Model)
     return Float64(model.config.timestep)
 end
 
-function BMI.get_value(model::Model, name::String, dest::Vector{Float32})
+function BMI.get_value(model::Model, name::String, dest)
     # dest .= copy(BMI.get_value_ptr(model, name)) #messes GPU and CPU array
     copyto!(dest,copy(BMI.get_value_ptr(model, name)))
     return dest
@@ -177,11 +177,6 @@ function BMI.get_value_ptr(model::Model, name::String)
         end
     end
 end
-
-
-
-
-
 
 function BMI.get_value_at_indices(
         model::Model,
@@ -233,6 +228,27 @@ function BMI.get_grid_rank(model::Model, grid::Int)
     end
 end
 
+# RemoteBMI uses outdated BasicModelInterface.jl definition;
+function BMI.get_grid_shape(model::Model, grid::Int)
+    shape = zeros(Int, BMI.get_grid_rank(model, grid))
+    return BMI.get_grid_shape(model, grid, shape)
+end
+
+function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
+    if grid==0
+        shape[1] = length(model.grid_parameters.latitude)
+        shape[2] = length(model.grid_parameters.longitude) 
+        return shape
+    end
+    error("unknown grid type $grid")
+end
+
+# RemoteBMI uses outdated BasicModelInterface.jl definition;
+function BMI.get_grid_x(model::Model, grid::Int)
+    x = zeros(Float64, BMI.get_grid_shape(model, grid)[2])
+    return BMI.get_grid_x(model, grid, x)
+end
+
 function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
     if grid == 0
         x[:] = model.grid_parameters.longitude
@@ -240,6 +256,12 @@ function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
         error("unknown grid type $grid")
     end
     return x
+end
+
+# RemoteBMI uses outdated BasicModelInterface.jl definition;
+function BMI.get_grid_y(model::Model, grid::Int)
+    y = zeros(Float64, BMI.get_grid_shape(model, grid)[1])
+    return BMI.get_grid_y(model, grid, y)
 end
 
 function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
@@ -268,14 +290,6 @@ function BMI.get_grid_size(model::Model, grid::Int)
     error("unknown grid type $grid")
 end
 
-function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector(Int))
-    if grid==0
-        shape[0] = length(model.grid_parameters.latitude)
-        shape[1] = length(model.grid_parameters.longitude) 
-        return shape
-    end
-    error("unknown grid type $grid")
-end
 
 # function BMI.get_grid_edge_count(model::Model, grid::Int)
 #     (; domain) = model
