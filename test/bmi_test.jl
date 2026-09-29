@@ -5,6 +5,19 @@ import BasicModelInterface as BMI
 using Statistics: mean
 using mGV
 
+const TYPES = Dict(
+    "Float16" => Float16,
+    "Float32" => Float32,
+    "Float64" => Float64,
+    "Int16" => Int16,
+    "Int32" => Int32,
+    "Int64" => Int64,
+)
+
+function _zeros(type::String, size::Int)
+    return zeros(TYPES[type], size)
+end
+
 @testset "BMI tests" begin
     
     tomlpath = "../configs/mekong_config.toml" 
@@ -35,7 +48,7 @@ using mGV
     # @test all(x -> x in retrieved_vars, to_check)
 
     #"variable information functions" begin
-    @test BMI.get_var_grid(model) == 0
+    @test BMI.get_var_grid(model, "") == 0
 #         @test BMI.get_var_type(model, "reservoir_water__incoming_volume_flow_rate") ==
 #             "Float64"
 #         @test BMI.get_var_units(model, "river_water__volume_flow_rate") == "m3 s-1"
@@ -90,6 +103,13 @@ using mGV
     
     
     
+    grid = BMI.get_var_grid(model,"infiltration")
+    var_type = BMI.get_var_type(model, "infiltration")
+
+    dest = _zeros(var_type, BMI.get_grid_size(model, grid))
+    var_name = "infiltration"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.soil_variables.infiltration))
 
     # dest = zeros(Float32, length(model.snow_band_precipitation_factor))
     # var_name = "snow_band_precipitation_factor"

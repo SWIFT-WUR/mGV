@@ -183,4 +183,14 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         description = "Variable infiltration curve parameter (binfilt) for Nijssen baseflow.",
         tags = [:soil_input],    
     ),
+
+    "infiltration" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.infiltration),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
 )
+
+
