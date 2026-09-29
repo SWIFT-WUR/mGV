@@ -69,8 +69,11 @@ using mGV
     BMI.get_value(model, var_name, dest)
     @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor))
 
-    println("Type of", typeof(dest))
-    println("Eltype", eltype(dest))
+    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_precipitation_factor)[2:end]))
+    var_name = "snow_band_precipitation_factor_layer_1"
+    BMI.get_value(model, var_name, dest)
+    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor[1,:,:]))
+
 
     # dest = zeros(Float32, length(model.snow_band_precipitation_factor))
     # var_name = "snow_band_precipitation_factor"

@@ -2,7 +2,22 @@ const PowersType = SVector{2, Rational{Int}}
 argument_error(msg::String) = throw(ArgumentError(msg))
 
 
+"""
+Store a unit as a product of powers, for instance:
+m/s -> Unit(; m = 1, s = -1)
 
+Positive and negative powers can be split to support e.g.
+m²m⁻² -> Unit(; m = (2, 2))
+
+The `absolute_temperature` flag indicates whether °C => K
+requires a +273.15 shift.
+
+Adding support for a new unit is easy:
+- Add a field to the `Unit` struct
+- Specify how it translates to SI standard units in `to_SI_data`
+- If the symbol for the unit is different from its field name in `Unit`,
+    add it to `UnitStrings`
+"""
 struct Unit
     # Temperature
     absolute_temperature::Bool # Expected to be first field!
