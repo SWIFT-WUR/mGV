@@ -154,18 +154,29 @@ function BMI.get_value(model::Model, name::String, dest::Vector{Float32})
 end
 
 function BMI.get_value_ptr(model::Model, name::String)
-    (; lens) = get_metadata(name; model)
-    if isnothing(lens)
-        error("Accessing '$name' is not supported.")
-    else
-        dest = lens(model)
-        if ndims(dest)>1
-            dest = vec(dest)
-        # elseif ndims(dest) == 3
-        # elseif ndims(dist) == 4
+    if occursin(r"_layer_\d",name)
+        name_2d, ind = soil_layer_standard_name(name)
+        model_vals, _ = get_field_in_model(model, name_2d)
+        # dim = length(first(model_vals))
+        # value = reshape(reinterpret(eltype(eltype(model_vals)), model_vals), dim, :)
+        # dim = length(eltype(model_vals))
+        # value = reshape(reinterpret(eltype(eltype(model_vals)), model_vals), length(eltype(model_vals)), :)
+        value = reshape(reinterpret(eltype(eltype(model_vals)), model_vals), size(model_vals,1), :)
+        return @view value[ind, 1:prod(size(model_vals)[2:end])]
+    else 
+        (; lens) = get_metadata(name; model)
+        if isnothing(lens)
+            error("Accessing '$name' is not supported.")
+        else
+            dest = lens(model)
+            if ndims(dest)>1
+                dest = vec(dest)
+            # elseif ndims(dest) == 3
+            # elseif ndims(dist) == 4
+            end
+            n = length(dest)
+            return @view(dest[1:n])
         end
-        n = length(dest)
-        return @view(dest[1:n])
     end
 end
 
@@ -174,15 +185,15 @@ end
 
 
 
-# function BMI.get_value_at_indices(
-#         model::Model,
-#         name::String,
-#         dest::Vector{Float64},
-#         inds::Vector{Int},
-#     )
-#     dest .= BMI.get_value_ptr(model, name)[inds]
-#     return dest
-# end
+function BMI.get_value_at_indices(
+        model::Model,
+        name::String,
+        dest::Vector{Float64},
+        inds::Vector{Int},
+    )
+    dest .= BMI.get_value_ptr(model, name)[inds]
+    return dest
+end
 
 # """
 #     BMI.set_value(model::Model, name::String, src::Vector{Float64})
@@ -321,28 +332,25 @@ end
 #     return datetime2unix(model.config.time.starttime)
 # end
 
-# # BMI helper functions.
-# """
-# Return the standard name `name_layered` representing a layered soil model variable (vector
-# of svectors) and the layer index `layer_index` based on a standard `name` representing a
-# layer of a layered soil model variable.
-# """
-# function soil_layer_standard_name(name::AbstractString)
-#     # Parse new naming format: soil_layer_N_water_... where N is the layer number
-#     parts = split(name, "_")
-#     if length(parts) >= 3 && parts[1] == "soil" && parts[2] == "layer"
-#         layer_number = parts[3]
-#         layer_index = tryparse(Int, layer_number)
-#         if !isnothing(layer_index)
-#             # Remove the layer number to get the base name
-#             name_layered = join([parts[1], parts[2], parts[4:end]...], "_")
-#             return name_layered, layer_index
-#         end
-#     end
-#     # Fallback for unexpected format
-#     @warn "Unable to parse layer standard name: $name"
-#     return name, nothing
-# end
+# BMI helper functions.
+"""
+Return the standard name `name_layered` representing a layered soil model variable (vector
+of svectors) and the layer index `layer_index` based on a standard `name` representing a
+layer of a layered soil model variable.
+"""
+function soil_layer_standard_name(name::AbstractString)
+    # Parse new naming format: soil_layer_N_water_... where N is the layer number
+    parts = split(name, "_")
+    layer_index = tryparse(Int, parts[end])
+    if !isnothing(layer_index)
+        # Remove the layer number to get the base name
+        name_layered = join(parts[1:end-1], "_") 
+        return name_layered, layer_index
+    end
+    # Fallback for unexpected format
+    @warn "Unable to parse layer standard name: $name"
+    return name, nothing
+end
 
 # """
 #     grid_element_type(model, lens::ComposedFunction)
