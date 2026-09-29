@@ -57,13 +57,6 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         description = "Elevation of snow bands",
         tags = [:grid_parameters],
     ),
-    "snow_band_elevation" => ParameterMetadata(; #(snow_band, lat, lon)
-        lens = @optic(_.grid_parameters.snow_band_elevation),
-        unit = Unit(; m=1),
-        default = 1.0,
-        description = "Elevation of snow bands",
-        tags = [:grid_parameters],
-    ),
     "snow_band_precipitation_factor" => ParameterMetadata(; #(snow_band, lat, lon)
         lens = @optic(_.grid_parameters.snow_band_precipitation_factor),
         unit = Unit(),
@@ -72,21 +65,12 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         tags = [:grid_parameters],
     ),
 
-
-
-
+    #per-snowband variables 
     "snow_band_area_fraction_layer" => ParameterMetadata(; #(snow_band, lat, lon)
         lens = @optic(_.grid_parameters.snow_band_area_fraction),
         unit = Unit(),
         default = 1.0,
         description = "Fraction of grid cell area in each snow band",
-        tags = [:grid_parameters],
-    ),
-    "snow_band_elevation_layer" => ParameterMetadata(; #(snow_band, lat, lon)
-        lens = @optic(_.grid_parameters.snow_band_elevation),
-        unit = Unit(; m=1),
-        default = 1.0,
-        description = "Elevation of snow bands",
         tags = [:grid_parameters],
     ),
     "snow_band_elevation_layer" => ParameterMetadata(; #(snow_band, lat, lon)
@@ -103,6 +87,10 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         description = "Fraction of cell precipitation that falls on each elevation band",
         tags = [:grid_parameters],
     ),
+
+
+
+
 
 
     #Vegetation (static)
