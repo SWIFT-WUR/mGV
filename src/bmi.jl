@@ -48,18 +48,15 @@ end
 # <<<<<< TODO: should return the model name/type
 
 function BMI.get_component_name(model::Model)
-    # return string(model.config.model.type)
-    return nothing
+    return "mGV"
 end
 #number of input features 
 function BMI.get_input_item_count(model::Model)
-    # return length(BMI.get_input_var_names(model))
-    return nothing
+    return length(BMI.get_input_var_names(model))
 end
 #number of output features
 function BMI.get_output_item_count(model::Model)
-    # return length(BMI.get_output_var_names(model))
-    return nothing
+    return length(BMI.get_output_var_names(model))
 end
 
 
@@ -76,11 +73,11 @@ function BMI.get_input_var_names(model::Model)
 end
 
 function BMI.get_output_var_names(model::Model)
-    return nothing
+    return ["infiltration"]
 end
 
-
-function BMI.get_var_grid(model::Model)
+#implement the var names
+function BMI.get_var_grid(model::Model, name::String)
     resLat_min, resLat_max = extrema(diff(model.grid_parameters.latitude))
     resLon_min, resLon_max = extrema(diff(model.grid_parameters.longitude))
     if all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max))
@@ -95,7 +92,8 @@ end
 
 function BMI.get_var_type(model::Model, name::String)
     value = BMI.get_value_ptr(model, name)
-    return repr(eltype(first(value)))
+    # return repr(eltype(first(value))) #fails on GPU array
+    return repr(eltype(eltype(value)))
 end
 
 
@@ -128,23 +126,23 @@ function BMI.get_var_location(model::Model, name::String)
 end
 
 function BMI.get_current_time(model::Model)
-    return model.clock.time
+    return datetime2unix(model.clock.time)
 end
 
 function BMI.get_start_time(model::Model)
-    return DateTime(model.config.start_year)
+    return datetime2unix(DateTime(model.config.start_year))
 end
 
 function BMI.get_end_time(model::Model)
-    return model.config.end_year
+    return datetime2unix(DateTime(model.config.end_year, 12, 31))
 end
 
 function BMI.get_time_units(::Model)
-    return "y-m-d-h-m-s-ms"
+    return "seconds since 1970-01-01T00:00+00:00"
 end
 
 function BMI.get_time_step(model::Model)
-    return Second(model.config.timestep)
+    return Float64(model.config.timestep)
 end
 
 function BMI.get_value(model::Model, name::String, dest::Vector{Float32})
@@ -219,51 +217,65 @@ end
 #     return BMI.get_value_ptr(model, name)[inds] .= src
 # end
 
-# function BMI.get_grid_type(model::Model, grid::Int)
-#     if grid in 0:2
-#         return "points"
-#     elseif grid in 3:6
-#         return "unstructured"
-#     else
-#         error("unknown grid type $grid")
-#     end
-# end
+function BMI.get_grid_type(model::Model, grid::Int)
+    if grid == 0
+        return "rectilinear"
+    else
+        error("unknown grid type $grid")
+    end
+end
 
-# function BMI.get_grid_rank(model::Model, grid::Int)
-#     if grid in 0:6
-#         return 2
-#     else
-#         error("unknown grid type $grid")
-#     end
-# end
+function BMI.get_grid_rank(model::Model, grid::Int)
+    if grid == 0
+        return 2
+    else
+        error("unknown grid type $grid")
+    end
+end
 
-# function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
-#     (; reader, domain) = model
-#     (; dataset) = reader
-#     sel = active_indices(domain, GRIDS[grid])
-#     inds = [sel[i][1] for i in eachindex(sel)]
-#     x_nc = read_x_axis(dataset)
-#     x .= x_nc[inds]
-#     return x
-# end
+function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
+    if grid == 0
+        x[:] = model.grid_parameters.longitude
+    else
+        error("unknown grid type $grid")
+    end
+    return x
+end
 
-# function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
-#     (; reader, domain) = model
-#     (; dataset) = reader
-#     sel = active_indices(domain, GRIDS[grid])
-#     inds = [sel[i][2] for i in eachindex(sel)]
-#     y_nc = read_y_axis(dataset)
-#     y .= y_nc[inds]
-#     return y
-# end
+function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
+    if grid == 0
+        y[:] = model.grid_parameters.latitude
+    else
+        error("unknown grid type $grid")
+    end
+    return y
+end
+
+function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
+    error("No grid z-coordinate")
+end
 
 # function BMI.get_grid_node_count(model::Model, grid::Int)
 #     return length(active_indices(model.domain, GRIDS[grid]))
 # end
 
-# function BMI.get_grid_size(model::Model, grid::Int)
-#     return length(active_indices(model.domain, GRIDS[grid]))
-# end
+function BMI.get_grid_size(model::Model, grid::Int)
+    if grid==0
+        y_size = length(model.grid_parameters.latitude)
+        x_size = length(model.grid_parameters.longitude)
+        return x_size*y_size
+    end
+    error("unknown grid type $grid")
+end
+
+function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector(Int))
+    if grid==0
+        shape[0] = length(model.grid_parameters.latitude)
+        shape[1] = length(model.grid_parameters.longitude) 
+        return shape
+    end
+    error("unknown grid type $grid")
+end
 
 # function BMI.get_grid_edge_count(model::Model, grid::Int)
 #     (; domain) = model
