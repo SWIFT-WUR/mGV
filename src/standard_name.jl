@@ -1,6 +1,145 @@
-const standard_name_map = OrderedDict{String, ParameterMetadata}(
 
-    #Grid parameters
+
+const standard_name_map = OrderedDict{String, ParameterMetadata}(
+    #Surface energy variables
+    # > 2D
+    "net_radiation" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.net_radiation),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+    "potential_evaporation" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.potential_evaporation),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+    "soil_potential_evaporation" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.soil_potential_evaporation),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+    "aerodynamic_resistance" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.aerodynamic_resistance),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+
+    # 2D
+    "surface_temperature" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.surface_temperature),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+    "total_evapotranspiration" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.total_evapotranspiration),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+    "energy_error" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.energy_error),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+    "water_error" => ParameterMetadata(;
+        lens = @optic(_.surface_energy_variables.water_error),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:surface_energy_variables],    
+    ),
+
+    #Soil variables > 2D
+    "moisture" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.moisture),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "temperature" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.temperature),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "ice_fraction" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.ice_fraction),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "interlayer_drainage" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.interlayer_drainage),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "thermal_conductivity" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.thermal_conductivity),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+
+    #2D
+    "evaporation" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.evaporation),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "infiltration" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.infiltration),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "surface_runoff" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.surface_runoff),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "subsurface_runoff" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.subsurface_runoff),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+    "total_runoff" => ParameterMetadata(;
+        lens = @optic(_.soil_variables.total_runoff),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:soil_variables],    
+    ),
+)
+
+
+const standard_param_map = OrderedDict{String, ParameterMetadata}(
+    #Grid 
     "latitude" => ParameterMetadata(; 
         lens = @optic(_.grid_parameters.latitude),
         unit = Unit(; deg = 1),
@@ -65,35 +204,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         tags = [:grid_parameters],
     ),
 
-    #per-snowband variables 
-    "snow_band_area_fraction_layer" => ParameterMetadata(; #(snow_band, lat, lon)
-        lens = @optic(_.grid_parameters.snow_band_area_fraction),
-        unit = Unit(),
-        default = 1.0,
-        description = "Fraction of grid cell area in each snow band",
-        tags = [:grid_parameters],
-    ),
-    "snow_band_elevation_layer" => ParameterMetadata(; #(snow_band, lat, lon)
-        lens = @optic(_.grid_parameters.snow_band_elevation),
-        unit = Unit(; m=1),
-        default = 1.0,
-        description = "Elevation of snow bands",
-        tags = [:grid_parameters],
-    ),
-    "snow_band_precipitation_factor_layer" => ParameterMetadata(; #(snow_band, lat, lon)
-        lens = @optic(_.grid_parameters.snow_band_precipitation_factor),
-        unit = Unit(),
-        default = 1.0,
-        description = "Fraction of cell precipitation that falls on each elevation band",
-        tags = [:grid_parameters],
-    ),
-
-
-
-
-
-
-    #Vegetation (static)
+    #Vegetation  (static)
     "root_fraction" => ParameterMetadata(; #(veg_class, root_zone, lat, lon)
         lens = @optic(_.vegetation_parameters.root_fraction),
         unit = Unit(),
@@ -160,8 +271,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
 
 
-
-
+    #Soil
     "hydraulic_conductivity" => ParameterMetadata(;
         lens = @optic(_.soil_parameters.hydraulic_conductivity),
         unit = Unit(; mm = 1, d = -1),
@@ -182,140 +292,5 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         default = 1.0,
         description = "Variable infiltration curve parameter (binfilt) for Nijssen baseflow.",
         tags = [:soil_input],    
-    ),
-
-
-
-    #Soil variables > 2D
-    # "moisture" => ParameterMetadata(;
-    #     lens = @optic(_.soil_variables.moisture),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:soil_variables],    
-    # ),
-    # "temperature" => ParameterMetadata(;
-    #     lens = @optic(_.soil_variables.temperature),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:soil_variables],    
-    # ),
-    # "ice_fraction" => ParameterMetadata(;
-    #     lens = @optic(_.soil_variables.ice_fraction),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:soil_variables],    
-    # ),
-
-    #2D
-    "evaporation" => ParameterMetadata(;
-        lens = @optic(_.soil_variables.evaporation),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:soil_variables],    
-    ),
-    "infiltration" => ParameterMetadata(;
-        lens = @optic(_.soil_variables.infiltration),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:soil_variables],    
-    ),
-    "surface_runoff" => ParameterMetadata(;
-        lens = @optic(_.soil_variables.surface_runoff),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:soil_variables],    
-    ),
-    "subsurface_runoff" => ParameterMetadata(;
-        lens = @optic(_.soil_variables.subsurface_runoff),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:soil_variables],    
-    ),
-    "total_runoff" => ParameterMetadata(;
-        lens = @optic(_.soil_variables.total_runoff),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:soil_variables],    
-    ),
-    # > 2D
-    # "interlayer_drainage" => ParameterMetadata(;
-    #     lens = @optic(_.soil_variables.interlayer_drainage),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:soil_variables],    
-    # ),
-
-    #Surface energy variables
-    # 2D
-    "surface_temperature" => ParameterMetadata(;
-        lens = @optic(_.surface_energy_variables.surface_temperature),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:surface_energy_variables],    
-    ),
-    # > 2D
-    # "net_radiation" => ParameterMetadata(;
-    #     lens = @optic(_.surface_energy_variables.net_radiation),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:surface_energy_variables],    
-    # ),
-    # "potential_evaporation" => ParameterMetadata(;
-    #     lens = @optic(_.surface_energy_variables.potential_evaporation),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:surface_energy_variables],    
-    # ),
-    # "soil_potential_evaporation" => ParameterMetadata(;
-    #     lens = @optic(_.surface_energy_variables.soil_potential_evaporation),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:surface_energy_variables],    
-    # ),
-    # 2 D
-    "total_evapotranspiration" => ParameterMetadata(;
-        lens = @optic(_.surface_energy_variables.total_evapotranspiration),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:surface_energy_variables],    
-    ),
-    # > 2D
-    # "aerodynamic_resistance" => ParameterMetadata(;
-    #     lens = @optic(_.surface_energy_variables.aerodynamic_resistance),
-    #     unit = Unit(),
-    #     default = 1.0,
-    #     description = "",
-    #     tags = [:surface_energy_variables],    
-    # ),
-    #2 d
-    "energy_error" => ParameterMetadata(;
-        lens = @optic(_.surface_energy_variables.energy_error),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:surface_energy_variables],    
-    ),
-    "water_error" => ParameterMetadata(;
-        lens = @optic(_.surface_energy_variables.water_error),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        tags = [:surface_energy_variables],    
     )
 )
-
-
