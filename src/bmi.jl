@@ -1,7 +1,15 @@
 import BasicModelInterface as BMI
 
 
-const OUTvars = ["evaporation",
+const OUTvars = ["moisture",
+                "moisture_layer",
+                "temperature",
+                "temperature_layer",
+                "ice_fraction",
+                "ice_fraction_layer",
+                "interlayer_drainage",
+                "interlayer_drainage_layer",
+                "evaporation",
                 "infiltration",
                 "surface_runoff",
                 "subsurface_runoff",
@@ -381,7 +389,7 @@ function soil_layer_standard_name(name::AbstractString)
     layer_index = tryparse(Int, parts[end])
     if !isnothing(layer_index)
         # Remove the layer number to get the base name
-        name_layered = join(parts[1:end-1], "_") 
+        name_layered = join(parts[1:end-2], "_") 
         return name_layered, layer_index
     end
     # Fallback for unexpected format

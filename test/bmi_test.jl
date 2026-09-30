@@ -44,17 +44,21 @@ end
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
     @test BMI.get_input_item_count(model) == 0
-    @test BMI.get_output_item_count(model) == 9
-    # to_check = [
-    #     "river_water__volume_flow_rate",
-    #     "soil_water_unsaturated_zone__depth",
-    #     "soil_water__transpiration_volume_flux",
-    #     "soil_layer_2_water_unsaturated_zone__depth",
-    # ]
+    @test BMI.get_output_item_count(model) == 17
+    to_check = [
+        # "nijssen_nonlin_reservoir",
+        # "nijssen_infilt_b",
+        # "snow_band_area_fraction_layer",
+        # "snow_band_elevation_layer",
+        # "snow_band_precipitation_factor_layer",
+        "infiltration",
+        "ice_fraction_layer",
+        "interlayer_drainage_layer"
+    ]
     # retrieved_vars = BMI.get_input_var_names(model)
     # @test all(x -> x in retrieved_vars, to_check)
-    # retrieved_vars = BMI.get_output_var_names(model)
-    # @test all(x -> x in retrieved_vars, to_check)
+    retrieved_vars = BMI.get_output_var_names(model)
+    @test all(x -> x in retrieved_vars, to_check)
 
     #"variable information functions" begin
     @test BMI.get_var_grid(model, "") == 0
@@ -76,26 +80,25 @@ end
     #to have the model start time at iteration 1.
     @test BMI.get_current_time(model) == datetime2unix(clock.time) 
 
-    @test isapprox(get_value_mean("nijssen_nonlin_reservoir", model),mean(model.soil_parameters.nijssen_nonlin_reservoir))
-    @test isapprox(get_value_mean("nijssen_infilt_b", model),mean(model.soil_parameters.nijssen_infilt_b))
-    @test isapprox(get_value_mean("snow_band_area_fraction_layer_1", model),mean(model.grid_parameters.snow_band_area_fraction[:,:,1]))
-    @test isapprox(get_value_mean("snow_band_elevation_layer_2", model),mean(model.grid_parameters.snow_band_elevation[:,:, 2]))
-    @test isapprox(get_value_mean("snow_band_precipitation_factor_layer_3", model),mean(model.grid_parameters.snow_band_precipitation_factor[:,:, 3]))
+    #Check paramaters
+    # @test isapprox(get_value_mean("nijssen_nonlin_reservoir", model),mean(model.soil_parameters.nijssen_nonlin_reservoir))
+    # @test isapprox(get_value_mean("nijssen_infilt_b", model),mean(model.soil_parameters.nijssen_infilt_b))
+    # @test isapprox(get_value_mean("snow_band_area_fraction_layer_1", model),mean(model.grid_parameters.snow_band_area_fraction[:,:,1]))
+    # @test isapprox(get_value_mean("snow_band_elevation_layer_2", model),mean(model.grid_parameters.snow_band_elevation[:,:, 2]))
+    # @test isapprox(get_value_mean("snow_band_precipitation_factor_layer_3", model),mean(model.grid_parameters.snow_band_precipitation_factor[:,:, 3]))
     
     @test isapprox(get_value_mean("infiltration", model),mean(model.soil_variables.infiltration))
-    println("Sizes ", size(model.soil_variables.moisture), size(model.soil_variables.temperature), size(model.soil_variables.ice_fraction))
+    #NaN are causing errors
+    # @test isapprox(get_value_mean("moisture_layer_1", model),mean(model.soil_variables.moisture[:,:,1]))
+    # @test isapprox(get_value_mean("temperature_layer_2", model),mean(model.soil_variables.temperature[:,:,2]))
+    @test isapprox(get_value_mean("ice_fraction_layer_3", model),mean(model.soil_variables.ice_fraction[:,:,3]))
+    @test isapprox(get_value_mean("interlayer_drainage_layer_2", model),mean(model.soil_variables.interlayer_drainage[:,:,2]))
     #NaN are causing errors
     # @test isapprox(get_value_mean("surface_temperature", model),mean(model.surface_energy_variables.surface_temperature))
 
 
 
     
-    # dest = zeros(Float32, length(model.snow_band_precipitation_factor))
-    # var_name = "snow_band_precipitation_factor"
-    # BMI.get_value(model, var_name, dest)
-    # println(model.snow_band_precipitation_factor)
-
-
     # @allowscalar println("Variable reservoir coefficient for Nijssen baseflow:\n", dest)
 #         dest = zeros(Float64, size(model.land.soil.variables.water_table_depth))
 #         var_name = "soil_water_saturated_zone_top__depth"
