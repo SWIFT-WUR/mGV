@@ -51,10 +51,11 @@ mutable struct ForcingReaders{S}
     sources::Dict{String, S}
     # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
-    cache::Dict{String, Vector{Matrix{Float32}}}
+    cache::Dict{String, Array{Float32, 3}}  # (nx, ny, capacity) per variable
     cache_start::Int   # index of the first cached timestep, 0 when empty
     cache_len::Int     # number of valid timesteps currently cached
     capacity::Int      # how many timesteps the cache can hold
+    time_chunk::Int    # timesteps per chunk in the forcing (1 for NetCDF)
     slice_size::Tuple{Int, Int}  # (nx, ny) of one timestep's grid
 end
 
@@ -134,8 +135,12 @@ function open_forcing(cfg::Cfg)
     bytes_per_step = nx * ny * sizeof(Float32) * length(FORCING_VARS)
     capacity = clamp(FORCING_CACHE_BUDGET_BYTES ÷ max(bytes_per_step, 1), 1, length(times))
 
-    cache = Dict{String, Vector{Matrix{Float32}}}(
-        var => [Matrix{Float32}(undef, nx, ny) for _ in 1:capacity] for var in FORCING_VARS
+    # Round the cache to whole Zarr chunks, at least one even if over budget
+    time_chunk = time_chunk_length(sources)
+    capacity = min(max(capacity ÷ time_chunk, 1) * time_chunk, length(times))
+
+    cache = Dict{String, Array{Float32, 3}}(
+        var => Array{Float32, 3}(undef, nx, ny, capacity) for var in FORCING_VARS
     )
 
     return ForcingReaders(
@@ -145,8 +150,27 @@ function open_forcing(cfg::Cfg)
         0,
         0,
         capacity,
+        time_chunk,
         (nx, ny),
     )
+end
+
+"""
+Number of timesteps in one chunk, from the Zarr metadata of the first forcing
+variable. 1 for NetCDF, which is read per timestep.
+"""
+time_chunk_length(sources) = 1
+time_chunk_length(sources::Dict{String, ZarrForcingVar}) =
+    first(sources[FORCING_VARS[1]].arrays).metadata.chunks[3]
+
+"""
+Timestep at which the chunk holding timestep `idx` starts. Chunks are counted
+from the first timestep of each store (e.g. each year).
+"""
+chunk_start(src, idx::Int, time_chunk::Int) = idx
+function chunk_start(src::ZarrForcingVar, idx::Int, time_chunk::Int)
+    offset = src.offsets[searchsortedlast(src.offsets, idx)]
+    return offset + (idx - offset) ÷ time_chunk * time_chunk
 end
 
 """
@@ -161,44 +185,49 @@ function nearest_time_index(times::Vector{DateTime}, time::DateTime)
 end
 
 """
-Read `len` timesteps starting at `start` from a NetCDF variable into the forcing
-cache (`buffers`).
+Read `len` timesteps, starting at `start`, from a NetCDF variable into the cache.
 """
-function load_block!(buffers::Vector{Matrix{Float32}}, src::ForcingVar, start::Int, len::Int)
+function load_block!(cache::Array{Float32, 3}, src::ForcingVar, start::Int, len::Int)
     raw = src[:, :, start:(start + len - 1)]
     # Missing values in the forcing file (its _FillValue) are read as `missing`: replace
     # them with NaN and convert to a plain Float32 array.
     block = raw isa Array{Float32, 3} ? raw : Array{Float32, 3}(coalesce.(raw, NaN32))
-    for k in 1:len
-        copyto!(buffers[k], view(block, :, :, k))
+    copyto!(view(cache, :, :, 1:len), block)
+    return nothing
+end
+
+"""
+Read `len` timesteps, starting at `start`, from a Zarr variable into the cache,
+one chunk per read. Handles crossing year boundaries.
+"""
+function load_block!(cache::Array{Float32, 3}, src::ZarrForcingVar, start::Int, len::Int)
+    nx, ny, _ = size(cache)
+    stop = start + len - 1
+    step = start  # next timestep to read
+    for (array, offset) in zip(src.arrays, src.offsets)
+        time_chunk = array.metadata.chunks[3]
+        store_stop = offset + size(array, 3) - 1
+        while offset <= step <= min(stop, store_stop)
+            # Read up to the end of the chunk that holds `step`
+            chunk_stop = offset + ((step - offset) ÷ time_chunk + 1) * time_chunk - 1
+            n = min(chunk_stop, stop, store_stop) - step + 1
+            # Plain Array, not a view: Zarr then unpacks straight into the cache (2-3x faster)
+            GC.@preserve cache begin
+                dest = unsafe_wrap(Array, pointer(cache, (step - start) * nx * ny + 1), (nx, ny, n))
+                Zarr.readblock!(dest, array,
+                    CartesianIndices((1:nx, 1:ny, (step - offset + 1):(step - offset + n))))
+            end
+            step += n
+        end
     end
     return nothing
 end
 
 """
-Read `len` timesteps starting at `start` from a Zarr variable into the forcing
-cache (`buffers`). Handles crossing year boundaries.
+Fill the cache, starting at the beginning of the chunk that holds timestep `idx`.
 """
-function load_block!(buffers::Vector{Matrix{Float32}}, src::ZarrForcingVar, start::Int, len::Int)
-    nx, ny = size(first(buffers))
-    for k in 1:len
-        global_index = start + k - 1
-        i = searchsortedlast(src.offsets, global_index)
-        local_index = global_index - src.offsets[i] + 1
-        # One chunk per timestep, so this decompresses straight into the cache.
-        Zarr.readblock!(
-            reshape(buffers[k], nx, ny, 1),
-            src.arrays[i],
-            CartesianIndices((1:nx, 1:ny, local_index:local_index)),
-        )
-    end
-    return nothing
-end
-
-"""
-Load the block of timesteps starting at `start` into the host cache.
-"""
-function fill_forcing_cache!(readers::ForcingReaders, start::Int)
+function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
+    start = chunk_start(readers.sources[FORCING_VARS[1]], idx, readers.time_chunk)
     len = min(readers.capacity, length(readers.times) - start + 1)
     for var in FORCING_VARS
         load_block!(readers.cache[var], readers.sources[var], start, len)
@@ -217,7 +246,9 @@ function read_var!(dest, time::DateTime, readers::ForcingReaders, var::String)
     if idx < readers.cache_start || idx > readers.cache_start + readers.cache_len - 1
         fill_forcing_cache!(readers, idx)
     end
-    copyto!(dest, readers.cache[var][idx - readers.cache_start + 1])
+    # Copy by position: AMDGPU.jl can't copy a view in one go and errors on the element-by-element fallback
+    n = length(dest)
+    copyto!(dest, 1, readers.cache[var], (idx - readers.cache_start) * n + 1, n)
     return nothing
 end
 
