@@ -85,6 +85,7 @@ end
 """
 Open the Zarr forcing stores of all years so they can be read as if they were
 one store (see `ZarrForcingVar`). E.g. day 366 of a 1979-1980 run is 1 Jan 1980.
+A path without `{year}` is a single store that holds all years.
 """
 function open_forcing_zarr(cfg::Cfg)
     years = cfg.start_year:cfg.end_year
@@ -94,7 +95,8 @@ function open_forcing_zarr(cfg::Cfg)
 
     for var in FORCING_VARS
         path = getval(cfg.input.paths, "$(var)_file")
-        groups = [zopen(replace(path, "{year}" => string(year))) for year in years]
+        paths = unique(replace(path, "{year}" => string(year)) for year in years)
+        groups = [zopen(p) for p in paths]
 
         arrays = [group[getval(cfg.input.names, var)] for group in groups]
         offsets = Int[]
