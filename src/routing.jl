@@ -41,10 +41,6 @@ function RoutingState(config, elevation)
     println("Initializing Kinematic Wave Routing...")
     println("  -> Source: $param_file")
 
-    if !(isfile(param_file) || (isdir(param_file) && endswith(param_file, ".zarr")))
-        error("Routing parameter file not found: $param_file")
-    end
-
     ds = open_param_source(param_file)
 
     # 1. Load raw data (CPU)
