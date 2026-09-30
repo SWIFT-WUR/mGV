@@ -4,6 +4,7 @@ using Test
 import BasicModelInterface as BMI
 using Statistics: mean
 using mGV
+using Dates
 
 const TYPES = Dict(
     "Float16" => Float16,
@@ -18,6 +19,14 @@ function _zeros(type::String, size::Int)
     return zeros(TYPES[type], size)
 end
 
+function get_value_mean(var_name::String, m::mGV.Model)
+    grid = BMI.get_var_grid(m,var_name)
+    var_type = BMI.get_var_type(m, var_name)
+    dest = _zeros(var_type, BMI.get_grid_size(m, grid))
+    BMI.get_value(m, var_name, dest)
+    return mean(dest)
+end
+
 @testset "BMI tests" begin
     
     tomlpath = "../configs/mekong_config.toml" 
@@ -26,16 +35,16 @@ end
     clock = mGV.Clock(config)
 
     # initialization and time functions
-    @test BMI.get_time_units(model) == "y-m-d-h-m-s-ms"
-    @test BMI.get_time_step(model) == clock.dt
-    @test BMI.get_start_time(model) == clock.time
-    @test BMI.get_current_time(model) == clock.time
-    @test BMI.get_end_time(model) == config.end_year
+    @test BMI.get_time_units(model) == "seconds since 1970-01-01T00:00+00:00"
+    @test BMI.get_time_step(model) == Float64(clock.dt.value)
+    @test BMI.get_start_time(model) == datetime2unix(clock.time)
+    @test BMI.get_current_time(model) == datetime2unix(clock.time)
+    @test BMI.get_end_time(model) == datetime2unix(DateTime(config.end_year, 12, 31))
 
     # "model information functions" begin
-    # @test BMI.get_component_name(model) == "sbm"
-    # @test BMI.get_input_item_count(model) == 7
-    # @test BMI.get_output_item_count(model) == 7
+    @test BMI.get_component_name(model) == "mGV"
+    @test BMI.get_input_item_count(model) == 0
+    @test BMI.get_output_item_count(model) == 9
     # to_check = [
     #     "river_water__volume_flow_rate",
     #     "soil_water_unsaturated_zone__depth",
@@ -65,52 +74,22 @@ end
 
     #Note: at iteration 0 the clock is not advanced in time,
     #to have the model start time at iteration 1.
-    @test BMI.get_current_time(model) == clock.time 
-    # dest = zeros(Float64, length(size(model.soil_parameters.nijssen_nonlin_reservoir)))
-    dest = zeros(Float32, length(model.soil_parameters.nijssen_nonlin_reservoir))
-    var_name = "nijssen_nonlin_reservoir"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.soil_parameters.nijssen_nonlin_reservoir))
+    @test BMI.get_current_time(model) == datetime2unix(clock.time) 
 
-    dest = zeros(Float32, length(model.soil_parameters.nijssen_infilt_b))
-    var_name = "nijssen_infilt_b"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.soil_parameters.nijssen_infilt_b))
-
-    dest = zeros(Float32, length(model.grid_parameters.snow_band_precipitation_factor))
-    var_name = "snow_band_precipitation_factor"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor))
-
-
-
-
-    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_area_fraction)[2:end]))
-    var_name = "snow_band_area_fraction_layer_1"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_area_fraction[1,:,:]))
-
-    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_elevation)[2:end]))
-    var_name = "snow_band_elevation_layer_2"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_elevation[2,:,:]))
-
-    dest = zeros(Float32, prod(size(model.grid_parameters.snow_band_precipitation_factor)[2:end]))
-    var_name = "snow_band_precipitation_factor_layer_3"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.grid_parameters.snow_band_precipitation_factor[3,:,:]))
+    @test isapprox(get_value_mean("nijssen_nonlin_reservoir", model),mean(model.soil_parameters.nijssen_nonlin_reservoir))
+    @test isapprox(get_value_mean("nijssen_infilt_b", model),mean(model.soil_parameters.nijssen_infilt_b))
+    @test isapprox(get_value_mean("snow_band_area_fraction_layer_1", model),mean(model.grid_parameters.snow_band_area_fraction[:,:,1]))
+    @test isapprox(get_value_mean("snow_band_elevation_layer_2", model),mean(model.grid_parameters.snow_band_elevation[:,:, 2]))
+    @test isapprox(get_value_mean("snow_band_precipitation_factor_layer_3", model),mean(model.grid_parameters.snow_band_precipitation_factor[:,:, 3]))
     
-    
-    
-    
-    grid = BMI.get_var_grid(model,"infiltration")
-    var_type = BMI.get_var_type(model, "infiltration")
+    @test isapprox(get_value_mean("infiltration", model),mean(model.soil_variables.infiltration))
+    println("Sizes ", size(model.soil_variables.moisture), size(model.soil_variables.temperature), size(model.soil_variables.ice_fraction))
+    #NaN are causing errors
+    # @test isapprox(get_value_mean("surface_temperature", model),mean(model.surface_energy_variables.surface_temperature))
 
-    dest = _zeros(var_type, BMI.get_grid_size(model, grid))
-    var_name = "infiltration"
-    BMI.get_value(model, var_name, dest)
-    @test isapprox(mean(dest),mean(model.soil_variables.infiltration))
 
+
+    
     # dest = zeros(Float32, length(model.snow_band_precipitation_factor))
     # var_name = "snow_band_precipitation_factor"
     # BMI.get_value(model, var_name, dest)

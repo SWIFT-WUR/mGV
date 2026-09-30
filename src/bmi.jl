@@ -1,5 +1,18 @@
 import BasicModelInterface as BMI
 
+
+const OUTvars = ["evaporation",
+                "infiltration",
+                "surface_runoff",
+                "subsurface_runoff",
+                "total_runoff",
+                "surface_temperature",
+                "total_evapotranspiration",
+                "energy_error",
+                "water_error"]
+
+
+
 function BMI.initialize(::Type{<:Model}, config_file::AbstractString)
     return Model(config_file)
 end
@@ -73,7 +86,7 @@ function BMI.get_input_var_names(model::Model)
 end
 
 function BMI.get_output_var_names(model::Model)
-    return ["infiltration"]
+    return OUTvars
 end
 
 #implement the var names
@@ -110,7 +123,8 @@ end
 
 function BMI.get_var_itemsize(model::Model, name::String)
     value = BMI.get_value_ptr(model, name)
-    return sizeof(eltype(first(value)))
+    # return sizeof(eltype(first(value)))
+    return sizeof(eltype(eltype(value)))
 end
 
 function BMI.get_var_nbytes(model::Model, name::String)
@@ -155,12 +169,8 @@ function BMI.get_value_ptr(model::Model, name::String)
     if occursin(r"_layer_\d",name)
         name_2d, ind = soil_layer_standard_name(name)
         model_vals, _ = get_field_in_model(model, name_2d)
-        # dim = length(first(model_vals))
-        # value = reshape(reinterpret(eltype(eltype(model_vals)), model_vals), dim, :)
-        # dim = length(eltype(model_vals))
-        # value = reshape(reinterpret(eltype(eltype(model_vals)), model_vals), length(eltype(model_vals)), :)
-        value = reshape(reinterpret(eltype(eltype(model_vals)), model_vals), size(model_vals,1), :)
-        return @view value[ind, 1:prod(size(model_vals)[2:end])]
+        # println("Got index ", ind, " 2d name ", name_2d)
+        return @view model_vals[:,:,ind]
     else 
         (; lens) = get_metadata(name; model)
         if isnothing(lens)
@@ -169,8 +179,6 @@ function BMI.get_value_ptr(model::Model, name::String)
             dest = lens(model)
             if ndims(dest)>1
                 dest = vec(dest)
-            # elseif ndims(dest) == 3
-            # elseif ndims(dist) == 4
             end
             n = length(dest)
             return @view(dest[1:n])
@@ -251,7 +259,9 @@ end
 
 function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
     if grid == 0
-        x[:] = model.grid_parameters.longitude
+        # x[:] = model.grid_parameters.longitude
+        copyto!(x,model.grid_parameters.longitude)
+
     else
         error("unknown grid type $grid")
     end
@@ -266,7 +276,8 @@ end
 
 function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
     if grid == 0
-        y[:] = model.grid_parameters.latitude
+        # y[:] = model.grid_parameters.latitude
+        copyto!(y,model.grid_parameters.latitude)
     else
         error("unknown grid type $grid")
     end
