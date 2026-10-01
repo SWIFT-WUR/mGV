@@ -2,13 +2,9 @@ import BasicModelInterface as BMI
 
 
 const OUTvars = ["moisture",
-                "moisture_layer",
                 "temperature",
-                "temperature_layer",
                 "ice_fraction",
-                "ice_fraction_layer",
                 "interlayer_drainage",
-                "interlayer_drainage_layer",
                 "evaporation",
                 "infiltration",
                 "surface_runoff",
@@ -38,6 +34,7 @@ function BMI.update_until(model::Model, time::Float64)
 
 end
 
+# TODO 
 # function BMI.finalize(model::Model)
 #     if !isnothing(model.writer)
 #         write_results(model.writer.io_service, model.clock, process_daily_outputs(model))
@@ -66,38 +63,25 @@ end
 # end
 
 
-# <<<<<< TODO: should return the model name/type
-
+# INPUT, OUTPUT VARIABLE AND MODEL NAME
 function BMI.get_component_name(model::Model)
     return "mGV"
 end
-#number of input features 
 function BMI.get_input_item_count(model::Model)
     return length(BMI.get_input_var_names(model))
 end
-#number of output features
-function BMI.get_output_item_count(model::Model)
-    return length(BMI.get_output_var_names(model))
-end
-
-
 function BMI.get_input_var_names(model::Model)
-    # Gets an array of names for the variables the model can use from other 
-    # models implementing a BMI. The length of the array is given by 
-    # get_input_item_count. The names are preferably in the form of CSDMS 
-    # Standard Names. Standard Names enable a modeling framework to 
-    # determine whether an input variable in one model is equivalent to,
-    # or compatible with, an output variable in another model. This
-    #  allows the framework to automatically connect components. 
-    # Standard Names do not have to be used within the model.
     return Vector{String}()
 end
 
+function BMI.get_output_item_count(model::Model)
+    return length(BMI.get_output_var_names(model))
+end
 function BMI.get_output_var_names(model::Model)
     return OUTvars
 end
 
-#implement the var names
+#VAR GRID, GRID INFO
 function BMI.get_var_grid(model::Model, name::String)
     resLat_min, resLat_max = extrema(diff(model.grid_parameters.latitude))
     resLon_min, resLon_max = extrema(diff(model.grid_parameters.longitude))
@@ -106,127 +90,8 @@ function BMI.get_var_grid(model::Model, name::String)
     else 
         return 1 #Rectilinear
     end
-    # return 2 #Structured quadrilateral
-    # return 3 #Unstructured grid
     return nothing 
 end
-
-function BMI.get_var_type(model::Model, name::String)
-    value = BMI.get_value_ptr(model, name)
-    # return repr(eltype(first(value))) #fails on GPU array
-    return repr(eltype(eltype(value)))
-end
-
-
-
-
-# Need to implement something similar to metadata in Wflow
-function BMI.get_var_units(model::Model, name::String)
-#     (; land) = model
-#     metadata = get_metadata(name, land; model)
-#     return to_string(to_SI(metadata.unit); BMI_standard = true)
-    return nothing
-end
-
-
-function BMI.get_var_itemsize(model::Model, name::String)
-    value = BMI.get_value_ptr(model, name)
-    # return sizeof(eltype(first(value)))
-    return sizeof(eltype(eltype(value)))
-end
-
-function BMI.get_var_nbytes(model::Model, name::String)
-    return sizeof(BMI.get_value_ptr(model, name))
-end
-
-# # Need to implement something similar to metadata in Wflow
-function BMI.get_var_location(model::Model, name::String)
-#     (; lens) = get_metadata(name; model)
-#     element_type = grid_element_type(model, lens)
-#     return element_type
-    return nothing
-end
-
-function BMI.get_current_time(model::Model)
-    return datetime2unix(model.clock.time)
-end
-
-function BMI.get_start_time(model::Model)
-    return datetime2unix(DateTime(model.config.start_year))
-end
-
-function BMI.get_end_time(model::Model)
-    return datetime2unix(DateTime(model.config.end_year, 12, 31))
-end
-
-function BMI.get_time_units(::Model)
-    return "seconds since 1970-01-01T00:00+00:00"
-end
-
-function BMI.get_time_step(model::Model)
-    return Float64(model.config.timestep)
-end
-
-function BMI.get_value(model::Model, name::String, dest)
-    # dest .= copy(BMI.get_value_ptr(model, name)) #messes GPU and CPU array
-    copyto!(dest,copy(BMI.get_value_ptr(model, name)))
-    return dest
-end
-
-function BMI.get_value_ptr(model::Model, name::String)
-    if occursin(r"_layer_\d",name)
-        name_2d, ind = soil_layer_standard_name(name)
-        model_vals, _ = get_field_in_model(model, name_2d)
-        # println("Got index ", ind, " 2d name ", name_2d)
-        return @view model_vals[:,:,ind]
-    else 
-        (; lens) = get_metadata(name; model)
-        if isnothing(lens)
-            error("Accessing '$name' is not supported.")
-        else
-            dest = lens(model)
-            if ndims(dest)>1
-                dest = vec(dest)
-            end
-            n = length(dest)
-            return @view(dest[1:n])
-        end
-    end
-end
-
-function BMI.get_value_at_indices(
-        model::Model,
-        name::String,
-        dest::Vector{Float64},
-        inds::Vector{Int},
-    )
-    dest .= BMI.get_value_ptr(model, name)[inds]
-    return dest
-end
-
-# """
-#     BMI.set_value(model::Model, name::String, src::Vector{Float64})
-
-# Set a model variable `name` to the values in vector `src`, overwriting the current contents.
-# The type and size of `src` must match the model's internal array.
-# """
-# function BMI.set_value(model::Model, name::String, src::Vector{Float64})
-#     return BMI.get_value_ptr(model, name) .= src
-# end
-
-# """
-#     BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src::Vector{Float64})
-
-#     Set a model variable `name` to the values in vector `src`, at indices `inds`.
-# """
-# function BMI.set_value_at_indices(
-#         model::Model,
-#         name::String,
-#         inds::Vector{Int},
-#         src::Vector{Float64},
-#     )
-#     return BMI.get_value_ptr(model, name)[inds] .= src
-# end
 
 function BMI.get_grid_type(model::Model, grid::Int)
     if grid == 0
@@ -296,20 +161,6 @@ function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
     error("No grid z-coordinate")
 end
 
-# function BMI.get_grid_node_count(model::Model, grid::Int)
-#     return length(active_indices(model.domain, GRIDS[grid]))
-# end
-
-function BMI.get_grid_size(model::Model, grid::Int)
-    if grid==0
-        y_size = length(model.grid_parameters.latitude)
-        x_size = length(model.grid_parameters.longitude)
-        return x_size*y_size
-    end
-    error("unknown grid type $grid")
-end
-
-
 # function BMI.get_grid_edge_count(model::Model, grid::Int)
 #     (; domain) = model
 #     if grid == 3
@@ -355,46 +206,17 @@ end
 #     end
 # end
 
-# # Extension of BMI functions (state handling and start time), required for OpenDA coupling.
-# # May also be useful for other external software packages.
-# function load_state(model::Model)
-#     set_states!(model)
-#     return nothing
+# function BMI.get_grid_node_count(model::Model, grid::Int)
+#     return length(active_indices(model.domain, GRIDS[grid]))
 # end
 
-# function save_state(model::Model)
-#     (; endstate_writer) = model.writer
-#     (; output_path, output_dataset) = endstate_writer
-#     if !isnothing(output_path)
-#         @info "Write output states to netCDF file `$output_path`."
-#     end
-#     write_netcdf_timestep(model, endstate_writer)
-#     close(output_dataset)
-#     return nothing
-# end
-
-# function get_start_unix_time(model::Model)
-#     return datetime2unix(model.config.time.starttime)
-# end
-
-# BMI helper functions.
-"""
-Return the standard name `name_layered` representing a layered soil model variable (vector
-of svectors) and the layer index `layer_index` based on a standard `name` representing a
-layer of a layered soil model variable.
-"""
-function soil_layer_standard_name(name::AbstractString)
-    # Parse new naming format: soil_layer_N_water_... where N is the layer number
-    parts = split(name, "_")
-    layer_index = tryparse(Int, parts[end])
-    if !isnothing(layer_index)
-        # Remove the layer number to get the base name
-        name_layered = join(parts[1:end-2], "_") 
-        return name_layered, layer_index
+function BMI.get_grid_size(model::Model, grid::Int)
+    if grid==0
+        y_size = length(model.grid_parameters.latitude)
+        x_size = length(model.grid_parameters.longitude)
+        return x_size*y_size
     end
-    # Fallback for unexpected format
-    @warn "Unable to parse layer standard name: $name"
-    return name, nothing
+    error("unknown grid type $grid")
 end
 
 # """
@@ -433,3 +255,156 @@ end
 #     return element_type
 # end
 
+
+
+
+
+
+#VAR TYPE, UNITS, SIZE, NBYTES AND LOCATION
+function BMI.get_var_type(model::Model, name::String)
+    value = BMI.get_value_ptr(model, name)
+    return repr(eltype(eltype(value)))
+end
+
+# TODO 
+function BMI.get_var_units(model::Model, name::String)
+#     (; land) = model
+#     metadata = get_metadata(name, land; model)
+#     return to_string(to_SI(metadata.unit); BMI_standard = true)
+    return nothing
+end
+
+function BMI.get_var_itemsize(model::Model, name::String)
+    value = BMI.get_value_ptr(model, name)
+    return sizeof(eltype(eltype(value)))
+end
+
+function BMI.get_var_nbytes(model::Model, name::String)
+    return sizeof(BMI.get_value_ptr(model, name))
+end
+
+# TODO 
+function BMI.get_var_location(model::Model, name::String)
+#     (; lens) = get_metadata(name; model)
+#     element_type = grid_element_type(model, lens)
+#     return element_type
+    return nothing
+end
+
+
+#TIME 
+function BMI.get_current_time(model::Model)
+    return datetime2unix(model.clock.time)
+end
+
+function BMI.get_start_time(model::Model)
+    return datetime2unix(DateTime(model.config.start_year))
+end
+
+function BMI.get_end_time(model::Model)
+    return datetime2unix(DateTime(model.config.end_year, 12, 31))
+end
+
+function BMI.get_time_units(::Model)
+    return "seconds since 1970-01-01T00:00+00:00"
+end
+
+function BMI.get_time_step(model::Model)
+    return Float64(model.config.timestep)
+end
+
+
+#GET VALUES
+function BMI.get_value(model::Model, name::String, dest)
+    copyto!(dest,copy(BMI.get_value_ptr(model, name)))
+    return dest
+end
+
+function BMI.get_value_ptr(model::Model, name::String)
+    if occursin(r"_layer_\d",name)
+        name_2d, ind = soil_layer_standard_name(name)
+        model_vals, _ = get_field_in_model(model, name_2d)
+        # println("Got index ", ind, " 2d name ", name_2d)
+        return @view model_vals[:,:,ind]
+    else 
+        (; lens) = get_metadata(name; model)
+        if isnothing(lens)
+            error("Accessing '$name' is not supported.")
+        else
+            dest = lens(model)
+            if ndims(dest)>1
+                dest = vec(dest)
+            end
+            n = length(dest)
+            return @view(dest[1:n])
+        end
+    end
+end
+
+function BMI.get_value_at_indices(
+        model::Model,
+        name::String,
+        dest,
+        inds::Vector{Int},
+    )
+    src = BMI.get_value_ptr(model, name)
+    copyto!(dest, src[inds])
+    return dest
+end
+
+
+#SET VALUES
+"""
+    BMI.set_value(model::Model, name::String, src)
+
+Set a model variable `name` to the values in `src`, overwriting the current contents.
+The type and size of `src` must match the model's internal array.
+"""
+function BMI.set_value(model::Model, name::String, src)
+    if length(src) != length(BMI.get_value_ptr(model, name))
+        error("Length mismatch between model and src varible $name")
+    end
+    return copyto!(BMI.get_value_ptr(model, name),src)
+end
+
+"""
+    BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+
+    Set a model variable `name` to the values in `src`, at indices `inds`.
+"""
+function BMI.set_value_at_indices(
+        model::Model,
+        name::String,
+        inds::Vector{Int},
+        src,
+    )
+    dest = BMI.get_value_ptr(model, name)
+    dest[inds] = src
+    println(typeof(dest))
+    # return copyto!(dest[inds],src)
+    return dest
+end
+
+
+
+
+
+
+# BMI helper functions.
+"""
+Return the standard name representing a layered variable 3D 
+and the layer index `layer_index` based on a standard `name`.
+"""
+function soil_layer_standard_name(name::AbstractString)
+    # Parse new naming format: soil_layer_N_water_... where N is the layer number
+    parts = split(name, "_")
+    layer_index = tryparse(Int, parts[end])
+    if !isnothing(layer_index)
+        # Remove the layer number to get the base name
+        name_layered = join(parts[1:end-2], "_") 
+        return name_layered, layer_index
+    end
+    # Fallback for unexpected format
+    @warn "Unable to parse layer standard name: $name"
+    return name, nothing
+end
