@@ -91,6 +91,9 @@ A path without `{year}` is a single store that holds all years.
 function open_forcing_zarr(cfg::Cfg)
     years = cfg.start_year:cfg.end_year
 
+    # Let Blosc decompress in several threads at once (for `load_all_vars!`)
+    ENV["BLOSC_NOLOCK"] = "1"
+
     sources = Dict{String, ZarrForcingVar}()
     times = DateTime[]
 
@@ -229,11 +232,25 @@ Fill the cache, starting at the beginning of the chunk that holds timestep `idx`
 function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
     start = chunk_start(readers.sources[FORCING_VARS[1]], idx, readers.time_chunk)
     len = min(readers.capacity, length(readers.times) - start + 1)
+    load_all_vars!(readers, start, len)
+    readers.cache_start = start
+    readers.cache_len = len
+    return nothing
+end
+
+"""For NetCDF, read `len` timesteps of all forcing variables into the cache, one by one."""
+function load_all_vars!(readers::ForcingReaders, start::Int, len::Int)
     for var in FORCING_VARS
         load_block!(readers.cache[var], readers.sources[var], start, len)
     end
-    readers.cache_start = start
-    readers.cache_len = len
+    return nothing
+end
+
+"""For Zarr, read all variables at the same time, one task each (needs `julia -t` threads)."""
+function load_all_vars!(readers::ForcingReaders{ZarrForcingVar}, start::Int, len::Int)
+    @sync for var in FORCING_VARS
+        Threads.@spawn load_block!(readers.cache[var], readers.sources[var], start, len)
+    end
     return nothing
 end
 
