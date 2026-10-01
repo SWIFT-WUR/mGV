@@ -1,22 +1,6 @@
 import BasicModelInterface as BMI
 
 
-const OUTvars = ["moisture",
-                "temperature",
-                "ice_fraction",
-                "interlayer_drainage",
-                "evaporation",
-                "infiltration",
-                "surface_runoff",
-                "subsurface_runoff",
-                "total_runoff",
-                "surface_temperature",
-                "total_evapotranspiration",
-                "energy_error",
-                "water_error"]
-
-
-
 function BMI.initialize(::Type{<:Model}, config_file::AbstractString)
     return Model(config_file)
 end
@@ -71,30 +55,44 @@ function BMI.get_input_item_count(model::Model)
     return length(BMI.get_input_var_names(model))
 end
 function BMI.get_input_var_names(model::Model)
-    return Vector{String}()
+    in_vars = model.config.API.input_variables
+    return in_vars
 end
 
 function BMI.get_output_item_count(model::Model)
     return length(BMI.get_output_var_names(model))
 end
 function BMI.get_output_var_names(model::Model)
-    return OUTvars
+    out_vars = model.config.API.output_variables
+    return out_vars
 end
 
 #VAR GRID, GRID INFO
 function BMI.get_var_grid(model::Model, name::String)
     resLat_min, resLat_max = extrema(diff(model.grid_parameters.latitude))
     resLon_min, resLon_max = extrema(diff(model.grid_parameters.longitude))
-    if all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max))
-        return 0 #Uniform rectilinear
-    else 
-        return 1 #Rectilinear
+    if occursin(r"_layer_\d",name)
+        name_2d,  = soil_layer_standard_name(name)
+        name = name_2d
     end
-    return nothing 
+    (; lens) = get_metadata(name; model)
+    size_n = size(lens(model))
+    if (all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max)) && 
+        length(size_n)<=2 )
+        return 0
+    elseif (all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max)) && 
+        length(size_n)<=3 &&
+        size_n[3] != length(model.grid_parameters.vegetation))
+        return 0 #Uniform rectilinear 2d
+    else 
+        return 1 #Rectilinear 3d
+    end
 end
 
 function BMI.get_grid_type(model::Model, grid::Int)
     if grid == 0
+        return "rectilinear"
+    elseif grid == 1
         return "rectilinear"
     else
         error("unknown grid type $grid")
@@ -104,8 +102,8 @@ end
 function BMI.get_grid_rank(model::Model, grid::Int)
     if grid == 0
         return 2
-    else
-        error("unknown grid type $grid")
+    elseif grid == 1
+        return 3
     end
 end
 
@@ -119,9 +117,12 @@ function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
     if grid==0
         shape[1] = length(model.grid_parameters.latitude)
         shape[2] = length(model.grid_parameters.longitude) 
-        return shape
+    elseif grid==1
+        shape[1] = length(model.grid_parameters.latitude)
+        shape[2] = length(model.grid_parameters.longitude) 
+        shape[3] = length(model.grid_parameters.vegetation)
     end
-    error("unknown grid type $grid")
+    return shape
 end
 
 # RemoteBMI uses outdated BasicModelInterface.jl definition;
@@ -134,7 +135,6 @@ function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
     if grid == 0
         # x[:] = model.grid_parameters.longitude
         copyto!(x,model.grid_parameters.longitude)
-
     else
         error("unknown grid type $grid")
     end
@@ -149,7 +149,6 @@ end
 
 function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
     if grid == 0
-        # y[:] = model.grid_parameters.latitude
         copyto!(y,model.grid_parameters.latitude)
     else
         error("unknown grid type $grid")
@@ -157,8 +156,21 @@ function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
     return y
 end
 
-function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
-    error("No grid z-coordinate")
+function BMI.get_grid_z(model::Model, grid::Int)
+    if grid==0
+        error("accessing z-coordinate in 2-rank grid")
+    end
+    z=zeros(Int, BMI.get_grid_shape(model,grid)[3])
+    return BMI.get_grid_z(model, grid, z)
+end
+
+
+function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
+    if grid == 1
+        return copyto!(z,model.grid_parameters.vegetation)
+    else 
+        error("No z-coordindate for grid value $grid")
+    end
 end
 
 # function BMI.get_grid_edge_count(model::Model, grid::Int)
@@ -215,6 +227,11 @@ function BMI.get_grid_size(model::Model, grid::Int)
         y_size = length(model.grid_parameters.latitude)
         x_size = length(model.grid_parameters.longitude)
         return x_size*y_size
+    elseif grid==1
+        y_size = length(model.grid_parameters.latitude)
+        x_size = length(model.grid_parameters.longitude)
+        z_size = length(model.grid_parameters.vegetation)
+        return x_size*y_size*z_size
     end
     error("unknown grid type $grid")
 end
@@ -324,7 +341,6 @@ function BMI.get_value_ptr(model::Model, name::String)
     if occursin(r"_layer_\d",name)
         name_2d, ind = soil_layer_standard_name(name)
         model_vals, _ = get_field_in_model(model, name_2d)
-        # println("Got index ", ind, " 2d name ", name_2d)
         return @view model_vals[:,:,ind]
     else 
         (; lens) = get_metadata(name; model)
@@ -380,8 +396,6 @@ function BMI.set_value_at_indices(
     )
     dest = BMI.get_value_ptr(model, name)
     dest[inds] = src
-    println(typeof(dest))
-    # return copyto!(dest[inds],src)
     return dest
 end
 

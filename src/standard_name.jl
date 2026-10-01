@@ -135,6 +135,15 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         description = "",
         tags = [:soil_variables],    
     ),
+
+    #Canopy variables >2d
+    "canopy_evaporation" => ParameterMetadata(;
+        lens = @optic(_.canopy_variables.canopy_evaporation),
+        unit = Unit(),
+        default = 1.0,
+        description = "",
+        tags = [:canopy_variables],    
+    ),
 )
 
 
