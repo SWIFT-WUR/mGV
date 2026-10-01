@@ -101,12 +101,21 @@ end
     output::OutputCfg
 end
 
+"""
+Check that `path` is a Zarr store: a `.zarr` directory with Zarr metadata at its
+root (`.zgroup` or `.zarray` for Zarr v2, `zarr.json` for v3).
+"""
+function validate_zarr_store(path)
+    isdir(path) && endswith(path, ".zarr") || return false
+    return any(isfile(joinpath(path, name)) for name in (".zgroup", ".zarray", "zarr.json"))
+end
+
 """Validate the path of a file relative to the given directory."""
 function validate_path(file, dir, years)
     file = abspath(joinpath(dir, file))
     for year_file in unique(replace(file, "{year}" => string(year)) for year in years)
-        if !isfile(year_file)
-            error("Cannot find file '$year_file'")
+        if !isfile(year_file) && !validate_zarr_store(year_file)
+            error("Cannot find file or Zarr store '$year_file'")
         end
     end
     return file

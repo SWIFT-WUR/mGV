@@ -1,0 +1,81 @@
+start_year = 1979
+end_year = 1980
+
+nveg = 14
+enable_routing = true
+enable_snow = true
+fillvalue_threshold = 1e15
+
+[output]
+dir         = "../output_data/global/"
+file_prefix = "outputfile_global_"
+format      = "netcdf"
+
+[input]
+[input.paths]
+input_param_file       = "../input_data/global/vic_global_5min_params_combined_f32.zarr"
+coverage_file          = "../input_data/global/vic_global_5min_domain.nc"
+routing_param_file     = "../input_data/global/routing/vic_global_5min_routing_v1.0.0_20260804_f32.zarr"
+
+precipitation_file     = "../input_data/global/forcing/prec/prec_WFDE5_CRU+GPCC_v2.0_5arcmin_f32_{year}.zarr"
+air_temperature_file   = "../input_data/global/forcing/tair/tair_WFDE5_v2.0_5arcmin_f32_{year}.zarr"
+wind_speed_file        = "../input_data/global/forcing/wind/wind_WFDE5_v2.0_5arcmin_f32_{year}.zarr"
+vapor_pressure_file    = "../input_data/global/forcing/vp/vp_WFDE5_v2.0_5arcmin_f32_{year}.zarr"
+shortwave_down_file    = "../input_data/global/forcing/swdown/swdown_WFDE5_v2.0_5arcmin_f32_{year}.zarr"
+longwave_down_file     = "../input_data/global/forcing/lwdown/lwdown_WFDE5_v2.0_5arcmin_f32_{year}.zarr"
+surface_pressure_file  = "../input_data/global/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_f32_{year}.zarr"
+
+[input.names]
+# Grid parameters
+latitude                       = "lat"
+longitude                      = "lon"
+time                           = "time"
+elevation                      = "elev"
+average_temperature            = "avg_T"
+annual_precipitation           = "annual_prec"
+snow_band_area_fraction        = "AreaFract"
+snow_band_elevation            = "elevation"
+snow_band_precipitation_factor = "Pfactor"
+
+# Vegetation (static)
+root_fraction            = "root_fract"
+vegetation_fraction      = "Cv"
+minimum_resistance       = "rmin"
+architectural_resistance = "rarc"
+
+# Vegetation (active monthly values)
+displacement_height = "displacement"
+roughness_length    = "veg_rough"
+lai                 = "LAI"
+albedo              = "albedo"
+canopy_coverage     = "fcanopy"
+
+# Soil
+hydraulic_conductivity             = "Ksat"
+depth                              = "depth"
+initial_moisture                   = "init_moist"
+maximum_moisture                   = "max_moist"
+residual_moisture_fraction         = "resid_moist"
+critical_moisture_fraction         = "Wcr_FRACT"
+field_capacity_fraction            = "Wfc_FRACT"
+wilting_point_fraction             = "Wpwp_FRACT"
+quartz_content                     = "quartz"
+bare_roughness                     = "rough"
+bulk_density                       = "bulk_density"
+particle_density                   = "soil_density"
+campbell_n                         = "expt"
+nijssen_infilt_b                   = "infilt"
+nijssen_lin_reservoir              = "Ds"
+nijssen_nonlin_reservoir           = "Dsmax"
+moisture_depth_baseflow_transition = "Ws"
+column_depth                       = "dp"
+baseflow_curve_exp                 = "c"
+
+# Forcing
+precipitation    = "prec"
+air_temperature  = "tair"
+wind_speed       = "wind"
+vapor_pressure   = "vp"
+shortwave_down   = "swdown"
+longwave_down    = "lwdown"
+surface_pressure = "psurf"
