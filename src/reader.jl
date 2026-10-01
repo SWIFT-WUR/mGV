@@ -263,7 +263,7 @@ function read_var!(dest, time::DateTime, readers::ForcingReaders, var::String)
     if idx < readers.cache_start || idx > readers.cache_start + readers.cache_len - 1
         fill_forcing_cache!(readers, idx)
     end
-    # Copy by position: AMDGPU.jl can't copy a view in one go and errors on the element-by-element fallback
+    # Copy by position: GPU arrays (tested for CUDA, AMDGPU) can't copy a view in one go and error on the element-by-element fallback
     n = length(dest)
     copyto!(dest, 1, readers.cache[var], (idx - readers.cache_start) * n + 1, n)
     return nothing
