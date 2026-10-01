@@ -60,8 +60,10 @@ end
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
-    @test BMI.get_input_item_count(model) == 0
-    @test BMI.get_output_item_count(model) == 13
+    @test BMI.get_grid_shape(model,BMI.get_var_grid(model,"canopy_evaporation")) == [36,36,14]
+    @test BMI.get_input_item_count(model) == length(config.API.input_variables)
+    @test BMI.get_output_item_count(model) == length(config.API.output_variables)
+    @test length(BMI.get_grid_z(model, BMI.get_var_grid(model,"canopy_evaporation"))) == model.config.nveg
     to_check = [
         "infiltration",
         "ice_fraction",
@@ -73,7 +75,8 @@ end
     @test all(x -> x in retrieved_vars, to_check)
 
     #"variable information functions" begin
-    @test BMI.get_var_grid(model, "") == 0
+    @test BMI.get_var_grid(model, "surface_temperature") == 0
+    @test BMI.get_var_grid(model, "canopy_evaporation") == 1
     # @test BMI.get_var_type(model, "reservoir_water__incoming_volume_flow_rate") ==
     #     "Float64"
     # @test BMI.get_var_units(model, "river_water__volume_flow_rate") == "m3 s-1"
