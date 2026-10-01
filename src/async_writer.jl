@@ -4,6 +4,7 @@ struct AsyncBufferService
     free_pool::Channel{TransferBuffer}             # Buffers ready for the GPU to fill
     job_queue::Channel{Tuple{Int, TransferBuffer}} # Buffers full of data, waiting for disk
     writer_task::Task                              # The background thread handle
+    fields::Vector{Symbol}                         # The `Results` fields to transfer and write
 end
 
 """
@@ -11,7 +12,7 @@ Starts the Async service.
 - Allocates `n_buffers` (default 4) to absorb disk latency spikes.
 - Starts the background thread that handles the actual writing.
 """
-function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
+function start_async_service(nx, ny, nlayers, output_store, fields, n_buffers=4)
     # 1. Create Channels with fixed capacity
     free_pool = Channel{TransferBuffer}(n_buffers)
     job_queue = Channel{Tuple{Int, TransferBuffer}}(n_buffers)
@@ -19,7 +20,7 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
     # 2. Allocate (pinned) memory buffers
     println("  -> Allocating $n_buffers pinned buffers for Async Pool...")
     for _ in 1:n_buffers
-        buf = create_transfer_buffer(nx, ny, nlayers)
+        buf = create_transfer_buffer(nx, ny, nlayers, fields)
         put!(free_pool, buf)
     end
 
@@ -46,7 +47,7 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
         println("  -> Async writer FINISHED")
     end
 
-    return AsyncBufferService(free_pool, job_queue, task)
+    return AsyncBufferService(free_pool, job_queue, task, fields)
 end
 
 """

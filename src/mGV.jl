@@ -87,7 +87,8 @@ require.
     forcing_variables::ForcingVariables
     forcing_readers::ForcingReaders
     routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter, Nothing} # writes model output
+    writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
+    output_fields::Vector{Symbol} # the `Results` fields to write, see `selected_outputs`
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers = OutputBuffers(surface_energy_variables.surface_temperature)
 end
@@ -148,7 +149,9 @@ function Model(config_file::AbstractString)
         @views soil_variables.temperature[:, :, layer] .= grid_parameters.average_temperature
     end
 
-    writer = start_io_service(config, grid_parameters, year(clock.time), clock.dt)
+    output_fields = selected_outputs(config)
+    writer = isempty(output_fields) ? nothing :
+        start_io_service(config, grid_parameters, year(clock.time), clock.dt, output_fields)
 
     return Model(
         ;
@@ -165,7 +168,8 @@ function Model(config_file::AbstractString)
         forcing_variables,
         forcing_readers,
         routing,
-        writer
+        writer,
+        output_fields
     )
 end
 
@@ -225,11 +229,9 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process
-    results = process_daily_outputs(model)
-
-    # write away results if data writer is available
+    # post process and write away results if data writer is available
     if !isnothing(model.writer)
+        results = process_daily_outputs(model)
         write_results(model.writer.io_service, model.clock, results)
     end
 
@@ -247,7 +249,8 @@ end
             # otherwise set up new output file
             println("Starting new io service...")
             new_writer = start_io_service(
-                model.config, model.grid_parameters, year(model.clock.time) + 1, model.clock.dt
+                model.config, model.grid_parameters, year(model.clock.time) + 1, model.clock.dt,
+                model.output_fields
             )
             model.writer.io_service = new_writer.io_service
             model.writer.store = new_writer.store

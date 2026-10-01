@@ -1,50 +1,61 @@
 include("async_writer.jl")
 
-function create_transfer_buffer(nx, ny, nlayers)
+"""
+One pool buffer: pinned host memory for the selected `fields`, and a 1-element
+placeholder for the rest, which nothing reads or writes.
+"""
+function create_transfer_buffer(nx, ny, nlayers, fields)
     function make_pinned(dims...)
         A = zeros(Float32, dims...)
         pin_memory!(A)
         return A
     end
 
+    slice(field) = field in fields ? make_pinned(nx, ny) : zeros(Float32, 1, 1)
+    layered(field) = field in fields ? make_pinned(nx, ny, nlayers) : zeros(Float32, 1, 1, 1)
+
     Results(
-        make_pinned(nx, ny),  # tsurf
-        make_pinned(nx, ny),  # tair
-        make_pinned(nx, ny),  # prec
-        make_pinned(nx, ny),  # total_et
-        make_pinned(nx, ny),  # surface_runoff
-        make_pinned(nx, ny),  # total_runoff
-        make_pinned(nx, ny),  # discharge 
-        make_pinned(nx, ny),  # travel_time
-        make_pinned(nx, ny),  # pe_summed
-        make_pinned(nx, ny),  # nr_summed
-        make_pinned(nx, ny),  # tr_summed
-        make_pinned(nx, ny),  # ce_summed
-        make_pinned(nx, ny),  # ws_summed
-        make_pinned(nx, ny),  # swe_summed
-        make_pinned(nx, ny),  # snow_albedo
-        make_pinned(nx, ny),  # snow_surf_temp
-        make_pinned(nx, ny),  # snow_coverage
-        make_pinned(nx, ny),  # snow_melt
-        make_pinned(nx, ny),  # soil_evaporation
-        make_pinned(nx, ny, nlayers)  # soil_moisture
+        slice(:surface_temperature),
+        slice(:air_temperature),
+        slice(:precipitation),
+        slice(:total_evapotranspiration),
+        slice(:surface_runoff),
+        slice(:total_runoff),
+        slice(:discharge),
+        slice(:travel_time),
+        slice(:potential_evaporation),
+        slice(:net_radiation),
+        slice(:transpiration),
+        slice(:canopy_evaporation),
+        slice(:water_storage),
+        slice(:snow_water_equivalent),
+        slice(:snow_albedo),
+        slice(:snow_surface_temperature),
+        slice(:snow_coverage),
+        slice(:snow_melt),
+        slice(:soil_evaporation),
+        layered(:soil_moisture),
     )
 end
 
+# The selected `Results` fields, each with the array it is written to in the
+# output file, in `OUTPUT_VARIABLES` order.
+const OutputArrays = Vector{Pair{Symbol, Any}}
+
 struct ZarrOutputStore
-    data::Results
+    data::OutputArrays
 end
 
 struct NetCDFOutputStore
     ds::NCDataset
-    data::Results
+    data::OutputArrays
 end
 
 close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
 close_output(store::NetCDFOutputStore) = close(store.ds)
 
 
-function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu, fields)
     println("Initializing Zarr store at: $output_path")
     isdir(output_path) && rm(output_path, recursive=true)
     mkdir(output_path)
@@ -88,38 +99,20 @@ function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_
     dim_2d = ["time", "lat", "lon"] 
     dim_3d_layer  = ["layer", "time", "lat", "lon"]
 
-    store = ZarrOutputStore(
-        Results(
-            make_zarr("tsurf_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("tair_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("precipitation_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("total_et_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("surface_runoff_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("total_runoff_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("discharge_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("travel_time_output", (nx, ny, nt), chunk_2d, dim_2d; 
-                    attrs=Dict("units"=>"s", "long_name"=>"River travel time")),
-            make_zarr("potential_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("net_radiation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("transpiration_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("canopy_evaporation_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("water_storage_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("swe_summed_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("snow_albedo_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("snow_surf_temp_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("snow_coverage_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("snow_melt_output", (nx, ny, nt), chunk_2d, dim_2d),
-            
-            # 4D Variables
-            make_zarr("soil_evaporation_output", (nx, ny, nt), chunk_2d, dim_2d),
-            make_zarr("soil_moisture_output", (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer)
-        )
-    )
-    
-    return store, create_transfer_buffer(nx, ny, nlayers)
+    attrs = Dict(:travel_time => Dict("units" => "s", "long_name" => "River travel time"))
+    store = ZarrOutputStore(OutputArrays([
+        field => if field == :soil_moisture
+            make_zarr(output_name(field), (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer)
+        else
+            make_zarr(output_name(field), (nx, ny, nt), chunk_2d, dim_2d; attrs=get(attrs, field, Dict()))
+        end
+        for field in fields
+    ]))
+
+    return store
 end
 
-function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu)
+function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu, fields)
     println("Creating NetCDF output file at: $output_file")
     out_ds = NCDataset(output_file, "c")
     
@@ -140,112 +133,47 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
 
     # Store
-    store = NetCDFOutputStore(
-        out_ds,
-        Results(
-            def_fast_var("tsurf_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("tair_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("precipitation_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("total_et_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("surface_runoff_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("total_runoff_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("discharge_output", ("lon", "lat", "time"); chunks=chunk_2d), 
-            def_fast_var("travel_time_output", ("lon", "lat", "time"); chunks=chunk_2d), 
-            def_fast_var("potential_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("net_radiation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("transpiration_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("canopy_evaporation_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("water_storage_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("swe_summed_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("snow_albedo_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("snow_surf_temp_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("snow_coverage_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("snow_melt_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("soil_evaporation_output", ("lon", "lat", "time"); chunks=chunk_2d),
-            def_fast_var("soil_moisture_output", ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
-        )
-    )
+    store = NetCDFOutputStore(out_ds, OutputArrays([
+        field => if field == :soil_moisture
+            def_fast_var(output_name(field), ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
+        else
+            def_fast_var(output_name(field), ("lon", "lat", "time"); chunks=chunk_2d)
+        end
+        for field in fields
+    ]))
 
-    return store, create_transfer_buffer(nx, ny, nlayers)
+    return store
 end
 
-function async_transfer!(processed_data, buf::TransferBuffer)
-    # Helper to copy from GPU (processed_data fields) to CPU (buffer fields)
+function async_transfer!(processed_data, buf::TransferBuffer, fields)
+    # Copy the selected fields from GPU (processed_data) to CPU (buffer).
     # copyto! detects pinned memory and optimizes automatically on CUDA/AMDGPU
-    dma!(dest, src) = copyto!(dest, src)
+    for field in fields
+        copyto!(getfield(buf, field), getfield(processed_data, field))
+    end
+    return nothing
+end
 
-    dma!(buf.surface_temperature,      processed_data.surface_temperature)
-    dma!(buf.air_temperature,          processed_data.air_temperature)
-    dma!(buf.precipitation,            processed_data.precipitation)
-    dma!(buf.total_evapotranspiration, processed_data.total_evapotranspiration)
-    dma!(buf.surface_runoff,           processed_data.surface_runoff)
-    dma!(buf.total_runoff,             processed_data.total_runoff)
-    dma!(buf.discharge,                processed_data.discharge)
-    dma!(buf.travel_time,              processed_data.travel_time)
-
-    dma!(buf.potential_evaporation,    processed_data.potential_evaporation)
-    dma!(buf.net_radiation,            processed_data.net_radiation)
-    dma!(buf.transpiration,            processed_data.transpiration)
-    dma!(buf.canopy_evaporation,       processed_data.canopy_evaporation)
-    dma!(buf.water_storage,            processed_data.water_storage)
-    dma!(buf.snow_water_equivalent,    processed_data.snow_water_equivalent)
-    dma!(buf.snow_albedo,              processed_data.snow_albedo)
-    dma!(buf.snow_surface_temperature, processed_data.snow_surface_temperature)
-    dma!(buf.snow_coverage,            processed_data.snow_coverage)
-    dma!(buf.snow_melt,                processed_data.snow_melt)
-    
-    dma!(buf.soil_evaporation, processed_data.soil_evaporation)
-    dma!(buf.soil_moisture,    processed_data.soil_moisture)
-
+"""Write one field of `buf` into time slice `time_index` of its output array."""
+function write_field!(array, buf::TransferBuffer, field, time_index)
+    if field == :soil_moisture
+        array[:, :, time_index, :] = buf.soil_moisture
+    else
+        array[:, :, time_index] = getfield(buf, field)
+    end
     return nothing
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
-    Threads.@sync begin
-        Threads.@spawn store.data.surface_temperature[:, :, time_index]      = buf.surface_temperature
-        Threads.@spawn store.data.air_temperature[:, :, time_index]          = buf.air_temperature
-        Threads.@spawn store.data.precipitation[:, :, time_index]            = buf.precipitation
-        Threads.@spawn store.data.total_evapotranspiration[:, :, time_index] = buf.total_evapotranspiration
-        Threads.@spawn store.data.surface_runoff[:, :, time_index]           = buf.surface_runoff
-        Threads.@spawn store.data.total_runoff[:, :, time_index]             = buf.total_runoff
-        Threads.@spawn store.data.discharge[:, :, time_index]                = buf.discharge
-        Threads.@spawn store.data.travel_time[:, :, time_index]              = buf.travel_time
-        Threads.@spawn store.data.potential_evaporation[:, :, time_index]    = buf.potential_evaporation
-        Threads.@spawn store.data.net_radiation[:, :, time_index]            = buf.net_radiation
-        Threads.@spawn store.data.transpiration[:, :, time_index]            = buf.transpiration
-        Threads.@spawn store.data.canopy_evaporation[:, :, time_index]       = buf.canopy_evaporation
-        Threads.@spawn store.data.water_storage[:, :, time_index]            = buf.water_storage
-        Threads.@spawn store.data.snow_water_equivalent[:, :, time_index]    = buf.snow_water_equivalent
-        Threads.@spawn store.data.snow_albedo[:, :, time_index]              = buf.snow_albedo
-        Threads.@spawn store.data.snow_surface_temperature[:, :, time_index] = buf.snow_surface_temperature
-        Threads.@spawn store.data.snow_coverage[:, :, time_index]            = buf.snow_coverage
-        Threads.@spawn store.data.snow_melt[:, :, time_index]                = buf.snow_melt
-        Threads.@spawn store.data.soil_evaporation[:, :, time_index]         = buf.soil_evaporation
-        Threads.@spawn store.data.soil_moisture[:, :, time_index, :]         = buf.soil_moisture
+    Threads.@sync for (field, array) in store.data
+        Threads.@spawn write_field!(array, buf, field, time_index)
     end
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
-    store.data.surface_temperature[:, :, time_index]      = buf.surface_temperature
-    store.data.air_temperature[:, :, time_index]          = buf.air_temperature
-    store.data.precipitation[:, :, time_index]            = buf.precipitation
-    store.data.total_evapotranspiration[:, :, time_index] = buf.total_evapotranspiration
-    store.data.surface_runoff[:, :, time_index]           = buf.surface_runoff
-    store.data.total_runoff[:, :, time_index]             = buf.total_runoff
-    store.data.discharge[:, :, time_index]                = buf.discharge
-    store.data.travel_time[:, :, time_index]              = buf.travel_time
-    store.data.potential_evaporation[:, :, time_index]    = buf.potential_evaporation
-    store.data.net_radiation[:, :, time_index]            = buf.net_radiation
-    store.data.transpiration[:, :, time_index]            = buf.transpiration
-    store.data.canopy_evaporation[:, :, time_index]       = buf.canopy_evaporation
-    store.data.water_storage[:, :, time_index]            = buf.water_storage
-    store.data.snow_water_equivalent[:, :, time_index]    = buf.snow_water_equivalent
-    store.data.snow_albedo[:, :, time_index]              = buf.snow_albedo
-    store.data.snow_surface_temperature[:, :, time_index] = buf.snow_surface_temperature
-    store.data.snow_coverage[:, :, time_index]            = buf.snow_coverage
-    store.data.snow_melt[:, :, time_index]                = buf.snow_melt
-    store.data.soil_evaporation[:, :, time_index]         = buf.soil_evaporation
-    store.data.soil_moisture[:, :, time_index, :]         = buf.soil_moisture
+    for (field, array) in store.data
+        write_field!(array, buf, field, time_index)
+    end
 end
 
 mutable struct OutputWriter
@@ -257,7 +185,8 @@ function start_io_service(
     config::Cfg,
     grid_parameters::GridParameters,
     year,
-    dt
+    dt,
+    fields
 )
     nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
 
@@ -270,15 +199,15 @@ function start_io_service(
     if lowercase(config.output.format) == "netcdf"
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).nc")
         # Create a buffer pool 
-        output_store, _ = create_output_netcdf(output_path, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude)
+        output_store = create_output_netcdf(output_path, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, fields)
     else
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).zarr")
-        output_store, _ = create_output_zarr(output_path, year, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude)
+        output_store = create_output_zarr(output_path, year, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, fields)
     end
 
     # Start the async pool 
     println("Starting Async I/O Service...")
-    io_service = start_async_service(nx, ny, nlayers, output_store, 6)
+    io_service = start_async_service(nx, ny, nlayers, output_store, fields, 6)
     return OutputWriter(io_service, output_store)
 end
 
@@ -291,7 +220,7 @@ function write_results(io_service::AsyncBufferService, clock, results::Results)
     current_buf = get_free_buffer(io_service)
 
     # Transfer GPU -> CPU (RAM copy)
-    async_transfer!(results, current_buf)
+    async_transfer!(results, current_buf, io_service.fields)
 
     # Hand off to background thread and continue simulation immediately.
     submit_buffer(io_service, time_index, current_buf)

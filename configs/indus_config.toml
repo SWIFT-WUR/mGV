@@ -8,6 +8,9 @@ nveg = 22
 dir         = "../output_data/indus/"
 file_prefix = "outputfile_indus_"
 format      = "netcdf"
+# Which variables to write, by their names in the output file. Leave out to
+# write all of them; `variables = []` writes nothing.
+# variables = ["discharge_output", "total_runoff_output"]
 
 [input]
 [input.paths]

@@ -10,6 +10,9 @@ fillvalue_threshold = 1e15
 dir         = "../output_data/global/"
 file_prefix = "outputfile_global_"
 format      = "netcdf"
+# Which variables to write, by their names in the output file. Leave out to
+# write all of them; `variables = []` writes nothing.
+# variables = ["discharge_output", "total_runoff_output"]
 
 [input]
 [input.paths]
