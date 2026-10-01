@@ -24,3 +24,23 @@ longwave_down_file    = "../input_data/mekong/forcing/lwdown/lwdown_WFDE5_v2.0_5
 surface_pressure_file = "../input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_{year}.nc"
 
 [input.names]
+
+
+[API]
+input_variables = []
+
+output_variables = [
+    "moisture",
+    "temperature",
+    "ice_fraction",
+    "interlayer_drainage",
+    "evaporation",
+    "infiltration",
+    "surface_runoff",
+    "subsurface_runoff",
+    "total_runoff",
+    "surface_temperature",
+    "total_evapotranspiration",
+    "energy_error",
+    "water_error"
+]
