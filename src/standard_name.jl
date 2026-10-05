@@ -8,7 +8,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 1,
+        gridtype = 3,
         tags = [:surface_energy_variables],    
     ),
     "potential_evaporation" => ParameterMetadata(;
@@ -16,7 +16,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 1,
+        gridtype = 3,
         tags = [:surface_energy_variables],    
     ),
     "soil_potential_evaporation" => ParameterMetadata(;
@@ -24,7 +24,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 1,
+        gridtype = 3,
         tags = [:surface_energy_variables],    
     ),
     "aerodynamic_resistance" => ParameterMetadata(;
@@ -32,7 +32,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 1,
+        gridtype = 3,
         tags = [:surface_energy_variables],    
     ),
 
@@ -76,7 +76,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 0,
+        gridtype = 1,
         tags = [:soil_variables],    
     ),
     "temperature" => ParameterMetadata(;
@@ -84,7 +84,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 0,
+        gridtype = 1,
         tags = [:soil_variables],    
     ),
     "ice_fraction" => ParameterMetadata(;
@@ -92,7 +92,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 0,
+        gridtype = 1,
         tags = [:soil_variables],    
     ),
     "interlayer_drainage" => ParameterMetadata(;
@@ -100,7 +100,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 0,
+        gridtype = 2,
         tags = [:soil_variables],    
     ),
     "thermal_conductivity" => ParameterMetadata(;
@@ -108,7 +108,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 0,
+        gridtype = 1,
         tags = [:soil_variables],    
     ),
 
@@ -160,7 +160,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         default = 1.0,
         description = "",
-        gridtype = 1,
+        gridtype = 3,
         tags = [:canopy_variables],    
     ),
 )

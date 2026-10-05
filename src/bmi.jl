@@ -4,7 +4,9 @@ import BasicModelInterface as BMI
 # the active indices of the model domain as in Wflow, active_indices(network, key::AbstractString).
 const GRIDS = Dict{Int, String}(
     0 => "2D_rectilinear_rank2",
-    1 => "3D_rectilinear_rank3",
+    1 => "2D_rectilinear_rank2_soil_layers",
+    2 => "2D_rectilinear_rank2_intra_soil_layers",
+    3 => "3D_rectilinear_rank3_veg_snowbands",
 )
 
 
@@ -83,27 +85,6 @@ function BMI.get_output_var_names(model::Model)
 end
 
 #VAR GRID, GRID INFO
-#(over-egineered OLD version)
-# function BMI.get_var_grid(model::Model, name::String)
-#     resLat_min, resLat_max = extrema(diff(model.grid_parameters.latitude))
-#     resLon_min, resLon_max = extrema(diff(model.grid_parameters.longitude))
-#     if occursin(r"_layer_\d",name)
-#         name_2d,  = soil_layer_standard_name(name)
-#         name = name_2d
-#     end
-#     (; lens) = get_metadata(name; model)
-#     size_n = size(lens(model))
-#     if (all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max)) && 
-#         length(size_n)<=2 )
-#         return 0
-#     elseif (all(isapprox.(resLat_min, resLat_max)) && all(isapprox.(resLon_min, resLon_max)) && 
-#         length(size_n)<=3 &&
-#         size_n[3] != length(model.grid_parameters.vegetation))
-#         return 0 #Rectilinear 2d
-#     else 
-#         return 1 #Rectilinear 3d
-#     end
-# end
 function BMI.get_var_grid(model::Model, name::String)
     if occursin(r"_layer_\d",name)
         name_2d,  = soil_layer_standard_name(name)
@@ -121,18 +102,22 @@ end
 
 function BMI.get_grid_type(model::Model, grid::Int)
     if grid == 0
-        return "rectilinear" #2D variables
+        return "rectilinear" #2D variables (lat,long)
     elseif grid == 1
-        return "rectilinear" #3D variables
+        return "rectilinear" #2D variables (lat,long) x soil_layers
+    elseif grid == 2
+        return "rectilinear" #3D variables (lat,long) x (nbsoil_layers-1)
+    elseif grid == 3
+        return "rectilinear" #3D variables (lat,long,nveg) x nbands
     else
         error("unknown grid type $grid")
     end
 end
 
 function BMI.get_grid_rank(model::Model, grid::Int)
-    if grid == 0
+    if grid == 0 || grid ==1 || grid == 2
         return 2
-    elseif grid == 1
+    elseif grid == 3
         return 3
     end
 end
@@ -145,18 +130,16 @@ indexing (as opposed to “xy”). For example, consider a two-dimensional recti
 columns (nx = 4) and three rows (ny = 3). The get_grid_shape function would return a shape of [ny, nx],
 or [3,4]. If there were a third dimension, the length of the z-dimension, nz, would be listed first.
 """
-
-# RemoteBMI uses outdated BasicModelInterface.jl definition;
 function BMI.get_grid_shape(model::Model, grid::Int)
     shape = zeros(Int, BMI.get_grid_rank(model, grid))
     return BMI.get_grid_shape(model, grid, shape)
 end
 
 function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
-    if grid==0
+    if grid == 0 || grid == 1 || grid == 2
         shape[1] = length(model.grid_parameters.latitude)
         shape[2] = length(model.grid_parameters.longitude) 
-    elseif grid==1
+    elseif grid == 3
         shape[1] = length(model.grid_parameters.vegetation)
         shape[2] = length(model.grid_parameters.latitude)
         shape[3] = length(model.grid_parameters.longitude) 
@@ -195,7 +178,7 @@ function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
 end
 
 function BMI.get_grid_z(model::Model, grid::Int)
-    if grid==0
+    if grid == 0 || grid == 1 || grid == 2
         error("accessing z-coordinate in 2-rank grid")
     end
     z=zeros(Int, BMI.get_grid_shape(model,grid)[1])
@@ -204,112 +187,28 @@ end
 
 
 function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
-    if grid == 1
+    if grid == 3
         return copyto!(z,model.grid_parameters.vegetation)
     else 
-        error("No z-coordindate for grid value $grid")
+        error("No z-coordinadate for grid value $grid")
     end
 end
 
-# function BMI.get_grid_edge_count(model::Model, grid::Int)
-#     (; domain) = model
-#     if grid == 3
-#         return ne(domain.river.network.graph)
-#     elseif grid == 4
-#         return length(domain.land.network.edge_indices.ind_x_up)
-#     elseif grid == 5
-#         return length(domain.land.network.edge_indices.ind_y_up)
-#     elseif grid in 0:2 || grid == 6
-#         @warn("edges are not provided for grid type $grid (variables are located at nodes)")
-#     else
-#         error("unknown grid type $grid")
-#     end
-# end
-
-# function BMI.get_grid_edge_nodes(model::Model, grid::Int, edge_nodes::Vector{Int})
-#     (; domain) = model
-#     n = length(edge_nodes)
-#     m = div(n, 2)
-#     # inactive nodes (boundary/ghost points) are set at -999
-#     if grid == 3
-#         nodes_at_edge = adjacent_nodes_at_edge(domain.river.network.graph)
-#         nodes_at_edge.dst[nodes_at_edge.dst .== m + 1] .= -999
-#         edge_nodes[range(1, n; step = 2)] = nodes_at_edge.src
-#         edge_nodes[range(2, n; step = 2)] = nodes_at_edge.dst
-#         return edge_nodes
-#     elseif grid == 4
-#         ind_x_up = domain.land.network.edge_indices.ind_x_up
-#         edge_nodes[range(1, n; step = 2)] = 1:m
-#         ind_x_up[ind_x_up .== m + 1] .= -999
-#         edge_nodes[range(2, n; step = 2)] = ind_x_up
-#         return edge_nodes
-#     elseif grid == 5
-#         ind_y_up = domain.land.network.edge_indices.ind_y_up
-#         edge_nodes[range(1, n; step = 2)] = 1:m
-#         ind_y_up[ind_y_up .== m + 1] .= -999
-#         edge_nodes[range(2, n; step = 2)] = ind_y_up
-#         return edge_nodes
-#     elseif grid in 0:2 || grid == 6
-#         @warn("edges are not provided for grid type $grid (variables are located at nodes)")
-#     else
-#         error("unknown grid type $grid")
-#     end
-# end
-
-# function BMI.get_grid_node_count(model::Model, grid::Int)
-#     return length(active_indices(model.domain, GRIDS[grid]))
-# end
-
 function BMI.get_grid_size(model::Model, grid::Int)
-    if grid==0
-        y_size = length(model.grid_parameters.latitude)
-        x_size = length(model.grid_parameters.longitude)
+    y_size = length(model.grid_parameters.latitude)
+    x_size = length(model.grid_parameters.longitude)
+    if grid == 0         
         return x_size*y_size
-    elseif grid==1
-        y_size = length(model.grid_parameters.latitude)
-        x_size = length(model.grid_parameters.longitude)
+    elseif grid == 1
+        return x_size*y_size*size(model.soil_parameters.depth,3)
+    elseif grid == 2
+        return Int(x_size*y_size*(size(model.soil_parameters.depth,3)-1))
+    elseif grid == 3
         z_size = length(model.grid_parameters.vegetation)
-        return x_size*y_size*z_size
+        return x_size*y_size*z_size*model.config.nbands
     end
     error("unknown grid type $grid")
 end
-
-# """
-#     grid_element_type(model, lens::ComposedFunction)
-#     grid_element_type(::T, var::PropertyLens)
-#     grid_element_type(model, var::PropertyLens)
-
-# Return the grid element type of a model variable (PropertyLens `var`) based on a `lens`. A
-# `lens` allows access to a nested model variable.
-# """
-# function grid_element_type(
-#         ::T,
-#         var::PropertyLens,
-#     ) where {T <: Union{RiverFlowModel{<:LocalInertial}, OverlandFlowModel{<:LocalInertial}}}
-#     vars = (PropertyLens(x) for x in (:q, :q_average, :qx, :qy))
-#     element_type = if var in vars
-#         "edge"
-#     else
-#         "node"
-#     end
-#     return element_type
-# end
-
-# grid_element_type(model, var::PropertyLens) = "node"
-
-# function grid_element_type(model::Model, lens::ComposedFunction)
-#     lens_components = decompose(lens)
-#     var = lens_components[1]
-#     element_type = if PropertyLens(:river_flow) in lens_components
-#         grid_element_type(model.routing.river_flow, var)
-#     elseif PropertyLens(:overland_flow) in lens_components
-#         grid_element_type(model.routing.overland_flow, var)
-#     else
-#         grid_element_type(model, var)
-#     end
-#     return element_type
-# end
-
 
 
 
@@ -415,8 +314,10 @@ Set a model variable `name` to the values in `src`, overwriting the current cont
 The type and size of `src` must match the model's internal array.
 """
 function BMI.set_value(model::Model, name::String, src)
-    if length(src) != length(BMI.get_value_ptr(model, name))
-        error("Length mismatch between model and src varible $name")
+    l_src = length(src)
+    l_model = length(BMI.get_value_ptr(model, name))
+    if l_src != l_model
+        error("Length mismatch between model $(l_model) and src $(l_src) varible $name")
     end
     return copyto!(BMI.get_value_ptr(model, name),src)
 end
