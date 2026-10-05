@@ -30,17 +30,23 @@ surface_pressure_file = "../input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5ar
 input_variables = []
 
 output_variables = [
+    "net_radiation",
+    "potential_evaporation",
+    "soil_potential_evaporation",
+    "aerodynamic_resistance",
+    "surface_temperature",
+    "total_evapotranspiration",
+    "energy_error",
+    "water_error",
     "moisture",
     "temperature",
     "ice_fraction",
     "interlayer_drainage",
+    "thermal_conductivity",
     "evaporation",
     "infiltration",
     "surface_runoff",
     "subsurface_runoff",
     "total_runoff",
-    "surface_temperature",
-    "total_evapotranspiration",
-    "energy_error",
-    "water_error"
+    "canopy_evaporation"
 ]

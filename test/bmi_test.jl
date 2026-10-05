@@ -60,7 +60,7 @@ end
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
-    @test BMI.get_grid_shape(model,BMI.get_var_grid(model,"canopy_evaporation")) == [36,36,14]
+    @test BMI.get_grid_shape(model,BMI.get_var_grid(model,"canopy_evaporation")) == [14,36,36]
     @test BMI.get_input_item_count(model) == length(config.API.input_variables)
     @test BMI.get_output_item_count(model) == length(config.API.output_variables)
     @test length(BMI.get_grid_z(model, BMI.get_var_grid(model,"canopy_evaporation"))) == model.config.nveg

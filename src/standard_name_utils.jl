@@ -151,6 +151,7 @@ Metadata associated with parameters and variables.
 - `allow_missing`: Whether the parameter/variable is allowed to have missing entries
 - `allow_dynamic_input`: Allow updating this parameter from input via cyclic/forcing
 - `dimname`: The name of the third dimension of the parameter/variable if it exists
+- 'gridtype': The grid type of the paremeter/variable if it exists
 - `tags`: Identifiers to filter parameters/variables for specific tables in the docs
 """
 @kwdef struct ParameterMetadata{
@@ -169,6 +170,7 @@ Metadata associated with parameters and variables.
     allow_missing::Bool = false
     allow_dynamic_input::Bool = false
     dimname::N = nothing
+    gridtype::Int = 0
     tags::Vector{Symbol} = []
     function ParameterMetadata(
             lens::L,
@@ -180,6 +182,7 @@ Metadata associated with parameters and variables.
             allow_missing,
             allow_dynamic_input,
             dimname::N,
+            gridtype,
             flags,
         ) where {L, D, F, N}
         if isnothing(type)
@@ -203,6 +206,7 @@ Metadata associated with parameters and variables.
             allow_missing,
             allow_dynamic_input,
             dimname,
+            gridtype,
             flags,
         )
     end
