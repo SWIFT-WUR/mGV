@@ -171,6 +171,8 @@ Metadata associated with parameters and variables.
     allow_dynamic_input::Bool = false
     dimname::N = nothing
     gridtype::Int = 0
+    input::Bool = false
+    output::Bool = false
     tags::Vector{Symbol} = []
     function ParameterMetadata(
             lens::L,
@@ -183,6 +185,8 @@ Metadata associated with parameters and variables.
             allow_dynamic_input,
             dimname::N,
             gridtype,
+            input,
+            output,
             flags,
         ) where {L, D, F, N}
         if isnothing(type)
@@ -207,6 +211,8 @@ Metadata associated with parameters and variables.
             allow_dynamic_input,
             dimname,
             gridtype,
+            input, 
+            output,
             flags,
         )
     end

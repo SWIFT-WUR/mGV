@@ -87,7 +87,7 @@ end
 end
 
 @option "API" struct APISection
-    input_variables::Vector{String} = []
+    variables::Vector{String} = []
     output_variables::Vector{String} = []
 end
 

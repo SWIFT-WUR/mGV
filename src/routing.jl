@@ -12,15 +12,15 @@ struct RoutingState{F <: AbstractVector, I <:AbstractVector}
     downstream_idx::I
 
     # Static parameters (geometry)
-    length::F
+    length::F #<-
     slope::F
     width::F
-    cell_area::F
+    cell_area::F #<-
     accumulation::F
     alpha::F  # Manning coefficient sqrt(slope) / n * width^(-2/3), Q = alpha * A^(5/3)
 
     # --- State ---
-    area::F
+    area::F #<-
     discharge::F
     travel_time::F
 

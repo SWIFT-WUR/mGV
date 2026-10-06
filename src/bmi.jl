@@ -1,16 +1,5 @@
 import BasicModelInterface as BMI
 
-# Mapping of grid identifier to a key, to get some context and later on to retrieve 
-# the active indices of the model domain as in Wflow, active_indices(network, key::AbstractString).
-const GRIDS = Dict{Int, String}(
-    0 => "2D_rectilinear_rank2",
-    1 => "2D_rectilinear_rank2_soil_layers",
-    2 => "2D_rectilinear_rank2_intra_soil_layers",
-    3 => "3D_rectilinear_rank3_veg_snowbands",
-)
-
-
-
 """
     BMI.initialize(::Type{<:Model}, config_file::AbstractString)
 
@@ -36,32 +25,23 @@ function BMI.update_until(model::Model, time::Float64)
 end
 
 # TODO 
-# function BMI.finalize(model::Model)
-#     if !isnothing(model.writer)
-#         write_results(model.writer.io_service, model.clock, process_daily_outputs(model))
-#     end
-
-#     # next time step will be new year; close file output
-#     if !isnothing(model.writer) && year(model.clock.time + model.clock.dt) > year(model.clock.time)
-#         # close output
-#         stop_async_service(model.writer.io_service)
-#         close_output(model.writer.store)
-
-#         if year(model.clock.time) == model.config.end_year
-#             # if model has reached end time step set writer to nothing
-#             @set model.writer = nothing
-    
-#         else
-#             # otherwise set up new output file
-#             println("Starting new io service...")
-#             new_writer = start_io_service(
-#                 model.config, model.grid_parameters, year(model.clock.time) + 1, model.clock.dt
-#             )
-#             model.writer.io_service = new_writer.io_service
-#             model.writer.store = new_writer.store
-#         end
+function BMI.finalize(model::Model)
+#     if !isnothing(model)
+#         model.writer = nothing
+#         model.forcing_readers = nothing
+#         GC()
+#         sleep(2)
 #     end
 # end
+
+    if !isnothing(model.writer)
+        # close output
+        stop_async_service(model.writer.io_service)
+        close_output(model.writer.store)
+        @set model.writer = nothing
+    end
+    return nothing
+end
 
 
 # INPUT, OUTPUT VARIABLE AND MODEL NAME
@@ -72,22 +52,47 @@ function BMI.get_input_item_count(model::Model)
     return length(BMI.get_input_var_names(model))
 end
 function BMI.get_input_var_names(model::Model)
-    in_vars = model.config.API.input_variables
-    return in_vars
+    in_vars = model.config.API.variables
+    in_names = String[]
+    for var in in_vars
+        metadata = get_metadata(var,model)
+        if !isnothing(metadata)
+            if metadata.gridtype == 0
+                push!(in_names,var)
+            elseif metadata.gridtype == 1
+                for j in 1:size(model.soil_parameters.depth,3)
+                    push!(in_names, var*"_layer_$j")
+                end
+            elseif metadata.gridtype == 2
+                for j in 1:size(model.soil_parameters.depth,3)-1
+                    push!(in_names, var*"_layer_$j")
+                end
+            elseif metadata.gridtype == 3
+                for j in 1:model.config.nbands
+                    push!(in_names, var*"_band_$j")
+                end
+            end
+        else
+            @warn("$var is not listed as variable for BMI exchange and removed from list")
+        end
+    end
+    return in_names
 end
 
 function BMI.get_output_item_count(model::Model)
     return length(BMI.get_output_var_names(model))
 end
 function BMI.get_output_var_names(model::Model)
-    out_vars = model.config.API.output_variables
-    return out_vars
+    return BMI.get_input_var_names(model)
 end
 
 #VAR GRID, GRID INFO
 function BMI.get_var_grid(model::Model, name::String)
     if occursin(r"_layer_\d",name)
         name_2d,  = soil_layer_standard_name(name)
+        name = name_2d
+    elseif occursin(r"_band_\d",name)
+        name_2d, = snow_band_standard_name(name)
         name = name_2d
     end
     metadata = get_metadata(name, model)
@@ -97,7 +102,6 @@ function BMI.get_var_grid(model::Model, name::String)
         error("No grid type specification for $name")
     end
 end
-
 
 
 function BMI.get_grid_type(model::Model, grid::Int)
@@ -142,7 +146,7 @@ function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
     elseif grid == 3
         shape[1] = length(model.grid_parameters.vegetation)
         shape[2] = length(model.grid_parameters.latitude)
-        shape[3] = length(model.grid_parameters.longitude) 
+        shape[3] = length(model.grid_parameters.longitude)
     end
     return shape
 end
@@ -197,16 +201,20 @@ end
 function BMI.get_grid_size(model::Model, grid::Int)
     y_size = length(model.grid_parameters.latitude)
     x_size = length(model.grid_parameters.longitude)
-    if grid == 0         
+    if grid != 3         
         return x_size*y_size
-    elseif grid == 1
-        return x_size*y_size*size(model.soil_parameters.depth,3)
-    elseif grid == 2
-        return Int(x_size*y_size*(size(model.soil_parameters.depth,3)-1))
-    elseif grid == 3
+    else 
         z_size = length(model.grid_parameters.vegetation)
-        return x_size*y_size*z_size*model.config.nbands
+        return x_size*y_size*z_size
     end
+    # elseif grid == 1
+    #     return x_size*y_size*size(model.soil_parameters.depth,3)
+    # elseif grid == 2
+    #     return Int(x_size*y_size*(size(model.soil_parameters.depth,3)-1))
+    # elseif grid == 3
+    #     z_size = length(model.grid_parameters.vegetation)
+    #     return x_size*y_size*z_size*model.config.nbands
+    # end
     error("unknown grid type $grid")
 end
 
@@ -277,8 +285,20 @@ end
 function BMI.get_value_ptr(model::Model, name::String)
     if occursin(r"_layer_\d",name)
         name_2d, ind = soil_layer_standard_name(name)
-        model_vals, _ = get_field_in_model(model, name_2d)
-        return @view model_vals[:,:,ind]
+        model_vals, (;gridtype) = get_field_in_model(model, name_2d)
+        if gridtype != 3
+            return @view model_vals[:,:,ind]
+        else 
+            return @view model_vals[:,:,ind,:]
+        end
+    elseif occursin(r"_band_\d",name)
+        name_2d, ind = snow_band_standard_name(name)
+        model_vals, (;gridtype) = get_field_in_model(model, name_2d)
+        if gridtype != 3
+            return @view model_vals[:,:,ind]
+        else 
+            return @view model_vals[:,:,ind,:]
+        end
     else 
         (; lens) = get_metadata(name; model)
         if isnothing(lens)
@@ -315,11 +335,14 @@ The type and size of `src` must match the model's internal array.
 """
 function BMI.set_value(model::Model, name::String, src)
     l_src = length(src)
-    l_model = length(BMI.get_value_ptr(model, name))
+    mod_var = BMI.get_value_ptr(model, name)
+    l_model = length(mod_var)
     if l_src != l_model
-        error("Length mismatch between model $(l_model) and src $(l_src) varible $name")
+        error("Length mismatch between model $(l_model) and src $(l_src) variable $name\n 
+        Probably you're trying to access a variable without specifying a given layer \n
+        Ratio between lenghts $(l_model/l_src)")
     end
-    return copyto!(BMI.get_value_ptr(model, name),src)
+    return copyto!(mod_var,src)
 end
 
 """
@@ -356,6 +379,20 @@ function soil_layer_standard_name(name::AbstractString)
         # Remove the layer number to get the base name
         name_layered = join(parts[1:end-2], "_") 
         return name_layered, layer_index
+    end
+    # Fallback for unexpected format
+    @warn "Unable to parse layer standard name: $name"
+    return name, nothing
+end
+
+function snow_band_standard_name(name::AbstractString)
+    # Parse new naming format: snow_band_N where N is the layer number
+    parts = split(name, "_")
+    band_index = tryparse(Int, parts[end])
+    if !isnothing(band_index)
+        # Remove the layer number to get the base name
+        name_without_band = join(parts[1:end-2], "_") 
+        return name_without_band, band_index
     end
     # Fallback for unexpected format
     @warn "Unable to parse layer standard name: $name"
