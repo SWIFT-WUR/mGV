@@ -1,0 +1,6 @@
+[deps]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+mGV = "b1af0ff3-f930-4051-bc19-f789759b7f7a"
+
+[sources]
+mGV = {path = ".."}
