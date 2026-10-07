@@ -102,8 +102,10 @@ end
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
     @test BMI.get_grid_shape(model,BMI.get_var_grid(model,"canopy_evaporation")) == [14,36,36]
-    @test BMI.get_input_item_count(model) >= length(config.API.variables)
-    @test BMI.get_output_item_count(model) >= length(config.API.variables)
+    n_inputs = count(meta -> meta.input, values(mGV.standard_name_map))
+    n_outputs = count(meta -> meta.output, values(mGV.standard_name_map))
+    @test BMI.get_input_item_count(model) >= n_inputs
+    @test BMI.get_output_item_count(model) >= n_outputs
     @test length(BMI.get_grid_z(model, BMI.get_var_grid(model,"canopy_evaporation"))) == model.config.nveg
 
     # for name in in_vars 

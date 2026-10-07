@@ -52,28 +52,38 @@ function BMI.get_input_item_count(model::Model)
     return length(BMI.get_input_var_names(model))
 end
 function BMI.get_input_var_names(model::Model)
+
     in_vars = model.config.API.variables
+    standard_map = get_standard_name_map()
     in_names = String[]
-    for var in in_vars
+
+    filtered = filter(name -> haskey(standard_map, name), in_vars)
+    no_match = filter(name -> !haskey(standard_map, name), in_vars)
+    for var in no_match 
+        @warn("$var is not listed as variable for BMI exchange and removed from input list") 
+    end
+    filter!(name -> standard_map[name].input, filtered)
+    if isempty(filtered)
+        return []
+    end
+        
+    for var in filtered
         metadata = get_metadata(var,model)
-        if !isnothing(metadata)
-            if metadata.gridtype == 0
-                push!(in_names,var)
-            elseif metadata.gridtype == 1
-                for j in 1:size(model.soil_parameters.depth,3)
-                    push!(in_names, var*"_layer_$j")
-                end
-            elseif metadata.gridtype == 2
-                for j in 1:size(model.soil_parameters.depth,3)-1
-                    push!(in_names, var*"_layer_$j")
-                end
-            elseif metadata.gridtype == 3
-                for j in 1:model.config.nbands
-                    push!(in_names, var*"_band_$j")
-                end
+        if :soil_variables_layer in metadata.tags
+            for j in 1:size(model.soil_parameters.depth,3)
+                push!(in_names, var*"_layer_$j")
+            end
+        elseif :soil_variables_interlayer in metadata.tags
+            for j in 1:(size(model.soil_parameters.depth,3)-1)
+                push!(in_names, var*"_layer_$j")
+            end
+        elseif (:surface_energy_variables_band in metadata.tags ||
+                :canopy_variables_band in metadata.tags)
+            for j in 1:model.config.nbands
+                push!(in_names, var*"_band_$j")
             end
         else
-            @warn("$var is not listed as variable for BMI exchange and removed from list")
+            push!(in_names,var)
         end
     end
     return in_names
@@ -83,7 +93,40 @@ function BMI.get_output_item_count(model::Model)
     return length(BMI.get_output_var_names(model))
 end
 function BMI.get_output_var_names(model::Model)
-    return BMI.get_input_var_names(model)
+    out_vars = model.config.API.variables
+    standard_map = get_standard_name_map()
+    out_names = String[]
+
+    filtered = filter(name -> haskey(standard_map, name), out_vars)
+    no_match = filter(name -> !haskey(standard_map, name), out_vars)
+    for var in no_match 
+        @warn("$var is not listed as variable for BMI exchange and removed from output list") 
+    end
+    filter!(name -> standard_map[name].output, filtered)
+    if isempty(filtered)
+        return []
+    end
+        
+    for var in filtered
+        metadata = get_metadata(var,model)
+        if :soil_variables_layer in metadata.tags
+            for j in 1:size(model.soil_parameters.depth,3)
+                push!(out_names, var*"_layer_$j")
+            end
+        elseif :soil_variables_interlayer in metadata.tags
+            for j in 1:(size(model.soil_parameters.depth,3)-1)
+                push!(out_names, var*"_layer_$j")
+            end
+        elseif (:surface_energy_variables_band in metadata.tags ||
+                :canopy_variables_band in metadata.tags)
+            for j in 1:model.config.nbands
+                push!(out_names, var*"_band_$j")
+            end
+        else
+            push!(out_names,var)
+        end
+    end
+    return out_names
 end
 
 #VAR GRID, GRID INFO

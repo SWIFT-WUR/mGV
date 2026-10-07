@@ -100,7 +100,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         default = 1.0,
         description = "",
         gridtype = GRIDS["soil_grid"],
-        input = false,
+        input = true,
         output = true,
         tags = [:soil_variables_layer],    
     ),
@@ -132,7 +132,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         gridtype = GRIDS["inter_soil_grid"],
         input = false,
         output = true,
-        tags = [:soil_variables_layer],    
+        tags = [:soil_variables_interlayer],    
     ),
     "thermal_conductivity" => ParameterMetadata(;
         lens = @optic(_.soil_variables.thermal_conductivity),
