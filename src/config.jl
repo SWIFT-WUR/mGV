@@ -86,6 +86,13 @@ end
     file_prefix::String
 end
 
+@option "API" struct APISection
+    variables::Vector{String} = []
+end
+
+"""
+The API section is based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 @option "config" struct Cfg
     nveg::Int = 14  # number of vegetation types
     enable_routing::Bool = true
@@ -99,6 +106,7 @@ end
     timestep::Int = 86400  # seconds
     input::InputCfg
     output::OutputCfg
+    API::APISection = APISection()
 end
 
 """Validate the path of a file relative to the given directory."""

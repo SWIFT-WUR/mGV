@@ -24,3 +24,28 @@ longwave_down_file    = "../input_data/mekong/forcing/lwdown/lwdown_WFDE5_v2.0_5
 surface_pressure_file = "../input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5arcmin_{year}.nc"
 
 [input.names]
+
+
+[API]
+variables = [
+    "land_surface__radiation~net~upward_energy_flux",
+    "land_surface__evaporation~potential",
+    "land_surface__evaporation~potential~soil",
+    "atmosphere_bottom_air__resistance~aerodynamic",
+    "land_surface__temperature",
+    "land_surface__evaporation~total",
+    "soil__moisture",
+    "soil__temperature",
+    "soil__ice_fraction",
+    "soil__drainage~interlayer",
+    "soil__thermal_conductivity",
+    "soil__evaporation",
+    "soil__infiltration",
+    "land_surface__runoff",
+    "land_subsurface__runoff",
+    "land__runoff~total",
+    "land_vegetation_canopy__evaporation",
+    "channel__length",
+    "channel__cell_area",
+    "channel_water__area~cross-sectional"
+]
