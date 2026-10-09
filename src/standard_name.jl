@@ -1,5 +1,8 @@
-# Mapping of grid identifier to a key, to get some context and later on to retrieve 
-# the active indices of the model domain as in Wflow, active_indices(network, key::AbstractString).
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+Mapping of grid identifier to a key, to get some context and later on to retrieve 
+the active indices of the model domain as in Wflow, active_indices(network, key::AbstractString).
+"""
 const GRIDS = Dict{String, Int}(
     "2D_grid" => 0,
     "soil_grid" => 1,
@@ -7,12 +10,17 @@ const GRIDS = Dict{String, Int}(
     "vegetation_snow_grid" => 3,
 )
 
+"""
+Mapping of (CSDMS) standard names to the metadata associated with the corresponding
+variable or parameter. For more details and default values see `ParameterMetadata`.
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 const standard_name_map = OrderedDict{String, ParameterMetadata}(
     #Surface energy variables
     # > 2D
-    "net_radiation" => ParameterMetadata(;
+    "land_surface__radiation~net~upward_energy_flux" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.net_radiation),
-        unit = Unit(),
+        unit = Unit(; J = 1, s = -1, m = -2),
         default = 1.0,
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
@@ -20,7 +28,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:surface_energy_variables_band],    
     ),
-    "potential_evaporation" => ParameterMetadata(;
+    "land_surface__evaporation~potential" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.potential_evaporation),
         unit = Unit(),
         default = 1.0,
@@ -30,7 +38,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:surface_energy_variables_band],    
     ),
-    "soil_potential_evaporation" => ParameterMetadata(;
+    "land_surface__evaporation~potential~soil" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.soil_potential_evaporation),
         unit = Unit(),
         default = 1.0,
@@ -40,7 +48,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:surface_energy_variables_band],    
     ),
-    "aerodynamic_resistance" => ParameterMetadata(;
+    "atmosphere_bottom_air__resistance~aerodynamic" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.aerodynamic_resistance),
         unit = Unit(),
         default = 1.0,
@@ -52,7 +60,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
 
     # 2D
-    "surface_temperature" => ParameterMetadata(;
+    "land_surface__temperature" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.surface_temperature),
         unit = Unit(),
         default = 1.0,
@@ -62,7 +70,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:surface_energy_variables],    
     ),
-    "total_evapotranspiration" => ParameterMetadata(;
+    "land_surface__evaporation~total" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.total_evapotranspiration),
         unit = Unit(),
         default = 1.0,
@@ -72,29 +80,30 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:surface_energy_variables],    
     ),
-    "energy_error" => ParameterMetadata(;
-        lens = @optic(_.surface_energy_variables.energy_error),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        gridtype = GRIDS["2D_grid"],
-        input = false,
-        output = true,
-        tags = [:surface_energy_variables],    
-    ),
-    "water_error" => ParameterMetadata(;
-        lens = @optic(_.surface_energy_variables.water_error),
-        unit = Unit(),
-        default = 1.0,
-        description = "",
-        gridtype = GRIDS["2D_grid"],
-        input = false,
-        output = true,
-        tags = [:surface_energy_variables],    
-    ),
+    #TODO do we want to expose these variables?
+    # "energy_error" => ParameterMetadata(;
+    #     lens = @optic(_.surface_energy_variables.energy_error),
+    #     unit = Unit(),
+    #     default = 1.0,
+    #     description = "",
+    #     gridtype = GRIDS["2D_grid"],
+    #     input = false,
+    #     output = true,
+    #     tags = [:surface_energy_variables],    
+    # ),
+    # "water_error" => ParameterMetadata(;
+    #     lens = @optic(_.surface_energy_variables.water_error),
+    #     unit = Unit(),
+    #     default = 1.0,
+    #     description = "",
+    #     gridtype = GRIDS["2D_grid"],
+    #     input = false,
+    #     output = true,
+    #     tags = [:surface_energy_variables],    
+    # ),
 
     #Soil variables > 2D
-    "moisture" => ParameterMetadata(;
+    "soil__moisture" => ParameterMetadata(;
         lens = @optic(_.soil_variables.moisture),
         unit = Unit(),
         default = 1.0,
@@ -104,7 +113,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables_layer],    
     ),
-    "temperature" => ParameterMetadata(;
+    "soil__temperature" => ParameterMetadata(;
         lens = @optic(_.soil_variables.temperature),
         unit = Unit(),
         default = 1.0,
@@ -114,7 +123,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables_layer],    
     ),
-    "ice_fraction" => ParameterMetadata(;
+    "soil__ice_fraction" => ParameterMetadata(;
         lens = @optic(_.soil_variables.ice_fraction),
         unit = Unit(),
         default = 1.0,
@@ -124,7 +133,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables_layer],    
     ),
-    "interlayer_drainage" => ParameterMetadata(;
+    "soil__drainage~interlayer" => ParameterMetadata(;
         lens = @optic(_.soil_variables.interlayer_drainage),
         unit = Unit(),
         default = 1.0,
@@ -134,7 +143,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables_interlayer],    
     ),
-    "thermal_conductivity" => ParameterMetadata(;
+    "soil__thermal_conductivity" => ParameterMetadata(;
         lens = @optic(_.soil_variables.thermal_conductivity),
         unit = Unit(),
         default = 1.0,
@@ -146,7 +155,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
 
     #2D
-    "evaporation" => ParameterMetadata(;
+    "soil__evaporation" => ParameterMetadata(;
         lens = @optic(_.soil_variables.evaporation),
         unit = Unit(),
         default = 1.0,
@@ -156,7 +165,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],    
     ),
-    "infiltration" => ParameterMetadata(;
+    "soil__infiltration" => ParameterMetadata(;
         lens = @optic(_.soil_variables.infiltration),
         unit = Unit(),
         default = 1.0,
@@ -166,7 +175,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],    
     ),
-    "surface_runoff" => ParameterMetadata(;
+    "land_surface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.surface_runoff),
         unit = Unit(),
         default = 1.0,
@@ -176,7 +185,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],    
     ),
-    "subsurface_runoff" => ParameterMetadata(;
+    "land_subsurface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.subsurface_runoff),
         unit = Unit(),
         default = 1.0,
@@ -186,7 +195,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],    
     ),
-    "total_runoff" => ParameterMetadata(;
+    "land__runoff~total" => ParameterMetadata(;
         lens = @optic(_.soil_variables.total_runoff),
         unit = Unit(),
         default = 1.0,
@@ -198,7 +207,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
 
     #Canopy variables >2d
-    "canopy_evaporation" => ParameterMetadata(;
+    "land_vegetation_canopy__evaporation" => ParameterMetadata(;
         lens = @optic(_.canopy_variables.canopy_evaporation),
         unit = Unit(),
         default = 1.0,
@@ -209,9 +218,8 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         tags = [:canopy_variables_band],    
     ),
 
-
     #Routing parameters
-    "length" => ParameterMetadata(;
+    "channel__length" => ParameterMetadata(;
         lens = @optic(_.routing.length),
         unit = Unit(),
         default = 1.0,
@@ -221,7 +229,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:routing_parameters],    
     ),
-    "cell_area" => ParameterMetadata(;
+    "channel__cell_area" => ParameterMetadata(;
         lens = @optic(_.routing.cell_area),
         unit = Unit(),
         default = 1.0,
@@ -231,7 +239,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:routing_parameters],    
     ),
-    "channel_water__cross-sectional_area" => ParameterMetadata(;
+    "channel_water__area~cross-sectional" => ParameterMetadata(;
         lens = @optic(_.routing.area),
         unit = Unit(),
         default = 1.0,
@@ -243,30 +251,9 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
 )
 
-
+#TODO decide which ones to include
 const standard_param_map = OrderedDict{String, ParameterMetadata}(
     #Grid 
-    "latitude" => ParameterMetadata(; 
-        lens = @optic(_.grid_parameters.latitude),
-        unit = Unit(; deg = 1),
-        default = 1.0,
-        description = "Latitude",
-        tags = [:grid_parameters],
-    ),
-    "longitude" => ParameterMetadata(;
-        lens = @optic(_.grid_parameters.longitude),
-        unit = Unit(; deg = 1),
-        default = 1.0,
-        description = "longitude",
-        tags = [:grid_parameters],
-    ),
-    "time" => ParameterMetadata(;
-        lens = @optic(_.grid_parameters.time),
-        unit = Unit(; s = 1),
-        default = 1.0,
-        description = "time",
-        tags = [:grid_parameters],
-    ),
     "elevation" => ParameterMetadata(; #(lat, lon) 
         lens = @optic(_.grid_parameters.elevation),
         unit = Unit(; m = 1),
@@ -311,14 +298,16 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
     ),
 
     #Vegetation  (static)
-    "root_fraction" => ParameterMetadata(; #(veg_class, root_zone, lat, lon)
+    "vegetation__root_fraction" => ParameterMetadata(; #(veg_class, root_zone, lat, lon)
         lens = @optic(_.vegetation_parameters.root_fraction),
         unit = Unit(),
         default = 1.0,
         description = "Root zone fraction",
+        input = true,
+        output = false,
         tags = [:vegetation_parameters],
     ),
-    "vegetation_fraction" => ParameterMetadata(; #(veg_class, lat, lon)
+    "vegetation__fraction" => ParameterMetadata(; #(veg_class, lat, lon)
         lens = @optic(_.vegetation_parameters.vegetation_fraction),
         unit = Unit(),
         default = 1.0,
@@ -354,7 +343,7 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
         description = "vegetation roughness length",
         tags = [:vegetation_parameters],
     ),
-    "lai" => ParameterMetadata(; #(veg_class, month, lat, lon)
+    "vegetation_canopy__leaf_area_index" => ParameterMetadata(; #(veg_class, month, lat, lon)
         lens = @optic(_.vegetation_parameters.lai),
         unit = Unit(; m = (2, 2)),
         default = 1.0,

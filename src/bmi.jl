@@ -17,8 +17,8 @@ function BMI.update(model::Model)
 end
 
 function BMI.update_until(model::Model, time::Float64)
-    end_time = time - model.clock.dt
-    while model.clock.time < end_time
+    end_time = time - Float64(model.clock.dt.value)
+    while datetime2unix(model.clock.time) < end_time
         update!(model)
     end
 
@@ -26,14 +26,6 @@ end
 
 # TODO 
 function BMI.finalize(model::Model)
-#     if !isnothing(model)
-#         model.writer = nothing
-#         model.forcing_readers = nothing
-#         GC()
-#         sleep(2)
-#     end
-# end
-
     if !isnothing(model.writer)
         # close output
         stop_async_service(model.writer.io_service)
@@ -48,85 +40,36 @@ end
 function BMI.get_component_name(model::Model)
     return "mGV"
 end
+
 function BMI.get_input_item_count(model::Model)
     return length(BMI.get_input_var_names(model))
 end
+
+"""
+    BMI.get_input_var_names(model::Model)
+
+Returns model input variables, based on the `API` section in the model configuration file.
+The layer and band variables are expanded, using the ParameterMetadata flag, adding _layer_N 
+and _band_N at the end of the name.
+The input flag in ParameterMetadata is used to filter the input variables. 
+"""
 function BMI.get_input_var_names(model::Model)
-
-    in_vars = model.config.API.variables
-    standard_map = get_standard_name_map()
-    in_names = String[]
-
-    filtered = filter(name -> haskey(standard_map, name), in_vars)
-    no_match = filter(name -> !haskey(standard_map, name), in_vars)
-    for var in no_match 
-        @warn("$var is not listed as variable for BMI exchange and removed from input list") 
-    end
-    filter!(name -> standard_map[name].input, filtered)
-    if isempty(filtered)
-        return []
-    end
-        
-    for var in filtered
-        metadata = get_metadata(var,model)
-        if :soil_variables_layer in metadata.tags
-            for j in 1:size(model.soil_parameters.depth,3)
-                push!(in_names, var*"_layer_$j")
-            end
-        elseif :soil_variables_interlayer in metadata.tags
-            for j in 1:(size(model.soil_parameters.depth,3)-1)
-                push!(in_names, var*"_layer_$j")
-            end
-        elseif (:surface_energy_variables_band in metadata.tags ||
-                :canopy_variables_band in metadata.tags)
-            for j in 1:model.config.nbands
-                push!(in_names, var*"_band_$j")
-            end
-        else
-            push!(in_names,var)
-        end
-    end
-    return in_names
+    return io_var_checker(model,true)
 end
 
 function BMI.get_output_item_count(model::Model)
     return length(BMI.get_output_var_names(model))
 end
-function BMI.get_output_var_names(model::Model)
-    out_vars = model.config.API.variables
-    standard_map = get_standard_name_map()
-    out_names = String[]
 
-    filtered = filter(name -> haskey(standard_map, name), out_vars)
-    no_match = filter(name -> !haskey(standard_map, name), out_vars)
-    for var in no_match 
-        @warn("$var is not listed as variable for BMI exchange and removed from output list") 
-    end
-    filter!(name -> standard_map[name].output, filtered)
-    if isempty(filtered)
-        return []
-    end
-        
-    for var in filtered
-        metadata = get_metadata(var,model)
-        if :soil_variables_layer in metadata.tags
-            for j in 1:size(model.soil_parameters.depth,3)
-                push!(out_names, var*"_layer_$j")
-            end
-        elseif :soil_variables_interlayer in metadata.tags
-            for j in 1:(size(model.soil_parameters.depth,3)-1)
-                push!(out_names, var*"_layer_$j")
-            end
-        elseif (:surface_energy_variables_band in metadata.tags ||
-                :canopy_variables_band in metadata.tags)
-            for j in 1:model.config.nbands
-                push!(out_names, var*"_band_$j")
-            end
-        else
-            push!(out_names,var)
-        end
-    end
-    return out_names
+"""
+    BMI.get_input_var_names(model::Model)
+
+Returns model output variables, based on the `API` section in the model configuration file.
+The layer and band variables are expanded, using the ParameterMetadata flag, adding _layer_N and _band_N at the end of the name.
+The output flag in ParameterMetadata is used to filter the output variables. 
+"""
+function BMI.get_output_var_names(model::Model)
+    return io_var_checker(model,false)
 end
 
 #VAR GRID, GRID INFO
@@ -166,6 +109,8 @@ function BMI.get_grid_rank(model::Model, grid::Int)
         return 2
     elseif grid == 3
         return 3
+    else 
+        error("unknown grid type")
     end
 end
 
@@ -201,7 +146,7 @@ function BMI.get_grid_x(model::Model, grid::Int)
 end
 
 function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
-    if grid <= 1
+    if grid <= 3
         copyto!(x,model.grid_parameters.longitude)
     else
         error("unknown grid type $grid")
@@ -216,7 +161,7 @@ function BMI.get_grid_y(model::Model, grid::Int)
 end
 
 function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
-    if grid <= 1
+    if grid <= 3
         copyto!(y,model.grid_parameters.latitude)
     else
         error("unknown grid type $grid")
@@ -250,50 +195,58 @@ function BMI.get_grid_size(model::Model, grid::Int)
         z_size = length(model.grid_parameters.vegetation)
         return x_size*y_size*z_size
     end
-    # elseif grid == 1
-    #     return x_size*y_size*size(model.soil_parameters.depth,3)
-    # elseif grid == 2
-    #     return Int(x_size*y_size*(size(model.soil_parameters.depth,3)-1))
-    # elseif grid == 3
-    #     z_size = length(model.grid_parameters.vegetation)
-    #     return x_size*y_size*z_size*model.config.nbands
-    # end
     error("unknown grid type $grid")
 end
 
 
 
 
+"""
+    BMI.get_var_type(model::Model, name::String)
 
-#VAR TYPE, UNITS, SIZE, NBYTES AND LOCATION
+Return the variable's type with name name
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_var_type(model::Model, name::String)
     value = BMI.get_value_ptr(model, name)
     return repr(eltype(eltype(value)))
 end
 
-# TODO 
+
+"""
+    BMI.get_var_units(model::Model, name::String)
+
+Return the variable's unit
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_var_units(model::Model, name::String)
-#     (; land) = model
-#     metadata = get_metadata(name, land; model)
-#     return to_string(to_SI(metadata.unit); BMI_standard = true)
-    return nothing
+    metadata = get_metadata(name, model)
+    # return to_string(to_SI(metadata.unit); BMI_standard = true)
+    return to_string(to_SI(metadata.unit); BMI_standard = true)
 end
 
+"""
+    BMI.get_var_itemsize(model::Model, name::String)
+
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_var_itemsize(model::Model, name::String)
     value = BMI.get_value_ptr(model, name)
     return sizeof(eltype(eltype(value)))
 end
 
+"""
+    BMI.get_var_nbytes(model::Model, name::String)
+
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_var_nbytes(model::Model, name::String)
     return sizeof(BMI.get_value_ptr(model, name))
 end
 
 # TODO 
 function BMI.get_var_location(model::Model, name::String)
-#     (; lens) = get_metadata(name; model)
-#     element_type = grid_element_type(model, lens)
-#     return element_type
-    return nothing
+    error("Get var location is not implemented for this model")
 end
 
 
@@ -319,12 +272,22 @@ function BMI.get_time_step(model::Model)
 end
 
 
-#GET VALUES
+"""
+    BMI.get_value(model::Model, name::String, dest)
+
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_value(model::Model, name::String, dest)
     copyto!(dest,copy(BMI.get_value_ptr(model, name)))
     return dest
 end
 
+
+"""
+    BMI.get_value_ptr(model::Model, name::String)
+
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_value_ptr(model::Model, name::String)
     if occursin(r"_layer_\d",name)
         name_2d, ind = soil_layer_standard_name(name)
@@ -357,6 +320,11 @@ function BMI.get_value_ptr(model::Model, name::String)
     end
 end
 
+"""
+    BMI.get_value_at_indices(model::Model, name::String)
+
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function BMI.get_value_at_indices(
         model::Model,
         name::String,
@@ -369,15 +337,19 @@ function BMI.get_value_at_indices(
 end
 
 
-#SET VALUES
 """
     BMI.set_value(model::Model, name::String, src)
 
 Set a model variable `name` to the values in `src`, overwriting the current contents.
 The type and size of `src` must match the model's internal array.
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl 
 """
 function BMI.set_value(model::Model, name::String, src)
     l_src = length(src)
+    if !check_if_settable(model, name)
+        @warn "Variable $name is not settable, returning nothing"
+        return nothing
+    end
     mod_var = BMI.get_value_ptr(model, name)
     l_model = length(mod_var)
     if l_src != l_model
@@ -391,7 +363,8 @@ end
 """
     BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
 
-    Set a model variable `name` to the values in `src`, at indices `inds`.
+Set a model variable `name` to the values in `src`, at indices `inds`.
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
 """
 function BMI.set_value_at_indices(
         model::Model,
@@ -413,6 +386,7 @@ end
 """
 Return the standard name representing a layered variable 3D 
 and the layer index `layer_index` based on a standard `name`.
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
 """
 function soil_layer_standard_name(name::AbstractString)
     # Parse new naming format: soil_layer_N_water_... where N is the layer number
@@ -428,6 +402,11 @@ function soil_layer_standard_name(name::AbstractString)
     return name, nothing
 end
 
+"""
+Return the standard name representing a snow-band variable 3D 
+and the corresponding index `band_index` based on a standard `name`.
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function snow_band_standard_name(name::AbstractString)
     # Parse new naming format: snow_band_N where N is the layer number
     parts = split(name, "_")
@@ -440,4 +419,68 @@ function snow_band_standard_name(name::AbstractString)
     # Fallback for unexpected format
     @warn "Unable to parse layer standard name: $name"
     return name, nothing
+end
+
+"""
+Expands the input/output variables name received through API section of the config file. 
+The variables are expandend attaching 'layer_N' or 'band_n' at the end of the name. 
+The ParameterMetadata input/output flags are used to filter the variables accordingly. 
+"""
+function io_var_checker(model::Model, is_input::Bool)
+    config_vars = model.config.API.variables
+    standard_map = get_standard_name_map()
+    keep_names = String[]
+
+    filtered = filter(name -> haskey(standard_map, name), config_vars)
+    no_match = filter(name -> !haskey(standard_map, name), config_vars)
+    for var in no_match 
+        @warn("$var is not listed as variable for BMI exchange and removed from input list") 
+    end
+    if is_input
+        filter!(name -> standard_map[name].input, filtered)
+    else 
+        filter!(name -> standard_map[name].output, filtered)
+    end 
+    if isempty(filtered)
+        return []
+    end
+        
+    for var in filtered
+        metadata = get_metadata(var,model)
+        if :soil_variables_layer in metadata.tags
+            for j in 1:size(model.soil_parameters.depth,3)
+                push!(keep_names, var*"_layer_$j")
+            end
+        elseif :soil_variables_interlayer in metadata.tags
+            for j in 1:(size(model.soil_parameters.depth,3)-1)
+                push!(keep_names, var*"_layer_$j")
+            end
+        elseif (:surface_energy_variables_band in metadata.tags ||
+                :canopy_variables_band in metadata.tags)
+            for j in 1:model.config.nbands
+                push!(keep_names, var*"_band_$j")
+            end
+        else
+            push!(keep_names,var)
+        end
+    end
+    return keep_names
+end
+
+"""
+Checks if a given variable can be setted looking at the ParameterMetadata input flags. 
+"""
+function check_if_settable(model::Model, name::String)
+    if occursin(r"_layer_\d",name)
+        name_2d, _ = soil_layer_standard_name(name)
+        (;input) = get_metadata(name_2d, model)
+        return input
+    elseif occursin(r"_band_\d",name)
+        name_2d, _ = snow_band_standard_name(name)
+        (;input) = get_metadata(name_2d, model)
+        return input
+    else 
+        (; input) = get_metadata(name; model)
+        return input
+    end
 end

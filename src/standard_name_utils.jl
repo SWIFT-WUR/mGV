@@ -1,136 +1,3 @@
-const PowersType = SVector{2, Rational{Int}}
-argument_error(msg::String) = throw(ArgumentError(msg))
-
-
-"""
-Store a unit as a product of powers, for instance:
-m/s -> Unit(; m = 1, s = -1)
-
-Positive and negative powers can be split to support e.g.
-m²m⁻² -> Unit(; m = (2, 2))
-
-The `absolute_temperature` flag indicates whether °C => K
-requires a +273.15 shift.
-
-Adding support for a new unit is easy:
-- Add a field to the `Unit` struct
-- Specify how it translates to SI standard units in `to_SI_data`
-- If the symbol for the unit is different from its field name in `Unit`,
-    add it to `UnitStrings`
-"""
-struct Unit
-    # Temperature
-    absolute_temperature::Bool # Expected to be first field!
-    K::PowersType # Kelvin, SI standard
-    degC::PowersType # degree Celsius
-    # Time
-    s::PowersType # second, SI standard
-    ms::PowersType # millisecond
-    min::PowersType # minute
-    h::PowersType # hour
-    d::PowersType # day
-    y::PowersType #year
-    dt::PowersType # time step
-    # Length
-    m::PowersType # meter, SI standard
-    cm::PowersType # centimeter
-    mm::PowersType # millimeter
-    μm::PowersType # micrometer
-    # Volume
-    L::PowersType # liter
-    # Mass
-    kg::PowersType # kilogram, SI standard
-    g::PowersType # gram
-    t::PowersType # tonne
-    # Energy
-    J::PowersType # joule
-    # Fraction
-    percentage::PowersType # percentage, converted to unitless fraction in the SI standard
-    ppm::PowersType # parts per million, converted to unitless fraction in the SI standard
-    # degree
-    deg::PowersType # degree (latitude and longitude)
-    # Factor for converting a value in this unit to the above mentioned standard SI units (apart from dt)
-    to_SI_factor_without_dt::Float64 # Expected to be last field!
-end
-
-
-
-const Units = fieldnames(Unit)[2:(end - 1)]
-const N_UNITS = length(Units)
-const STANDARD_UNITS = [:K, :s, :m, :kg, :J]
-
-
-function Unit(absolute_temperature, powers_all...)
-    to_SI_factor_without_dt = 1.0
-    for (i, powers) in enumerate(powers_all)
-        unit = Units[i]
-        (unit == :dt) && continue
-        @assert all(≥(0), powers) "Expected non-negative input, got $powers for $unit."
-        net_power = powers[2] - powers[1]
-        if (unit ∉ STANDARD_UNITS) && !iszero(net_power)
-            factor = to_SI_data[i].factor
-            to_SI_factor_without_dt *= factor^net_power
-        end
-    end
-    return Unit(absolute_temperature, powers_all..., to_SI_factor_without_dt)
-end
-
-# Get a tuple of all power values
-@generated function get_powers_tuple(unit::Unit)
-    exprs = [:(getfield(unit, $(i + 1))) for i in 1:N_UNITS]  # +1 to skip absolute_temperature
-    return :(tuple($(exprs...)))
-end
-
-function Unit(; absolute_temperature = false, kwargs...)
-    powers = ntuple(
-        i -> begin
-            unit = Units[i]
-            powers = return if unit in keys(kwargs)
-                val = kwargs[unit]
-
-                if val isa Number
-                    val > 0 ? (0, val) : (-val, 0)
-                else
-                    val
-                end
-            else
-                (0 // 1, 0 // 1)
-            end
-            PowersType(powers)
-        end, N_UNITS
-    )
-    for unit in keys(kwargs)
-        (unit ∉ Units) && argument_error("Unrecognized unit $unit.")
-    end
-    return Unit(absolute_temperature, powers...)
-end
-
-
-const to_SI_data = @NamedTuple{factor::Float64, unit_SI::Unit}[
-    (factor = 1.0, unit_SI = Unit(; K = 1)), # K
-    (factor = 1.0, unit_SI = Unit(; K = 1)), # degC
-    (factor = 1.0, unit_SI = Unit(; s = 1)), # s
-    (factor = 1.0e-3, unit_SI = Unit(; s = 1)), # ms
-    (factor = 60.0, unit_SI = Unit(; s = 1)), # min
-    (factor = 3600, unit_SI = Unit(; s = 1)), # h
-    (factor = 86400.0, unit_SI = Unit(; s = 1)), # d
-    (factor = 31536000.0, unit_SI = Unit(; s = 1)), # y
-    (factor = NaN, unit_SI = Unit(; s = 1)), # dt
-    (factor = 1.0, unit_SI = Unit(; m = 1)), # m
-    (factor = 1.0e-2, unit_SI = Unit(; m = 1)), # cm
-    (factor = 1.0e-3, unit_SI = Unit(; m = 1)), # mm
-    (factor = 1.0e-6, unit_SI = Unit(; m = 1)), # μm
-    (factor = 1.0e-3, unit_SI = Unit(; m = 3)), # L
-    (factor = 1.0, unit_SI = Unit(; kg = 1)), # kg
-    (factor = 1.0e-3, unit_SI = Unit(; kg = 1)), # g
-    (factor = 1.0e3, unit_SI = Unit(; kg = 1)), # t
-    (factor = 1.0, unit_SI = Unit(; kg = 1, m = 2, s = -2)), # J
-    (factor = 1.0e-2, unit_SI = Unit()), # percentage
-    (factor = 1.0e-6, unit_SI = Unit()), # ppm
-    (factor = 1.0, unit_SI = Unit()), # degree
-]
-
-
 # wrapper methods for standard name mapping
 get_standard_name_map() = standard_name_map
 
@@ -138,6 +5,7 @@ const PARAMETER_TYPES = Union{Float64, Int, Bool, Nothing}
 
 """
 Metadata associated with parameters and variables.
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
 
 # Arguments
 - `lens`: The path in the model data structure to the parameter/variable if it exists
@@ -152,6 +20,8 @@ Metadata associated with parameters and variables.
 - `allow_dynamic_input`: Allow updating this parameter from input via cyclic/forcing
 - `dimname`: The name of the third dimension of the parameter/variable if it exists
 - 'gridtype': The grid type of the paremeter/variable if it exists
+- 'input': flag needed to set a variable
+- 'output': flag needed to get a variable
 - `tags`: Identifiers to filter parameters/variables for specific tables in the docs
 """
 @kwdef struct ParameterMetadata{
@@ -218,10 +88,16 @@ Metadata associated with parameters and variables.
     end
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function Base.:(==)(a::ParameterMetadata, b::ParameterMetadata)
     return all(getfield(a, f) == getfield(b, f) for f in fieldnames(ParameterMetadata))
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function metadata_from_lens_string(
         lens_string::AbstractString,
         standard_name_map::OrderedDict{String, ParameterMetadata},
@@ -234,6 +110,9 @@ function metadata_from_lens_string(
     return nothing
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function get_metadata(
         name::AbstractString,
         types::Vararg{Type};
@@ -279,9 +158,16 @@ function get_metadata(
     return metadata
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 get_metadata(name::AbstractString, land::L; kwargs...) where {L <: Model} =
     get_metadata(name, L; kwargs...)
 
+    
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function get_metadata(
         name::AbstractString;
         kwargs...,
@@ -300,13 +186,14 @@ function get_metadata(
     return metadata
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 get_metadata(name::AbstractString, model) = get_metadata(name, typeof(model); model)
-# get_metadata(name::AbstractString) = get_standard_name_map()[name]
 
-# When no model or model type is specified, search all standard name maps
-# get_metadata(name::AbstractString; kwargs...) =
-#     get_metadata(name, map(d -> d[3], STANDARD_NAME_MAPS)...; kwargs...)
-
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 function get_field_in_model(model, name::AbstractString; check_allow_dynamic_input = false)
     metadata = get_metadata(name; model)
 
@@ -328,6 +215,9 @@ function get_field_in_model(model, name::AbstractString; check_allow_dynamic_inp
     end
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 to_proper_number_type(x::Missing, ::Type) = x
 to_proper_number_type(x::Bool, ::Type) = x
 to_proper_number_type(x::T, ::Type{T}) where {T} = x
@@ -335,8 +225,12 @@ to_proper_number_type(x::Number, ::Type{T}) where {T <: Number} = T(x)
 # This method is only to avoid ambiguities
 to_proper_number_type(::Bool, ::Type{T}) where {T <: Number} = nothing
 
+
+
+
 """
 NOTE: This function is only in-place if A already has the correct type
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
 """
 function apply_unit_and_type_transform!(
         A::AbstractArray,
@@ -350,8 +244,14 @@ function apply_unit_and_type_transform!(
     return to_SI!(A, unit; dt_val)
 end
 
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 unit_and_type_transform(x::Number, metadata::ParameterMetadata; dt_val = nothing) =
     to_SI(metadata.type(x), metadata.unit; dt_val)
-
+    
+"""
+Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+"""
 apply_unit_and_type_transform!(x::Number, metadata::ParameterMetadata; kwargs...) =
     unit_and_type_transform(x, metadata; kwargs...)

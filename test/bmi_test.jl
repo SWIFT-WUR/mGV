@@ -48,7 +48,7 @@ end
         BMI.update(model)
     end
 
-    sml3 = "moisture_layer_3"
+    sml3 = "soil__moisture_layer_3"
 
     @test sml3 in BMI.get_input_var_names(model)
     @test sml3 in BMI.get_output_var_names(model)
@@ -101,14 +101,12 @@ end
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
-    @test BMI.get_grid_shape(model,BMI.get_var_grid(model,"canopy_evaporation")) == [14,36,36]
+    @test BMI.get_grid_shape(model,BMI.get_var_grid(model,"land_vegetation_canopy__evaporation")) == [14,36,36]
     n_inputs = count(meta -> meta.input, values(mGV.standard_name_map))
     n_outputs = count(meta -> meta.output, values(mGV.standard_name_map))
     @test BMI.get_input_item_count(model) >= n_inputs
     @test BMI.get_output_item_count(model) >= n_outputs
-    @test length(BMI.get_grid_z(model, BMI.get_var_grid(model,"canopy_evaporation"))) == model.config.nveg
-
-    # for name in in_vars 
+    @test length(BMI.get_grid_z(model, BMI.get_var_grid(model,"land_vegetation_canopy__evaporation"))) == model.config.nveg
 
     out_vars = BMI.get_output_var_names(model)
     in_vars = BMI.get_input_var_names(model)
@@ -126,8 +124,6 @@ end
         dest = fill(MaxType[type], size)
         BMI.get_value(model, name, dest)
         @test all(dest .!= MaxType[type])
-
-        # BMI.set_value_at_indices(model, name, [1, 2, 3], TYPES[BMI.get_var_type(model, name)][0.1, 0.15, 0.2])
     end
 
     for name in in_vars
@@ -138,11 +134,9 @@ end
         BMI.set_value(model, name, dest)
         @test all(dest .== MaxType[type])
     end 
+    println(BMI.get_var_units(model,"land_surface__radiation~net~upward_energy_flux"))
 
-    #Check paramaters (no more needed)
-    # @test isapprox(get_value_mean("nijssen_nonlin_reservoir", model),mean(model.soil_parameters.nijssen_nonlin_reservoir))
-    # @test isapprox(get_value_mean("nijssen_infilt_b", model),mean(model.soil_parameters.nijssen_infilt_b))
-    # @test isapprox(get_value_mean("snow_band_area_fraction_layer_1", model),mean(model.grid_parameters.snow_band_area_fraction[:,:,1]))
-    # @test isapprox(get_value_mean("snow_band_elevation_layer_2", model),mean(model.grid_parameters.snow_band_elevation[:,:, 2]))
-    # @test isapprox(get_value_mean("snow_band_precipitation_factor_layer_3", model),mean(model.grid_parameters.snow_band_precipitation_factor[:,:, 3]))
+    time = BMI.get_current_time(model) + (200*BMI.get_time_step(model))
+    BMI.update_until(model, time)
+    @test BMI.get_current_time(model) == time - BMI.get_time_step(model)
 end
