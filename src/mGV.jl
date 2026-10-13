@@ -40,6 +40,7 @@ const to = TimerOutputs.TimerOutput()
 Clock struct for timekeeping.
 
 Based on Wflow.jl https://github.com/Deltares/Wflow.jl
+MIT License, Copyright (c) 2020 Deltares and contributors
 """
 mutable struct Clock{T}
     time::T
@@ -63,11 +64,7 @@ end
 
 """Initialize clock based on config"""
 function Clock(config::Cfg)
-    return Clock(
-        DateTime(config.start_year),
-        0,
-        Second(config.timestep)
-    )
+    return Clock(DateTime(config.start_year), 0, Second(config.timestep))
 end
 
 
@@ -90,10 +87,11 @@ require.
     snow_variables::SnowVariables
     forcing_variables::ForcingVariables
     forcing_readers::ForcingReaders
-    routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter, Nothing} # writes model output
+    routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
+    writer::Union{OutputWriter,Nothing} # writes model output
     # preallocated 2D daily output buffers
-    output_buffers::OutputBuffers = OutputBuffers(surface_energy_variables.surface_temperature)
+    output_buffers::OutputBuffers =
+        OutputBuffers(surface_energy_variables.surface_temperature)
 end
 
 include("energy_balance.jl")
@@ -121,7 +119,8 @@ function Model(config_file::AbstractString)
     canopy_variables = CanopyVariables(tile_dims)
     soil_variables = SoilVariables(grid_dims, soil_dims)
     snow_variables = SnowVariables(nx, ny, nbands, nveg)
-    routing = config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
+    routing =
+        config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
 
     # Move data to backend during model initialization
     if backend_name != "CPU"
@@ -139,23 +138,26 @@ function Model(config_file::AbstractString)
     end
 
     load_monthly_parameters!(
-        vegetation_parameters, monthly_vegetation_parameters, month(clock.time)
+        vegetation_parameters,
+        monthly_vegetation_parameters,
+        month(clock.time),
     )
 
     derive_soil_parameters!(soil_parameters)
     convert_nijssen2001_to_arno!(soil_parameters)
 
-    @. soil_variables.moisture = clamp(soil_parameters.initial_moisture, 0.0f0, soil_parameters.maximum_moisture)
+    @. soil_variables.moisture =
+        clamp(soil_parameters.initial_moisture, 0.0f0, soil_parameters.maximum_moisture)
 
     # Initialize soil column temperature using annual mean
     for layer in axes(soil_variables.temperature, 3)
-        @views soil_variables.temperature[:, :, layer] .= grid_parameters.average_temperature
+        @views soil_variables.temperature[:, :, layer] .=
+            grid_parameters.average_temperature
     end
 
     writer = start_io_service(config, grid_parameters, year(clock.time), clock.dt)
 
-    return Model(
-        ;
+    return Model(;
         config,
         clock,
         grid_parameters,
@@ -169,10 +171,9 @@ function Model(config_file::AbstractString)
         forcing_variables,
         forcing_readers,
         routing,
-        writer
+        writer,
     )
 end
-
 
 
 @timeit_all to function update!(model::Model)
@@ -188,8 +189,8 @@ end
 
     # Initialize surface temperature on first timestep
     if model.clock.iteration == 1
-        model.surface_energy_variables.surface_temperature .= 
-        model.forcing_variables.air_temperature
+        model.surface_energy_variables.surface_temperature .=
+            model.forcing_variables.air_temperature
     end
 
     # Energy balance and atmospheric calculations
@@ -200,7 +201,7 @@ end
 
     # Transpiration
     update_transpiration!(model)
-    
+
     # Water balance: throughfall (must run BEFORE snow dynamics so
     #   the snow kernel sees today's precipitation, not yesterday's)
     update_water_canopy_storage!(model)
@@ -240,7 +241,8 @@ end
     end
 
     # next time step will be new year; close file output
-    if !isnothing(model.writer) && year(model.clock.time + model.clock.dt) > year(model.clock.time)
+    if !isnothing(model.writer) &&
+       year(model.clock.time + model.clock.dt) > year(model.clock.time)
         # close output
         stop_async_service(model.writer.io_service)
         close_output(model.writer.store)
@@ -248,12 +250,15 @@ end
         if year(model.clock.time) == model.config.end_year
             # if model has reached end time step set writer to nothing
             @set model.writer = nothing
-    
+
         else
             # otherwise set up new output file
             println("Starting new io service...")
             new_writer = start_io_service(
-                model.config, model.grid_parameters, year(model.clock.time) + 1, model.clock.dt
+                model.config,
+                model.grid_parameters,
+                year(model.clock.time) + 1,
+                model.clock.dt,
             )
             model.writer.io_service = new_writer.io_service
             model.writer.store = new_writer.store

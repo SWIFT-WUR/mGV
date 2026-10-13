@@ -1,4 +1,4 @@
-struct GridParameters{V <: AbstractVector, M <: AbstractMatrix, T <: AbstractArray}
+struct GridParameters{V<:AbstractVector,M<:AbstractMatrix,T<:AbstractArray}
     # Static
     latitude::V
     longitude::V
@@ -13,7 +13,7 @@ end
 
 @adapt_structure GridParameters
 
-struct VegetationParameters{T <: AbstractArray}
+struct VegetationParameters{T<:AbstractArray}
     # Static
     root_fraction::T
     vegetation_fraction::T
@@ -29,7 +29,7 @@ end
 
 @adapt_structure VegetationParameters
 
-struct SoilParameters{M <: AbstractMatrix, T <: AbstractArray}
+struct SoilParameters{M<:AbstractMatrix,T<:AbstractArray}
     # Static soil and baseflow parameters
     hydraulic_conductivity::T
     depth::T
@@ -68,7 +68,7 @@ Due to storage constraints, storing all months of data on GPU uses too
 much VRAM. Instead, copy over the active monthly values at the start of
 each month.
 """
-mutable struct MonthlyVegetationParameters{T <: AbstractArray}
+mutable struct MonthlyVegetationParameters{T<:AbstractArray}
     displacement_height::T
     roughness_length::T
     lai::T
@@ -81,7 +81,10 @@ end
 function current_month_buffer(monthly_field::AbstractArray)
     return zeros(
         eltype(monthly_field),
-        size(monthly_field, 1), size(monthly_field, 2), 1, size(monthly_field, 4)
+        size(monthly_field, 1),
+        size(monthly_field, 2),
+        1,
+        size(monthly_field, 4),
     )
 end
 
@@ -101,10 +104,10 @@ function load_monthly_parameters!(
     current_month == monthly.loaded_month && return nothing
 
     copy_month!(veg_params.displacement_height, monthly.displacement_height, current_month)
-    copy_month!(veg_params.roughness_length,    monthly.roughness_length,    current_month)
-    copy_month!(veg_params.lai,                 monthly.lai,                 current_month)
-    copy_month!(veg_params.albedo,              monthly.albedo,              current_month)
-    copy_month!(veg_params.canopy_coverage,     monthly.canopy_coverage,     current_month)
+    copy_month!(veg_params.roughness_length, monthly.roughness_length, current_month)
+    copy_month!(veg_params.lai, monthly.lai, current_month)
+    copy_month!(veg_params.albedo, monthly.albedo, current_month)
+    copy_month!(veg_params.canopy_coverage, monthly.canopy_coverage, current_month)
 
     monthly.loaded_month = current_month
     return nothing
@@ -125,7 +128,7 @@ function copy_month!(dest::AbstractArray, src::Array, month::Integer)
     # Loop through vegetation index as it's not contiguous in memory.
     # Reordering input data to (nx, ny, nveg, month) would simplify this, but does
     # not match input data.
-    for v in 1:nveg
+    for v = 1:nveg
         copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, 1, month, v], n)
     end
     return dest
@@ -136,35 +139,42 @@ function read_parameters(config::Cfg)
     grid_params = GridParameters(
         nomissing(ds_params[config.input.names.latitude][:], 0.0),
         nomissing(ds_params[config.input.names.longitude][:], 0.0),
-        # nomissing(ds_params[config.input.names.nveg][:], 0.0),
-        nomissing(Float32[1:1:config.nveg;][:], 0.0),
-        nomissing(ds_params[config.input.names.elevation][:,:], 0.0),
-        nomissing(ds_params[config.input.names.average_temperature][:,:], 0.0),
-        nomissing(ds_params[config.input.names.annual_precipitation][:,:], 0.0),
-        nomissing(ds_params[config.input.names.snow_band_area_fraction][:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.snow_band_elevation][:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.snow_band_precipitation_factor][:,:,:], 0.0),
+        Float32.(1:config.nveg),
+        nomissing(ds_params[config.input.names.elevation][:, :], 0.0),
+        nomissing(ds_params[config.input.names.average_temperature][:, :], 0.0),
+        nomissing(ds_params[config.input.names.annual_precipitation][:, :], 0.0),
+        nomissing(ds_params[config.input.names.snow_band_area_fraction][:, :, :], 0.0),
+        nomissing(ds_params[config.input.names.snow_band_elevation][:, :, :], 0.0),
+        nomissing(
+            ds_params[config.input.names.snow_band_precipitation_factor][:, :, :],
+            0.0,
+        ),
     )
 
     # Reshape some 3D inputs to 4D
-    cv = nomissing(ds_params[config.input.names.vegetation_fraction][:,:,:], 0.0)
-    vegetation_fraction = ndims(cv) == 3 ? reshape(cv, size(cv, 1), size(cv, 2), 1, size(cv, 3)) : cv
-    rmin = nomissing(ds_params[config.input.names.minimum_resistance][:,:,:], 0.0)
-    minimum_resistance = ndims(rmin) == 3 ? reshape(rmin, size(rmin, 1), size(rmin, 2), 1, size(rmin, 3)) : rmin
-    rarc = nomissing(ds_params[config.input.names.architectural_resistance][:,:,:], 0.0)
-    architectural_resistance = ndims(rarc) == 3 ? reshape(rarc, size(rarc, 1), size(rarc, 2), 1, size(rarc, 3)) : rarc
+    cv = nomissing(ds_params[config.input.names.vegetation_fraction][:, :, :], 0.0)
+    vegetation_fraction =
+        ndims(cv) == 3 ? reshape(cv, size(cv, 1), size(cv, 2), 1, size(cv, 3)) : cv
+    rmin = nomissing(ds_params[config.input.names.minimum_resistance][:, :, :], 0.0)
+    minimum_resistance =
+        ndims(rmin) == 3 ? reshape(rmin, size(rmin, 1), size(rmin, 2), 1, size(rmin, 3)) :
+        rmin
+    rarc = nomissing(ds_params[config.input.names.architectural_resistance][:, :, :], 0.0)
+    architectural_resistance =
+        ndims(rarc) == 3 ? reshape(rarc, size(rarc, 1), size(rarc, 2), 1, size(rarc, 3)) :
+        rarc
 
     monthly_veg_params = MonthlyVegetationParameters(
-        nomissing(ds_params[config.input.names.displacement_height][:,:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.roughness_length][:,:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.lai][:,:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.albedo][:,:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.canopy_coverage][:,:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.displacement_height][:, :, :, :], 0.0),
+        nomissing(ds_params[config.input.names.roughness_length][:, :, :, :], 0.0),
+        nomissing(ds_params[config.input.names.lai][:, :, :, :], 0.0),
+        nomissing(ds_params[config.input.names.albedo][:, :, :, :], 0.0),
+        nomissing(ds_params[config.input.names.canopy_coverage][:, :, :, :], 0.0),
         0,  # no month loaded yet
     )
 
     veg_params = VegetationParameters(
-        nomissing(ds_params[config.input.names.root_fraction][:,:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.root_fraction][:, :, :, :], 0.0),
         vegetation_fraction,
         minimum_resistance,
         architectural_resistance,
@@ -172,46 +182,49 @@ function read_parameters(config::Cfg)
         current_month_buffer(monthly_veg_params.roughness_length),
         current_month_buffer(monthly_veg_params.lai),
         current_month_buffer(monthly_veg_params.albedo),
-        current_month_buffer(monthly_veg_params.canopy_coverage)
+        current_month_buffer(monthly_veg_params.canopy_coverage),
     )
 
-    bulk_density = nomissing(ds_params[config.input.names.bulk_density][:,:,:], 0.0)
-    
+    bulk_density = nomissing(ds_params[config.input.names.bulk_density][:, :, :], 0.0)
+
     # Quartz content can vary per dataset (e.g., 2D in global, 3D in mekong), so we dynamically check and expand to 3D if needed
     quartz_raw = ds_params[config.input.names.quartz_content]
     quartz_3d = if ndims(quartz_raw) == 2
-        repeat(nomissing(quartz_raw[:,:], 0.0), 1, 1, size(bulk_density, 3))
+        repeat(nomissing(quartz_raw[:, :], 0.0), 1, 1, size(bulk_density, 3))
     else
-        nomissing(quartz_raw[:,:,:], 0.0)
+        nomissing(quartz_raw[:, :, :], 0.0)
     end
 
     soil_params = SoilParameters(
-        nomissing(ds_params[config.input.names.hydraulic_conductivity][:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.depth][:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.initial_moisture][:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.hydraulic_conductivity][:, :, :], 0.0),
+        nomissing(ds_params[config.input.names.depth][:, :, :], 0.0),
+        nomissing(ds_params[config.input.names.initial_moisture][:, :, :], 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),  # calculated later
-        nomissing(ds_params[config.input.names.residual_moisture_fraction][:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.residual_moisture_fraction][:, :, :], 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
-        nomissing(ds_params[config.input.names.critical_moisture_fraction][:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.critical_moisture_fraction][:, :, :], 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
-        nomissing(ds_params[config.input.names.field_capacity_fraction][:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.field_capacity_fraction][:, :, :], 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
-        nomissing(ds_params[config.input.names.wilting_point_fraction][:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.wilting_point_fraction][:, :, :], 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
         quartz_3d,
-        nomissing(ds_params[config.input.names.bare_roughness][:,:], 0.0),
+        nomissing(ds_params[config.input.names.bare_roughness][:, :], 0.0),
         bulk_density,
         zeros(eltype(bulk_density), size(bulk_density)),  # calculated later
-        nomissing(ds_params[config.input.names.particle_density][:,:,:], 0.0),
+        nomissing(ds_params[config.input.names.particle_density][:, :, :], 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
         zeros(eltype(bulk_density), size(bulk_density)),
-        nomissing(ds_params[config.input.names.campbell_n][:,:,:], 0.0),
-        nomissing(ds_params[config.input.names.nijssen_infilt_b][:,:], 0.0),
-        nomissing(ds_params[config.input.names.nijssen_lin_reservoir][:,:], 0.0),
-        nomissing(ds_params[config.input.names.nijssen_nonlin_reservoir][:,:], 0.0),
-        nomissing(ds_params[config.input.names.moisture_depth_baseflow_transition][:,:], 0.0),
-        nomissing(ds_params[config.input.names.column_depth][:,:], 0.0),
-        nomissing(ds_params[config.input.names.baseflow_curve_exp][:,:], 0.0)
+        nomissing(ds_params[config.input.names.campbell_n][:, :, :], 0.0),
+        nomissing(ds_params[config.input.names.nijssen_infilt_b][:, :], 0.0),
+        nomissing(ds_params[config.input.names.nijssen_lin_reservoir][:, :], 0.0),
+        nomissing(ds_params[config.input.names.nijssen_nonlin_reservoir][:, :], 0.0),
+        nomissing(
+            ds_params[config.input.names.moisture_depth_baseflow_transition][:, :],
+            0.0,
+        ),
+        nomissing(ds_params[config.input.names.column_depth][:, :], 0.0),
+        nomissing(ds_params[config.input.names.baseflow_curve_exp][:, :], 0.0),
     )
     return grid_params, veg_params, soil_params, monthly_veg_params
 end
@@ -221,9 +234,11 @@ function read_and_allocate_parameter(varname::String)
 
     # 1) Open netCDF file 
     dataset = NetCDF.open(input_param_file)
-    
+
     if !haskey(dataset.vars, varname)
-        println("  -> WARNING: Variable $varname not found in $input_param_file. Returning nothing.")
+        println(
+            "  -> WARNING: Variable $varname not found in $input_param_file. Returning nothing.",
+        )
         return nothing, nothing
     end
 
@@ -247,7 +262,9 @@ function read_and_allocate_parameter(varname::String)
     try
         pin_memory!(cpu_preload)
     catch e
-        println("  -> WARNING: Failed to pin CPU memory. Transfer will be slower. Error: $e")
+        println(
+            "  -> WARNING: Failed to pin CPU memory. Transfer will be slower. Error: $e",
+        )
     end
 
     # 5) Allocate device memory
@@ -264,4 +281,3 @@ function read_and_allocate_parameter(varname::String)
 
     return cpu_preload, device_arr
 end
-
