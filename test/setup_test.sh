@@ -1,2 +1,2 @@
 set -e
-mkdir -p ../output_data/mekong output_data/indus
+mkdir -p output_data/mekong output_data/indus
