@@ -13,6 +13,7 @@ const GRIDS = Dict{String, Int}(
     "inter_soil_grid" => 2,
     "vegetation_snow_grid" => 3,
 )
+const GRIDS_2D = [GRIDS["2D_grid"], GRIDS["soil_grid"], GRIDS["inter_soil_grid"]]
 
 """
 Mapping of (CSDMS) standard names to the metadata associated with the corresponding
@@ -230,7 +231,7 @@ const standard_routing_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         description = "",
         gridtype = GRIDS["2D_grid"],
-        input = false,
+        input = true,
         output = true,
         tags = [:routing_parameters],    
     )

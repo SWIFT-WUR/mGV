@@ -1,8 +1,3 @@
-"""
-Based on Wflow.jl https://github.com/Deltares/Wflow.jl/blob/main/Wflow/src/bmi.jl 
-MIT License, Copyright (c) 2020 Deltares and contributors
-"""
-
 import BasicModelInterface as BMI
 
 
@@ -19,21 +14,28 @@ end
 
 function BMI.update(model::Model)
     update!(model)
-    return model
+    return nothing
 end
 
 function BMI.update_until(model::Model, time::Float64)
+    model_time = BMI.get_current_time(model)
     end_time = BMI.get_end_time(model)
-    time > 0 || error("Time must be positive, got $time")
-    time <= end_time || error("Time can't exceed the current end time: $end_time")
-    t = BMI.get_current_time(model)
-    _div, _rem = divrem(time-t, model.clock.dt.value)
+    if time == model_time
+        warn("Model is already at time=$time")
+        return nothing
+    elseif time < model_time
+        error("Time must be in the model's future")
+    elseif time > end_time
+        error("Time can't exceed the current end time: $end_time")
+    end
+
+    _div, _rem = divrem(time-model_time, BMI.get_time_step(model))
     steps = Int(_div)
-    steps >= 0 ||
-        error("The current model timestamp $t is larger than the provided 'time' $time")
-    abs(_rem) <= eps() || error(
-        "Provided `time` $time minus timestamp $t is not a multiple of $(model.clock.dt.value)",
-    )
+    if abs(_rem) > eps()
+        error(
+            "Provided `time` $time minus timestamp $t is not a multiple of $(model.clock.dt.value)",
+        )
+    end
 
     for _ = 1:steps
         update!(model)
@@ -79,7 +81,7 @@ function BMI.get_output_item_count(model::Model)
 end
 
 """
-    BMI.get_input_var_names(model::Model)
+    BMI.get_output_var_names(model::Model)
 
 Returns model output variables, based on the `API` section in the model configuration file.
 The layer and band variables are expanded, using the ParameterMetadata flag, adding _layer_N and _band_N at the end of the name.
@@ -114,9 +116,7 @@ function BMI.get_grid_type(model::Model, grid::Int)
 end
 
 function BMI.get_grid_rank(model::Model, grid::Int)
-    if grid == GRIDS["2D_grid"] ||
-       grid == GRIDS["soil_grid"] ||
-       grid == GRIDS["inter_soil_grid"]
+    if grid in GRIDS_2D
         return 2
     elseif grid == GRIDS["vegetation_snow_grid"]
         return 3
@@ -139,15 +139,13 @@ function BMI.get_grid_shape(model::Model, grid::Int)
 end
 
 function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
-    if grid == GRIDS["2D_grid"] ||
-       grid == GRIDS["soil_grid"] ||
-       grid == GRIDS["inter_soil_grid"]
-        shape[1] = length(model.grid_parameters.longitude)
-        shape[2] = length(model.grid_parameters.latitude)
+    if grid in GRIDS_2D
+        shape[1] = length(model.grid_parameters.latitude)
+        shape[2] = length(model.grid_parameters.longitude)
     elseif grid == GRIDS["vegetation_snow_grid"]
         shape[1] = length(model.grid_parameters.vegetation)
-        shape[2] = length(model.grid_parameters.longitude)
-        shape[3] = length(model.grid_parameters.latitude)
+        shape[2] = length(model.grid_parameters.latitude)
+        shape[3] = length(model.grid_parameters.longitude)
     end
     return shape
 end
@@ -159,7 +157,7 @@ function BMI.get_grid_x(model::Model, grid::Int)
 end
 
 function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
-    if grid <= 3
+    if grid in values(GRIDS)
         copyto!(x, model.grid_parameters.longitude)
     else
         error("unknown grid type $grid")
@@ -174,7 +172,7 @@ function BMI.get_grid_y(model::Model, grid::Int)
 end
 
 function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
-    if grid <= 3
+    if grid in values(GRIDS)
         copyto!(y, model.grid_parameters.latitude)
     else
         error("unknown grid type $grid")
@@ -183,11 +181,12 @@ function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
 end
 
 function BMI.get_grid_z(model::Model, grid::Int)
-    if grid in [GRIDS["2D_grid"], GRIDS["soil_grid"], GRIDS["inter_soil_grid"]]
+    if grid == GRIDS["vegetation_snow_grid"] 
+        z=zeros(Int, BMI.get_grid_shape(model, grid)[begin])
+        return BMI.get_grid_z(model, grid, z)
+    else
         error("accessing z-coordinate in 2-rank grid")
     end
-    z=zeros(Int, BMI.get_grid_shape(model, grid)[begin])
-    return BMI.get_grid_z(model, grid, z)
 end
 
 
@@ -195,14 +194,14 @@ function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
     if grid == GRIDS["vegetation_snow_grid"]
         return copyto!(z, model.grid_parameters.vegetation)
     else
-        error("No z-coordinadate for grid value $grid")
+        error("No z-coordinate for grid value $grid")
     end
 end
 
 function BMI.get_grid_size(model::Model, grid::Int)
     y_size = length(model.grid_parameters.latitude)
     x_size = length(model.grid_parameters.longitude)
-    if grid != 3
+    if grid != GRIDS["vegetation_snow_grid"]
         return x_size*y_size
     else
         z_size = length(model.grid_parameters.vegetation)
@@ -250,7 +249,6 @@ function BMI.get_var_nbytes(model::Model, name::String)
     return sizeof(BMI.get_value_ptr(model, name))
 end
 
-# TODO 
 function BMI.get_var_location(model::Model, name::String)
     error("Get var location is not implemented for this model")
 end
@@ -341,17 +339,22 @@ The type and size of `src` must match the model's internal array.
 function BMI.set_value(model::Model, name::String, src)
     l_src = length(src)
     if !check_if_settable(model, name)
-        @warn "Variable $name is not settable, returning nothing"
-        return nothing
+        error("Variable $name is not settable")
+    end
+
+    grid = BMI.get_var_grid(model, name)
+    l_model = BMI.get_grid_size(model, grid)
+    if l_src != l_model
+        error(
+            "Length mismatch between model $(l_model) and src $(l_src) ",
+            "variable $name. Probably you're trying to access a variable without ",
+            "specifying a given layer.\n",
+            "Ratio between lengths: $(l_model/l_src)"
+        )
     end
     mod_var = BMI.get_value_ptr(model, name)
-    l_model = length(mod_var)
-    if l_src != l_model
-        error("Length mismatch between model $(l_model) and src $(l_src) variable $name\n 
-        Probably you're trying to access a variable without specifying a given layer \n
-        Ratio between lenghts $(l_model/l_src)")
-    end
-    return copyto!(mod_var, src)
+    copyto!(mod_var, src)
+    return nothing
 end
 
 """
@@ -363,110 +366,4 @@ function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int},
     dest = BMI.get_value_ptr(model, name)
     dest[inds] = src
     return dest
-end
-
-
-
-
-
-
-# BMI helper functions.
-"""
-Return the standard name representing a layered variable 3D 
-and the layer index `layer_index` based on a standard `name`.
-"""
-function soil_layer_standard_name(name::AbstractString)
-    # Parse new naming format: soil_layer_N_water_... where N is the layer number
-    parts = split(name, "_")
-    layer_index = tryparse(Int, parts[end])
-    if !isnothing(layer_index)
-        # Remove the layer number to get the base name
-        name_layered = join(parts[1:(end-2)], "_")
-        return name_layered, layer_index
-    end
-    # Fallback for unexpected format
-    @warn "Unable to parse layer standard name: $name"
-    return name, nothing
-end
-
-"""
-Return the standard name representing a snow-band variable 3D 
-and the corresponding index `band_index` based on a standard `name`.
-"""
-function snow_band_standard_name(name::AbstractString)
-    # Parse new naming format: snow_band_N where N is the layer number
-    parts = split(name, "_")
-    band_index = tryparse(Int, parts[end])
-    if !isnothing(band_index)
-        # Remove the layer number to get the base name
-        name_without_band = join(parts[1:(end-2)], "_")
-        return name_without_band, band_index
-    end
-    # Fallback for unexpected format
-    @warn "Unable to parse layer standard name: $name"
-    return name, nothing
-end
-
-"""
-Expands the input/output variables name received through API section of the config file. 
-The variables are expandend attaching 'layer_N' or 'band_n' at the end of the name. 
-The ParameterMetadata input/output flags are used to filter the variables accordingly. 
-"""
-function io_var_checker(model::Model, is_input::Bool)
-    config_vars = model.config.API.variables
-    standard_map = get_standard_name_map(model)
-    keep_names = String[]
-
-    filtered = filter(name -> haskey(standard_map, name), config_vars)
-    no_match = filter(name -> !haskey(standard_map, name), config_vars)
-    if is_input
-        filter!(name -> standard_map[name].input, filtered)
-    else
-        filter!(name -> standard_map[name].output, filtered)
-    end
-    if isempty(filtered)
-        return String[]
-    end
-
-    for var in filtered
-        metadata = get_metadata(var, model)
-        if :soil_variables_layer in metadata.tags
-            for j = 1:size(model.soil_parameters.depth, 3)
-                push!(keep_names, var*"_layer_$j")
-            end
-        elseif :soil_variables_interlayer in metadata.tags
-            for j = 1:(size(model.soil_parameters.depth, 3)-1)
-                push!(keep_names, var*"_layer_$j")
-            end
-        elseif (
-            :surface_energy_variables_band in metadata.tags ||
-            :canopy_variables_band in metadata.tags
-        )
-            for j = 1:model.config.nbands
-                push!(keep_names, var*"_band_$j")
-            end
-        else
-            push!(keep_names, var)
-        end
-    end
-    return keep_names
-end
-
-function check_name(model::Model, name::String)
-    if occursin(r"_layer_\d", name)
-        name_2d, = soil_layer_standard_name(name)
-        name = name_2d
-    elseif occursin(r"_band_\d", name)
-        name_2d, = snow_band_standard_name(name)
-        name = name_2d
-    end
-    return get_metadata(name, model)
-end
-
-"""
-Checks if a given variable can be setted looking at the ParameterMetadata input flags. 
-"""
-function check_if_settable(model::Model, name::String)
-    (; input) = check_name(model, name)
-    return input
 end

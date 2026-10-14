@@ -31,7 +31,7 @@ include("routing.jl")
 include("temperature.jl")
 include("postprocess.jl")
 include("io.jl")
-include("units.jl")
+include("bmi/units.jl")
 
 
 const to = TimerOutputs.TimerOutput()
@@ -175,7 +175,6 @@ function Model(config_file::AbstractString)
     )
 end
 
-
 @timeit_all to function update!(model::Model)
     advance!(model.clock)
 
@@ -292,8 +291,9 @@ function run()
 end
 
 
-include("standard_name_utils.jl")
-include("standard_name.jl")
-include("bmi.jl")
+include("bmi/standard_name_utils.jl")
+include("bmi/standard_name.jl")
+include("bmi/helpers.jl")
+include("bmi/bmi.jl")
 
 end # module end
