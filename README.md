@@ -38,7 +38,7 @@ If a GPU is available the code will try to run on GPU instead of CPU. Currently 
 GPU acceleration is confirmed to work and actively supported for Nvidia and AMD hardware.
 
 - Apple Metal is currently not supported due to a lack of testing hardware.
-- Intel OneAPI is not supported due to [a bug in OneAPI.jl](https://github.com/JuliaGPU/oneAPI.jl/issues/575).
+- Intel oneAPI works (tested on Iris Xe integrated graphics), but is not actively supported.
 
 ### Configuration file
 

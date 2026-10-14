@@ -25,6 +25,7 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
+oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [compat]
 AMDGPU = "2.5.1"
@@ -50,3 +51,4 @@ Statistics = "1.11.1"
 TOML = "1.0.3"
 TimerOutputs = "1.2.0"
 Zarr = "0.10.0"
+oneAPI = "2.9.0"
