@@ -41,7 +41,7 @@ function get_value_mean(var_name::String, m::mGV.Model)
 end
 
 @testset "Simple BMI test" begin
-    tomlpath = "../configs/mekong_config.toml"
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
     model = BMI.initialize(mGV.Model, tomlpath)
 
     for i = 1:10
@@ -79,15 +79,13 @@ end
 
     BMI.finalize(model)
     model = nothing
-    GC.gc()
-    sleep(3)
 end
 
 
 
 @testset "Full BMI tests" begin
 
-    tomlpath = "../configs/mekong_config.toml"
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
     model = BMI.initialize(mGV.Model, tomlpath)
     config = mGV.load_config(tomlpath)
     clock = mGV.Clock(config)
@@ -140,9 +138,9 @@ end
         type = BMI.get_var_type(model, name)
         dest = fill(MaxType[type], size)
         BMI.set_value(model, name, dest)
+        BMI.get_value(model, name, dest)
         @test all(dest .== MaxType[type])
     end
-    println(BMI.get_var_units(model, "land_surface__radiation~net~upward_energy_flux"))
 
     time = BMI.get_current_time(model) + (200*BMI.get_time_step(model))
     BMI.update_until(model, time)

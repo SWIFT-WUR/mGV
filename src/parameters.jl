@@ -2,7 +2,6 @@ struct GridParameters{V<:AbstractVector,M<:AbstractMatrix,T<:AbstractArray}
     # Static
     latitude::V
     longitude::V
-    vegetation::V
     elevation::M
     average_temperature::M
     annual_precipitation::M
@@ -139,7 +138,6 @@ function read_parameters(config::Cfg)
     grid_params = GridParameters(
         nomissing(ds_params[config.input.names.latitude][:], 0.0),
         nomissing(ds_params[config.input.names.longitude][:], 0.0),
-        Float32.(1:config.nveg),
         nomissing(ds_params[config.input.names.elevation][:, :], 0.0),
         nomissing(ds_params[config.input.names.average_temperature][:, :], 0.0),
         nomissing(ds_params[config.input.names.annual_precipitation][:, :], 0.0),

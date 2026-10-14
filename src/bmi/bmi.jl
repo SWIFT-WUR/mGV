@@ -143,7 +143,7 @@ function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
         shape[1] = length(model.grid_parameters.latitude)
         shape[2] = length(model.grid_parameters.longitude)
     elseif grid == GRIDS["vegetation_snow_grid"]
-        shape[1] = length(model.grid_parameters.vegetation)
+        shape[1] = model.config.nveg
         shape[2] = length(model.grid_parameters.latitude)
         shape[3] = length(model.grid_parameters.longitude)
     end
@@ -192,21 +192,15 @@ end
 
 function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
     if grid == GRIDS["vegetation_snow_grid"]
-        return copyto!(z, model.grid_parameters.vegetation)
+        return copyto!(z, 1:BMI.get_grid_shape(model, grid)[1])
     else
         error("No z-coordinate for grid value $grid")
     end
 end
 
 function BMI.get_grid_size(model::Model, grid::Int)
-    y_size = length(model.grid_parameters.latitude)
-    x_size = length(model.grid_parameters.longitude)
-    if grid != GRIDS["vegetation_snow_grid"]
-        return x_size*y_size
-    else
-        z_size = length(model.grid_parameters.vegetation)
-        return x_size*y_size*z_size
-    end
+    shape = BMI.get_grid_shape(model, grid)
+    return prod(shape)
     error("unknown grid type $grid")
 end
 
@@ -280,7 +274,7 @@ end
     BMI.get_value(model::Model, name::String, dest)
 """
 function BMI.get_value(model::Model, name::String, dest)
-    copyto!(dest, copy(BMI.get_value_ptr(model, name)))
+    copyto!(dest, BMI.get_value_ptr(model, name))
     return dest
 end
 
