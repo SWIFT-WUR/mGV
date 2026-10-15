@@ -46,7 +46,6 @@ function io_var_checker(model::Model, is_input::Bool)
     keep_names = String[]
 
     filtered = filter(name -> haskey(standard_map, name), config_vars)
-    no_match = filter(name -> !haskey(standard_map, name), config_vars)
     if is_input
         filter!(name -> standard_map[name].input, filtered)
     else
