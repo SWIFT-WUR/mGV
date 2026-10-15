@@ -274,7 +274,13 @@ end
     BMI.get_value(model::Model, name::String, dest)
 """
 function BMI.get_value(model::Model, name::String, dest)
-    copyto!(dest, BMI.get_value_ptr(model, name))
+    if occursin(r"_band_\d", name)
+        #the extra copy is needed to create a dense vector from 
+        # non-contiguous gpu arrays (nbands)
+        copyto!(dest, copy(BMI.get_value_ptr(model, name)))
+    else
+        copyto!(dest, BMI.get_value_ptr(model, name))
+    end
     return dest
 end
 
