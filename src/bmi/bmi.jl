@@ -188,7 +188,7 @@ function BMI.get_grid_z(model::Model, grid::Int)
 end
 
 
-function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
+function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
     if grid == GRIDS["vegetation_snow_grid"]
         return copyto!(z, 1:BMI.get_grid_shape(model, grid)[1])
     else
