@@ -325,7 +325,13 @@ end
 """
 function BMI.get_value_at_indices(model::Model, name::String, dest, inds::Vector{Int})
     src = BMI.get_value_ptr(model, name)
-    copyto!(dest, src[inds])
+    if occursin(r"_band_\d", name)
+        #the extra copy is needed to create a dense vector from 
+        # non-contiguous gpu arrays (nbands)
+        copyto!(dest, copy(src)[inds])
+    else
+        copyto!(dest, src[inds])
+    end
     return dest
 end
 
