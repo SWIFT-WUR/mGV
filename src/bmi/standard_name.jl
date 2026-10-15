@@ -110,6 +110,20 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables_layer],    
     ),
+    "soil__moisture~maximum" => ParameterMetadata(;
+        lens = @optic(_.soil_parameters.maximum_moisture),
+        unit = Unit(; mm = 1),
+        description = (
+            "Maximum soil moisture, as water depth per layer. " *
+            "Note that the critical_moisture, field_capacity and wilting_point are " *
+            "derived from this variable at initialization. So when modifying this " *
+            "variable, consider also modifying those."
+        ),
+        gridtype = GRIDS["soil_grid"],
+        input = true,
+        output = false,
+        tags = [:soil_variables_layer],    
+    ),
     "soil__temperature" => ParameterMetadata(;
         lens = @optic(_.soil_variables.temperature),
         unit = Unit(),

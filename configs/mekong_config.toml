@@ -35,6 +35,7 @@ variables = [
     "land_surface__temperature",
     "land_surface__evaporation~total",
     "soil__moisture",
+    "soil__moisture~maximum",
     "soil__temperature",
     "soil__ice_fraction",
     "soil__drainage~interlayer",
