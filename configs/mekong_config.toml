@@ -35,6 +35,7 @@ variables = [
     "land_surface__temperature",
     "land_surface__evaporation~total",
     "soil__moisture",
+    "soil__moisture~maximum",
     "soil__temperature",
     "soil__ice_fraction",
     "soil__drainage~interlayer",
@@ -47,5 +48,6 @@ variables = [
     "land_vegetation_canopy__evaporation",
     "channel__length",
     "channel__cell_area",
-    "channel_water__area~cross-sectional"
+    "channel_water__area~cross-sectional",
+    "channel_water__volume_flow_rate"
 ]
