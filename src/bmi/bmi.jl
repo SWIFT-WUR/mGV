@@ -359,7 +359,16 @@ function BMI.set_value(model::Model, name::String, src)
         )
     end
     mod_var = BMI.get_value_ptr(model, name)
-    copyto!(mod_var, src)
+    if occursin(r"_band_\d", name)
+        grid = BMI.get_var_grid(model, name)
+        size = BMI.get_grid_size(model, grid)
+        type = BMI.get_var_type(model, name)
+        tmp = similar(mod_var, type, size)
+        copyto!(tmp, src)
+        mod_var .= reshape(tmp, size(mod_var))
+    else
+        copyto!(mod_var, src)
+    end
     return nothing
 end
 
