@@ -147,3 +147,41 @@ end
     BMI.update_until(model, time)
     @test BMI.get_current_time(model) == time
 end
+
+
+@testset "External groundwater routing" begin
+    # Paths in the config are relative to the config file, so write the modified
+    #  config next to the original one. Use a separate output directory to avoid
+    #  clashing with output files still opened by other models.
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    toml = replace(
+        read(tomlpath, String),
+        "external_groundwater_routing = false" => "external_groundwater_routing = true",
+        "../output_data/mekong/" => escape_string(mktempdir()),
+    )
+    gw_tomlpath, io = mktemp(dirname(tomlpath))
+    write(io, toml)
+    close(io)
+
+    try
+        model = BMI.initialize(mGV.Model, gw_tomlpath)
+        @test model.config.API.external_groundwater_routing
+
+        for i = 1:10
+            BMI.update(model)
+        end
+
+        get_var(name) = Array(BMI.get_value_ptr(model, name))
+        surface = get_var("land_surface__runoff")
+        subsurface = get_var("land_subsurface__runoff")
+        total = get_var("land__runoff~total")
+
+        # subsurface runoff is computed, but not passed on to the routing
+        @test any(x -> !isnan(x) && x > 0, subsurface)
+        @test isequal(total, surface)
+
+        BMI.finalize(model)
+    finally
+        rm(gw_tomlpath)
+    end
+end

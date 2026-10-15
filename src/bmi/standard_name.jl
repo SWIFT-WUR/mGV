@@ -192,7 +192,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     "land_subsurface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.subsurface_runoff),
         unit = Unit(),
-        description = "",
+        description = "Baseflow from the bottom soil layer. Acts as groundwater recharge when `external_groundwater_routing = true`",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
@@ -201,7 +201,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     "land__runoff~total" => ParameterMetadata(;
         lens = @optic(_.soil_variables.total_runoff),
         unit = Unit(),
-        description = "",
+        description = "Runoff into the river routing. Excludes subsurface runoff when `external_groundwater_routing = true`",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,

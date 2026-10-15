@@ -412,7 +412,13 @@ end
 function update_total_runoff!(model)
     (; surface_runoff, subsurface_runoff, total_runoff) = model.soil_variables
 
-    @. total_runoff = surface_runoff + subsurface_runoff
+    if model.config.API.external_groundwater_routing
+        # Subsurface runoff is handed to an external groundwater model through BMI
+        #  (`land_subsurface__runoff`), so only surface runoff enters the routing.
+        total_runoff .= surface_runoff
+    else
+        @. total_runoff = surface_runoff + subsurface_runoff
+    end
 
     return nothing
 end
