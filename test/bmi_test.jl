@@ -131,6 +131,10 @@ end
         dest = fill(MaxType[type], size)
         BMI.get_value(model, name, dest)
         @test all(dest .!= MaxType[type])
+
+        dest = fill(MaxType[type], 3)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        @test all(dest .!= MaxType[type])
     end
 
     for name in in_vars
@@ -141,6 +145,12 @@ end
         BMI.set_value(model, name, dest)
         BMI.get_value(model, name, dest)
         @test all(dest .== MaxType[type])
+
+        dest = fill(MaxType[type], 3)
+        BMI.set_value_at_indices(model, name, dest, [1, 100, size])
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        @test all(dest .== MaxType[type])
+
     end
 
     time = BMI.get_current_time(model) + (200*BMI.get_time_step(model))

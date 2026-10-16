@@ -1,4 +1,16 @@
 # BMI helper functions.
+const TYPES = Dict(
+    "Float16" => Float16,
+    "Float32" => Float32,
+    "Float64" => Float64,
+    "UInt8" => UInt8,
+    "UInt16" => UInt16,
+    "UInt32" => UInt32,
+    "Int16" => Int16,
+    "Int32" => Int32,
+    "Int64" => Int64,
+)
+
 """
 Return the standard name representing a layered variable 3D 
 and the layer index `layer_index` based on a standard `name`.
@@ -46,7 +58,6 @@ function io_var_checker(model::Model, is_input::Bool)
     keep_names = String[]
 
     filtered = filter(name -> haskey(standard_map, name), config_vars)
-    no_match = filter(name -> !haskey(standard_map, name), config_vars)
     if is_input
         filter!(name -> standard_map[name].input, filtered)
     else
