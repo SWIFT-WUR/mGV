@@ -373,6 +373,15 @@ Set a model variable `name` to the values in `src`, at indices `inds`.
 """
 function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
     dest = BMI.get_value_ptr(model, name)
-    dest[inds] = src
+
+    if occursin(r"_band_\d", name)
+        #the extra copy is needed to create a dense vector from 
+        # non-contiguous gpu arrays (nbands)
+        tmp = copy(dest)
+        tmp[inds] = src
+        dest .= reshape(tmp, Base.size(dest)) 
+    else 
+        dest[inds] = src
+    end
     return dest
 end
