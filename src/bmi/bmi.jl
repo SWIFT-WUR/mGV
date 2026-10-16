@@ -373,11 +373,11 @@ function BMI.set_value(model::Model, name::String, src)
 end
 
 """
-    BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+    BMI.set_value_at_indices(model::Model, name::String, src, inds::Vector{Int})
 
 Set a model variable `name` to the values in `src`, at indices `inds`.
 """
-function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+function BMI.set_value_at_indices(model::Model, name::String, src, inds::Vector{Int})
     dest = BMI.get_value_ptr(model, name)
 
     if occursin(r"_band_\d", name)
