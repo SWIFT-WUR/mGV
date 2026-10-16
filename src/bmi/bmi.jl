@@ -357,9 +357,9 @@ function BMI.set_value(model::Model, name::String, src)
         grid = BMI.get_var_grid(model, name)
         size = BMI.get_grid_size(model, grid)
         type = BMI.get_var_type(model, name)
-        tmp = similar(mod_var, type, size)
+        tmp = similar(mod_var, TYPES[type], size)
         copyto!(tmp, src)
-        mod_var .= reshape(tmp, size(mod_var))
+        mod_var .= reshape(tmp, Base.size(mod_var))
     else
         copyto!(mod_var, src)
     end
