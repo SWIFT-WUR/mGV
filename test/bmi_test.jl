@@ -146,6 +146,29 @@ end
     time = BMI.get_current_time(model) + (200*BMI.get_time_step(model))
     BMI.update_until(model, time)
     @test BMI.get_current_time(model) == time
+
+    BMI.finalize(model)
+end
+
+
+@testset "BMI units" begin
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    model = BMI.initialize(mGV.Model, tomlpath)
+    BMI.update(model)
+
+    # Values are exchanged in the model's native units
+    @test BMI.get_var_units(model, "land_subsurface__runoff") == "mm day-1"
+    @test BMI.get_var_units(model, "land_surface__temperature") == "degC"
+    @test BMI.get_var_units(model, "soil__moisture_layer_1") == "mm"
+    @test BMI.get_var_units(model, "channel_water__volume_flow_rate") == "m3 s-1"
+    @test BMI.get_var_units(model, "soil__ice_fraction_layer_1") == "-"
+
+    name = "land_subsurface__runoff"
+    dest = zeros(Float32, length(BMI.get_value_ptr(model, name)))
+    BMI.get_value(model, name, dest)
+    @test isequal(dest, Array(BMI.get_value_ptr(model, name)))
+
+    BMI.finalize(model)
 end
 
 
