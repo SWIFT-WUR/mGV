@@ -36,7 +36,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         unit = Unit(),
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
-        input = false,
+        input = true,
         output = true,
         tags = [:surface_energy_variables_band],    
     ),
