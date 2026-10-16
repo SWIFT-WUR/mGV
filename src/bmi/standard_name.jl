@@ -33,7 +33,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land_surface__evaporation~potential" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.potential_evaporation),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
         input = false,
@@ -42,7 +42,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land_surface__evaporation~potential~soil" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.soil_potential_evaporation),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
         input = false,
@@ -51,7 +51,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "atmosphere_bottom_air__resistance~aerodynamic" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.aerodynamic_resistance),
-        unit = Unit(),
+        unit = Unit(; s = 1, m = -1),
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
         input = false,
@@ -62,7 +62,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     # 2D
     "land_surface__temperature" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.surface_temperature),
-        unit = Unit(),
+        unit = Unit(; degC = 1),
         description = "",
         gridtype = GRIDS["2D_grid"],
         input = false,
@@ -71,7 +71,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land_surface__evaporation~total" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.total_evapotranspiration),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["2D_grid"],
         input = false,
@@ -103,8 +103,8 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     #Soil variables > 2D
     "soil__moisture" => ParameterMetadata(;
         lens = @optic(_.soil_variables.moisture),
-        unit = Unit(),
-        description = "",
+        unit = Unit(; mm = 1),
+        description = "Soil moisture, as water depth per layer.",
         gridtype = GRIDS["soil_grid"],
         input = true,
         output = true,
@@ -126,7 +126,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "soil__temperature" => ParameterMetadata(;
         lens = @optic(_.soil_variables.temperature),
-        unit = Unit(),
+        unit = Unit(; degC = 1),
         description = "",
         gridtype = GRIDS["soil_grid"],
         input = false,
@@ -144,7 +144,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "soil__drainage~interlayer" => ParameterMetadata(;
         lens = @optic(_.soil_variables.interlayer_drainage),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["inter_soil_grid"],
         input = false,
@@ -153,7 +153,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "soil__thermal_conductivity" => ParameterMetadata(;
         lens = @optic(_.soil_variables.thermal_conductivity),
-        unit = Unit(),
+        unit = Unit(; J = 1, s = -1, m = -1, K = -1),
         description = "",
         gridtype = GRIDS["soil_grid"],
         input = false,
@@ -164,7 +164,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     #2D
     "soil__evaporation" => ParameterMetadata(;
         lens = @optic(_.soil_variables.evaporation),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["2D_grid"],
         input = false,
@@ -173,7 +173,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "soil__infiltration" => ParameterMetadata(;
         lens = @optic(_.soil_variables.infiltration),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["2D_grid"],
         input = false,
@@ -182,7 +182,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land_surface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.surface_runoff),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["2D_grid"],
         input = false,
@@ -191,8 +191,8 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land_subsurface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.subsurface_runoff),
-        unit = Unit(),
-        description = "",
+        unit = Unit(; mm = 1, d = -1),
+        description = "Baseflow from the bottom soil layer. Acts as groundwater recharge when `external_groundwater_routing = true`",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
@@ -200,8 +200,8 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land__runoff~total" => ParameterMetadata(;
         lens = @optic(_.soil_variables.total_runoff),
-        unit = Unit(),
-        description = "",
+        unit = Unit(; mm = 1, d = -1),
+        description = "Runoff into the river routing. Excludes subsurface runoff when `external_groundwater_routing = true`",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
@@ -211,7 +211,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     #Canopy variables >2d
     "land_vegetation_canopy__evaporation" => ParameterMetadata(;
         lens = @optic(_.canopy_variables.canopy_evaporation),
-        unit = Unit(),
+        unit = Unit(; mm = 1, d = -1),
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
         input = false,
@@ -224,6 +224,15 @@ const standard_routing_map = OrderedDict{String, ParameterMetadata}(
     #Routing parameters
     "channel__length" => ParameterMetadata(;
         lens = @optic(_.routing.length),
+        unit = Unit(; m = 1),
+        description = "",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:routing_parameters],    
+    ),
+    "channel__width" => ParameterMetadata(;
+        lens = @optic(_.routing.width),
         unit = Unit(; m = 1),
         description = "",
         gridtype = GRIDS["2D_grid"],
