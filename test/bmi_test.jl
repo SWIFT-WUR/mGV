@@ -6,17 +6,6 @@ using Statistics: mean
 using mGV
 using Dates
 
-const TYPES = Dict(
-    "Float16" => Float16,
-    "Float32" => Float32,
-    "Float64" => Float64,
-    "UInt8" => UInt8,
-    "UInt16" => UInt16,
-    "UInt32" => UInt32,
-    "Int16" => Int16,
-    "Int32" => Int32,
-    "Int64" => Int64,
-)
 const MaxType = Dict(
     "Float16" => floatmax(Float16),
     "Float32" => floatmax(Float32),
@@ -29,7 +18,7 @@ const MaxType = Dict(
     "Int64" => typemax(Int64),
 )
 function _zeros(type::String, size::Int)
-    return zeros(TYPES[type], size)
+    return zeros(mGV.TYPES[type], size)
 end
 
 function get_value_mean(var_name::String, m::mGV.Model)
