@@ -182,7 +182,7 @@ end
 
 function BMI.get_grid_z(model::Model, grid::Int)
     if grid == GRIDS["vegetation_snow_grid"] 
-        z=zeros(Int, BMI.get_grid_shape(model, grid)[begin])
+        z=zeros(Float64, BMI.get_grid_shape(model, grid)[begin])
         return BMI.get_grid_z(model, grid, z)
     else
         error("accessing z-coordinate in 2-rank grid")
@@ -190,7 +190,7 @@ function BMI.get_grid_z(model::Model, grid::Int)
 end
 
 
-function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
+function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
     if grid == GRIDS["vegetation_snow_grid"]
         return copyto!(z, 1:BMI.get_grid_shape(model, grid)[1])
     else
@@ -274,7 +274,13 @@ end
     BMI.get_value(model::Model, name::String, dest)
 """
 function BMI.get_value(model::Model, name::String, dest)
-    copyto!(dest, BMI.get_value_ptr(model, name))
+    if occursin(r"_band_\d", name)
+        #the extra copy is needed to create a dense vector from 
+        # non-contiguous gpu arrays (nbands)
+        copyto!(dest, copy(BMI.get_value_ptr(model, name)))
+    else
+        copyto!(dest, BMI.get_value_ptr(model, name))
+    end
     return dest
 end
 
@@ -319,7 +325,13 @@ end
 """
 function BMI.get_value_at_indices(model::Model, name::String, dest, inds::Vector{Int})
     src = BMI.get_value_ptr(model, name)
-    copyto!(dest, src[inds])
+    if occursin(r"_band_\d", name)
+        #the extra copy is needed to create a dense vector from 
+        # non-contiguous gpu arrays (nbands)
+        copyto!(dest, copy(src)[inds])
+    else
+        copyto!(dest, src[inds])
+    end
     return dest
 end
 
@@ -347,17 +359,38 @@ function BMI.set_value(model::Model, name::String, src)
         )
     end
     mod_var = BMI.get_value_ptr(model, name)
-    copyto!(mod_var, src)
+    if occursin(r"_band_\d", name)
+        grid = BMI.get_var_grid(model, name)
+        size = BMI.get_grid_size(model, grid)
+        type = BMI.get_var_type(model, name)
+        tmp = similar(mod_var, TYPES[type], size)
+        copyto!(tmp, src)
+        mod_var .= reshape(tmp, Base.size(mod_var))
+    else
+        copyto!(mod_var, src)
+    end
     return nothing
 end
 
 """
-    BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+    BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, value)
 
-Set a model variable `name` to the values in `src`, at indices `inds`.
+Set a model variable `name` to the values in `value`, at indices `inds`.
 """
-function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, value)
+    if !check_if_settable(model, name)
+        error("Variable $name is not settable")
+    end
     dest = BMI.get_value_ptr(model, name)
-    dest[inds] = src
+
+    if occursin(r"_band_\d", name)
+        #the extra copy is needed to create a dense vector from 
+        # non-contiguous gpu arrays (nbands)
+        tmp = copy(dest)
+        tmp[inds] = value
+        dest .= reshape(tmp, Base.size(dest)) 
+    else 
+        dest[inds] = value
+    end
     return dest
 end

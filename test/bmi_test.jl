@@ -6,17 +6,6 @@ using Statistics: mean
 using mGV
 using Dates
 
-const TYPES = Dict(
-    "Float16" => Float16,
-    "Float32" => Float32,
-    "Float64" => Float64,
-    "UInt8" => UInt8,
-    "UInt16" => UInt16,
-    "UInt32" => UInt32,
-    "Int16" => Int16,
-    "Int32" => Int32,
-    "Int64" => Int64,
-)
 const MaxType = Dict(
     "Float16" => floatmax(Float16),
     "Float32" => floatmax(Float32),
@@ -29,7 +18,7 @@ const MaxType = Dict(
     "Int64" => typemax(Int64),
 )
 function _zeros(type::String, size::Int)
-    return zeros(TYPES[type], size)
+    return zeros(mGV.TYPES[type], size)
 end
 
 function get_value_mean(var_name::String, m::mGV.Model)
@@ -131,12 +120,22 @@ end
         dest = fill(MaxType[type], size)
         BMI.get_value(model, name, dest)
         @test all(dest .!= MaxType[type])
+
+        dest = fill(MaxType[type], 3)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        @test all(dest .!= MaxType[type])
     end
 
     for name in in_vars
+        type = BMI.get_var_type(model, name)
         grid = BMI.get_var_grid(model, name)
         size = BMI.get_grid_size(model, grid)
-        type = BMI.get_var_type(model, name)
+
+        dest = fill(MaxType[type], 3)
+        BMI.set_value_at_indices(model, name, [1, 100, size], dest)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        @test all(dest .== MaxType[type])
+
         dest = fill(MaxType[type], size)
         BMI.set_value(model, name, dest)
         BMI.get_value(model, name, dest)
