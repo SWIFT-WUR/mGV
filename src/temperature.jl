@@ -123,14 +123,14 @@ function update_surface_temperature!(model)
     # 1. Calculate weighted albedo correctly across all tiles (Veg + Soil)
     # This ensures the bare soil albedo is included 
     # 2. Calculate ra_eff correctly (Inverse weighted sum)
-    mean_albedo_resistance_kernel!(device_backend)(
+    mean_albedo_resistance_kernel!(get_backend(mean_albedo))(
         mean_albedo, effective_aerodynamic_resistance,
         snow_band_area_fraction, vegetation_fraction, albedo, aerodynamic_resistance;
         ndrange = size(surface_temperature)
     )
 
     # 3. Call the kernel
-    kernel = surface_temp_kernel!(device_backend)
+    kernel = surface_temp_kernel!(get_backend(surface_temperature))
     
     @views kernel(
         surface_temperature,

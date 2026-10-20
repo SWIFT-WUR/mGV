@@ -1,9 +1,9 @@
 include("async_writer.jl")
 
-function create_transfer_buffer(nx, ny, nlayers)
+function create_transfer_buffer(nx, ny, nlayers, backend::Backend = CPU())
     function make_pinned(dims...)
         A = zeros(Float32, dims...)
-        pin_memory!(A)
+        pin_memory!(backend, A)
         return A
     end
 
@@ -261,6 +261,7 @@ function start_io_service(
 )
     nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
 
+    backend = get_backend(grid_parameters.elevation)
     grid_parameters = adapt(Array, grid_parameters)
     nx = length(grid_parameters.longitude)
     ny = length(grid_parameters.latitude)
@@ -278,7 +279,7 @@ function start_io_service(
 
     # Start the async pool 
     println("Starting Async I/O Service...")
-    io_service = start_async_service(nx, ny, nlayers, output_store, 6)
+    io_service = start_async_service(nx, ny, nlayers, output_store, backend, 6)
     return OutputWriter(io_service, output_store)
 end
 

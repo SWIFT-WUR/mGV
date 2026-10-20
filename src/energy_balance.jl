@@ -167,7 +167,7 @@ function calculate_net_radiation!(
     (; surface_temperature, net_radiation) = surface_energy_variables
     (; coverage) = snow_variables
 
-    net_radiation_snow_kernel!(device_backend)(
+    net_radiation_snow_kernel!(get_backend(net_radiation))(
         net_radiation,
         albedo, surface_temperature,
         shortwave_down, longwave_down,
@@ -249,7 +249,7 @@ function calculate_potential_evaporation!(
     (; net_radiation, aerodynamic_resistance) = surface_energy_variables
     (; air_temperature, surface_pressure, vapor_pressure) = forcing_variables
 
-    potential_evaporation_kernel!(device_backend)(
+    potential_evaporation_kernel!(get_backend(potential_evaporation))(
         potential_evaporation,
         air_temperature,
         surface_pressure,

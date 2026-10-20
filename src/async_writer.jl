@@ -11,7 +11,7 @@ Starts the Async service.
 - Allocates `n_buffers` (default 4) to absorb disk latency spikes.
 - Starts the background thread that handles the actual writing.
 """
-function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
+function start_async_service(nx, ny, nlayers, output_store, backend::Backend, n_buffers=4)
     # 1. Create Channels with fixed capacity
     free_pool = Channel{TransferBuffer}(n_buffers)
     job_queue = Channel{Tuple{Int, TransferBuffer}}(n_buffers)
@@ -19,7 +19,7 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
     # 2. Allocate (pinned) memory buffers
     println("  -> Allocating $n_buffers pinned buffers for Async Pool...")
     for _ in 1:n_buffers
-        buf = create_transfer_buffer(nx, ny, nlayers)
+        buf = create_transfer_buffer(nx, ny, nlayers, backend)
         put!(free_pool, buf)
     end
 

@@ -197,7 +197,7 @@ function process_daily_outputs(model)
     out = model.output_buffers
 
     # 1. Launch the Fused Kernel, writing all 2D aggregates in one pass
-    kernel_launcher! = fused_preprocess_kernel!(device_backend)
+    kernel_launcher! = fused_preprocess_kernel!(get_backend(out.potential_evaporation))
     kernel_launcher!(
         out.potential_evaporation, out.net_radiation, out.transpiration,
         out.canopy_evaporation, out.water_storage,

@@ -117,7 +117,7 @@ function calculate_surface_runoff!(
     b_i, cv_grid, AreaFract
 )
 
-    kernel_launcher! = surface_runoff_kernel!(device_backend)    
+    kernel_launcher! = surface_runoff_kernel!(get_backend(surface_runoff))    
     nx, ny = size(surface_runoff)
     
     kernel_launcher!(
@@ -350,7 +350,7 @@ function solve_runoff_and_drainage!(
     soil_moisture_max, ksat, residual_moisture, expt,
     Dsmax, Ds, Ws, c_expt
 )
-    kernel_launcher! = runoff_drainage_kernel!(device_backend)
+    kernel_launcher! = runoff_drainage_kernel!(get_backend(soil_moisture))
     nx, ny = size(surface_inflow)
     
     kernel_launcher!(
@@ -397,7 +397,7 @@ function calculate_infiltration!(
     infiltration, throughfall, surface_runoff, cv_grid, area_fraction
 )
 
-    kernel! = infiltration_kernel!(device_backend)
+    kernel! = infiltration_kernel!(get_backend(infiltration))
     nx, ny  = size(infiltration)
 
     # Launch kernel
