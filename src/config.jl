@@ -68,7 +68,7 @@ end
     # Forcing
     precipitation::String = "prec"
     air_temperature::String = "tair"
-    wind_speed::String = "wind" 
+    wind_speed::String = "wind"
     vapor_pressure::String = "vp"
     shortwave_down::String = "swdown"
     longwave_down::String = "lwdown"
@@ -90,6 +90,10 @@ end
     variables::Union{Nothing, Vector{String}} = nothing
 end
 
+@option "API" struct APISection
+    variables::Vector{String} = []
+end
+
 @option "config" struct Cfg
     nveg::Int = 14  # number of vegetation types
     enable_routing::Bool = true
@@ -97,12 +101,13 @@ end
     lon_var::String = "lon"
     enable_snow::Bool = true
     nbands::Int = 5  # snow bands (alternatively, derive from input data)
-    fillvalue_threshold::Float32 = 1f15
+    fillvalue_threshold::Float32 = 1.0f15
     start_year::Int
     end_year::Int
     timestep::Int = 86400  # seconds
     input::InputCfg
     output::OutputCfg
+    API::APISection = APISection()
 end
 
 """Validate the path of a file relative to the given directory."""
@@ -135,7 +140,8 @@ function load_config(config_file)
 
     # Make output dir path absolute, relative to the config file location
     if !isabspath(cfg_dict["output"]["dir"])
-        cfg_dict["output"]["dir"] = abspath(joinpath(dirname(config_file), cfg_dict["output"]["dir"]))
+        cfg_dict["output"]["dir"] =
+            abspath(joinpath(dirname(config_file), cfg_dict["output"]["dir"]))
     end
     if !isdir(cfg_dict["output"]["dir"])
         error("Output directory '$(cfg_dict["output"]["dir"])' does not exist")
