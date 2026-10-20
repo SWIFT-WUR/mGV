@@ -1,12 +1,12 @@
-const MIN_SLOPE = 1f-4    # Minimum channel slope [m/m]
+const MIN_SLOPE = 1.0f-4    # Minimum channel slope [m/m]
 const MANNING_N = 3.5f-2
-const ROUTING_DT = 600f0  # timestep in seconds
-const MAX_RIVER_VELOCITY = 6f0  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
+const ROUTING_DT = 600.0f0  # timestep in seconds
+const MAX_RIVER_VELOCITY = 6.0f0  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
 
 using Atomix: @atomic
 
 
-struct RoutingState{F <: AbstractVector, I <:AbstractVector}
+struct RoutingState{F<:AbstractVector,I<:AbstractVector}
     # --- Topography ---
     # Downstream index is integer
     downstream_idx::I
@@ -17,6 +17,7 @@ struct RoutingState{F <: AbstractVector, I <:AbstractVector}
     width::F
     cell_area::F
     accumulation::F
+    alpha::F  # Manning coefficient sqrt(slope) / n * width^(-2/3), Q = alpha * A^(5/3)
 
     # --- State ---
     area::F
@@ -73,7 +74,7 @@ function RoutingState(config, elevation)
     id_to_index = Dict{Int32,Int32}()
 
     # A. Map every valid ID to its 1-based linear index
-    for i in 1:n_total
+    for i = 1:n_total
         id_val = raw_ids[i]
         if id_val != -1
             id_to_index[id_val] = Int32(i)
@@ -83,7 +84,7 @@ function RoutingState(config, elevation)
     # B. Build the downstream pointer array
     cpu_downstream = fill(Int32(-1), n_total)
 
-    for i in 1:n_total
+    for i = 1:n_total
         # Where does cell i want to go?
         target_val = raw_target[i]
 
@@ -102,44 +103,52 @@ function RoutingState(config, elevation)
     # 3. Physics & geometry 
     flat_dist = vec(raw_dist)
     flat_area = vec(raw_area)
-    flat_acc  = vec(raw_acc)
+    flat_acc = vec(raw_acc)
 
     # Calculate width ≈ C * sqrt(Accumulation)
     # Convert accumulation from m2 -> km2 for the formula
-    acc_km2 = flat_acc ./ 1f6
+    acc_km2 = flat_acc ./ 1.0f6
 
     # Width formula: 7 * sqrt(Area_km2). Clamp to [2m, 2000m]
     # Handle NaNs by defaulting to minimum width
-    flat_width = map(x -> isnan(x) ? 2f0 : clamp(7f0 * sqrt(x), 2f0, 2f3), acc_km2)
+    flat_width = map(x -> isnan(x) ? 2.0f0 : clamp(7.0f0 * sqrt(x), 2.0f0, 2.0f3), acc_km2)
 
     # Slope is constructed from elevation difference over distance
     flat_elev = Float32.(vec(elevation))
     flat_slope = fill(MIN_SLOPE, n_total)
-    
-    for i in 1:n_total
+
+    for i = 1:n_total
         dest_idx = cpu_downstream[i]
-        
+
         if dest_idx != -1
             dist = flat_dist[i]
-            
+
             # Simple downstream slope calculation bounded by minimum slope and missing data
-            if dist > 0f0 && !isnan(dist) && !isnan(flat_elev[i]) && !isnan(flat_elev[dest_idx])
+            if dist > 0.0f0 &&
+               !isnan(dist) &&
+               !isnan(flat_elev[i]) &&
+               !isnan(flat_elev[dest_idx])
                 s = (flat_elev[i] - flat_elev[dest_idx]) / dist
                 flat_slope[i] = max(s, MIN_SLOPE)
             end
         end
     end
 
+    # Manning coefficient only depends on static geometry, so compute it once here
+    # instead of in every routing sub-step
+    flat_alpha = @. (sqrt(flat_slope) / MANNING_N) * (flat_width^-0.66666667f0) # -2/3
+
     # 4. Allocate GPU state 
     println("  -> Allocating Routing State on GPU...")
 
     r_state = RoutingState(
-        cpu_downstream, 
-        Float32.(flat_dist),      
+        cpu_downstream,
+        Float32.(flat_dist),
         Float32.(flat_slope),
         Float32.(flat_width),
         Float32.(flat_area),
         Float32.(flat_acc),
+        Float32.(flat_alpha),
         # State vectors initialized to zero
         # alloc(n_total) defaults to FloatType
         zeros(Float32, n_total), # area
@@ -149,17 +158,28 @@ function RoutingState(config, elevation)
         zeros(Float32, n_total), # inflow_current
         zeros(Float32, n_total), # inflow_next
         # Violation (of max speed) counter (1-element Int32 array)
-        zeros(Int32,1)
+        zeros(Int32, 1),
     )
 
     println("  -> Routing Initialized Successfully.")
     return r_state
 end
 
-@kernel function kinematic_wave_kernel!(area, discharge, inflow_next, inflow_current,
-    cfl_buffer, travel_time_buffer,
-    runoff_forcing_flat, downstream_idx, lengths,
-    slopes, widths, cell_areas, dt, n)
+@kernel function kinematic_wave_kernel!(
+    area,
+    discharge,
+    inflow_next,
+    inflow_current,
+    cfl_buffer,
+    travel_time_buffer,
+    runoff_forcing_flat,
+    downstream_idx,
+    lengths,
+    alphas,
+    cell_areas,
+    dt,
+    n,
+)
     # violation_counter)
 
     # Backend-agnostic indexing
@@ -178,20 +198,18 @@ end
 
         # Mass balance
         dAdt = (Q_total_in - Q_old) / lengths[i] # Rate of change of stored water
-        A_new = max(A_old + dAdt * dt, 0f0) # Update amount of water in channel
+        A_new = max(A_old + dAdt * dt, 0.0f0) # Update amount of water in channel
 
         # Momentum (Manning's equation)
-        width = widths[i]
-        slope = slopes[i]
-        alpha = (sqrt(slope) / MANNING_N) * (width^-0.66666667f0) # -2/3
-        Q_new = alpha * (A_new^1.66666667f0)  # 5/3
+        # A_new^(5/3) as A_new * cbrt(A_new)^2: ~5x cheaper than pow on GPU
+        Q_new = alphas[i] * (A_new * cbrt(A_new)^2)
 
         # Velocity capping
         # We calculate the theoretical velocity
-        v = 0f0
-        if A_new > 1f-6
+        v = 0.0f0
+        if A_new > 1.0f-6
             v = Q_new / A_new
-            
+
             # Check against the limit             
             if v > MAX_RIVER_VELOCITY
                 v = MAX_RIVER_VELOCITY # Clamp velocity
@@ -202,16 +220,16 @@ end
         end
 
         # CFL and travel time     
-        current_cfl = 0f0
+        current_cfl = 0.0f0
         t_time = NaN32
 
-        if A_new > 1f-4 # Threshold for "water exists"
+        if A_new > 1.0f-4 # Threshold for "water exists"
             v = Q_new / A_new # Speed of the water
             c = 1.66666667f0 * v # Wave celerity c = 5/3 * v
             current_cfl = (c * dt) / lengths[i]
 
             # Calculate travel time
-            if v > 1f-6
+            if v > 1.0f-6
                 t_time = lengths[i] / v
             end
         end
@@ -231,6 +249,10 @@ end
         if dest > 0
             @atomic inflow_next[dest] += Q_new
         end
+
+        # Clear inflow_current for reuse next sub-step. Keep this store at the end:
+        # placed before the loads above, it made kernel twice as slow.
+        inflow_current[i] = 0.0f0
     end
 end
 
@@ -238,7 +260,7 @@ function update_routing!(model)
     (; routing) = model
     (; total_runoff) = model.soil_variables
     dt = Int32(model.clock.dt.value)
-    
+
     routing.violation_counter .= 0
     n_pixels = Int32(length(routing.downstream_idx))
     n_substeps = Int(ceil(dt / ROUTING_DT))
@@ -247,37 +269,40 @@ function update_routing!(model)
 
     kernel_launcher! = kinematic_wave_kernel!(device_backend)
 
-    for t in 1:n_substeps
+    # Swap inflow buffers instead of copy+clear
+    inflow_current, inflow_next = routing.inflow_current, routing.inflow_next
+    for t = 1:n_substeps
 
         kernel_launcher!(
             routing.area,
             routing.discharge,
-            routing.inflow_next,
-            routing.inflow_current,
+            inflow_next,
+            inflow_current,
             routing.cfl,
             routing.travel_time,
             runoff_flat,
             routing.downstream_idx,
             routing.length,
-            routing.slope,
-            routing.width,
+            routing.alpha,
             routing.cell_area,
             dt_step,
             n_pixels,
             # routing.violation_counter;
-            ndrange=n_pixels # Define the total number of items to process
+            ndrange = n_pixels, # Define the total number of items to process
         )
-
-        # Ensure GPU finishes this step before we swap buffers
-        KernelAbstractions.synchronize(device_backend)
 
         # # Diagnostics: copy the single integer from GPU to CPU to print it
         # if routing.violation_counter[1] > 0
         #     @warn "Velocity capped!" substep=t count=routing.violation_counter[1] max_allowed=MAX_RIVER_VELOCITY
         # end
 
-        copyto!(routing.inflow_current, routing.inflow_next)
-        fill!(routing.inflow_next, 0f0)
+        inflow_current, inflow_next = inflow_next, inflow_current
+    end
+
+    # With an odd number of sub-steps the next inflow ends up in routing.inflow_next
+    if inflow_current !== routing.inflow_current
+        copyto!(routing.inflow_current, inflow_current)
+        fill!(routing.inflow_next, 0.0f0)
     end
     return nothing
 end

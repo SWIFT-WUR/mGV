@@ -10,6 +10,8 @@ struct SurfaceEnergyVariables{M <: AbstractMatrix, T <: AbstractArray}
 
     # Derived/intermediate
     aerodynamic_resistance::T
+    mean_albedo::M                       # tile-weighted albedo
+    effective_aerodynamic_resistance::M  # tile-weighted (inverse-sum) resistance
 
     # Errors
     energy_error::M
@@ -26,6 +28,8 @@ function SurfaceEnergyVariables(grid_dims, tile_dims)
         zeros(Float32, tile_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, tile_dims),
+        zeros(Float32, grid_dims),
+        zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims)
     )
@@ -74,6 +78,7 @@ struct SoilVariables{M <: AbstractMatrix, T <: AbstractArray}
     subsurface_runoff::M
     total_runoff::M
     interlayer_drainage::T
+    transpiration_uptake::T  # per soil layer, weighted by canopy coverage
 
     # Derived/intermediate
     thermal_conductivity::T
@@ -94,6 +99,7 @@ function SoilVariables(grid_dims, soil_dims)
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, (grid_dims[1], grid_dims[2], soil_dims[3]-1)),
+        zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
         zeros(Float32, grid_dims)

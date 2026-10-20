@@ -115,7 +115,7 @@ end
     ts = tsurf_init
     for _ in 1:12
         Ts_K   = ts + 273.15f0
-        lw_out = sig_eps * (Ts_K ^ 4f0)
+        lw_out = sig_eps * @fastmath(Ts_K ^ 4)
         h_sens = ha * ts
         
         # Compute LE at capped surface temp (snow surface can't be > 0°C)
@@ -127,7 +127,7 @@ end
         f_val  = lw_out + h_sens - le_ts - rhs_base
         dles_dts = 21.87f0 * es_ts_cap / max(265.5f0 + ts_cap, 1f0)
         dle_dts = ifelse(ts < 0f0, Ls_Ra * dles_dts, 0f0)
-        df_val = 4f0 * sig_eps * (Ts_K ^ 3f0) + ha - dle_dts
+        df_val = 4f0 * sig_eps * @fastmath(Ts_K ^ 3) + ha - dle_dts
         
         # Step update with clamping for stability
         step   = f_val / max(abs(df_val), 1f-6)
@@ -139,7 +139,7 @@ end
     # 6. Evaluate Melt Potential
     # Melt energy at Ts=0 (using LE at 0°C, per standard convention)
     Ts0_K           = 273.15f0
-    lw_out0         = sig_eps * (Ts0_K ^ 4f0)
+    lw_out0         = sig_eps * @fastmath(Ts0_K ^ 4)
     melt_energy_net = rhs_melt - lw_out0   # Melt energy using LE_sub_0
     ts_melt         = 0f0
     melt_heat_out   = max(melt_energy_net, 0f0)
@@ -150,7 +150,7 @@ end
 
     # Sublimation mass is computed from the energy balance residual at ts_no_melt.
     Ts0_no_melt_K    = ts_no_melt + 273.15f0
-    lw_out_no_melt   = sig_eps * (Ts0_no_melt_K ^ 4f0)
+    lw_out_no_melt   = sig_eps * @fastmath(Ts0_no_melt_K ^ 4)
     le_eb_no_melt    = rhs_base - lw_out_no_melt - ha * ts_no_melt  # LE from energy balance
     sub_flux_Wm2     = max(le_eb_no_melt, 0f0)             # Positive LE = sublimation
     sub_mass_mm_cold = sub_flux_Wm2 / L_sub * 86400f0 * 1f3
@@ -299,11 +299,10 @@ end
     lsnow = ifelse(is_trace, Int32(0), ifelse(has_swe, lsnow + Int32(1), Int32(0)))
     ls_f  = Float32(lsnow)
 
-    alb_accum = NEW_SNOW_ALB * (ALB_ACCUM_A ^ (ls_f ^ ALB_ACCUM_B))
-    alb_thaw  = NEW_SNOW_ALB * (ALB_THAW_A  ^ (ls_f ^ ALB_THAW_B))
     is_accum  = (current_cc < 0f0) & (melt_flag == Int32(0))
-
-    alb_age = ifelse(is_accum, alb_accum, alb_thaw)
+    alb_a = ifelse(is_accum, ALB_ACCUM_A, ALB_THAW_A)
+    alb_b = ifelse(is_accum, ALB_ACCUM_B, ALB_THAW_B)
+    alb_age = NEW_SNOW_ALB * (alb_a ^ (ls_f ^ alb_b))
 
     # Albedo resets to max ONLY when new snow falls on a cold pack
     pack_is_cold = current_cc < 0f0
@@ -528,8 +527,31 @@ function calculate_snow_dynamics!(
         day_of_year, lat_pos;
         ndrange=size(swe_gpu)
     )
-    
-    KernelAbstractions.synchronize(device_backend)
+    return nothing
+end
+
+"""
+Aggregate the per-tile soil influx over vegetation tiles (weighted by the
+vegetation fraction) into the per-band melt and infiltration, and broadcast it
+back to every vegetation tile of the 4D throughfall.
+"""
+@kernel function aggregate_soil_influx_kernel!(
+    aggregated_melt, infiltration, throughfall,
+    @Const(soil_influx), @Const(cv)
+)
+    i, j, b = @index(Global, NTuple)
+
+    acc = 0f0
+    for v in 1:size(soil_influx, 4)
+        influx = soil_influx[i, j, b, v] * cv[i, j, 1, v]
+        acc += ifelse(isnan(influx), 0f0, influx)
+    end
+
+    aggregated_melt[i, j, b] = acc
+    infiltration[i, j, b] = acc
+    for v in 1:size(throughfall, 4)
+        throughfall[i, j, b, v] = acc
+    end
 end
 
 function update_snow!(model)
@@ -574,18 +596,13 @@ function update_snow!(model)
         doy, lat_mean
     )
 
-    # Total per-band soil influx: pack drainage + rain on bare ground
-    aggregated_melt .= dropdims(
-            sum(ifelse.(
-                isnan.(soil_influx .* vegetation_fraction),
-                0f0,
-                soil_influx .* vegetation_fraction
-            ), dims=4),
-        dims=4)
-    infiltration .= aggregated_melt
-
-    # Broadcast back to 4D throughfall for downstream soil/runoff modules
+    # Total per-band soil influx: pack drainage + rain on bare ground.
+    # Also broadcast back to 4D throughfall for downstream soil/runoff modules
     # (they expect throughfall[b,v] = same water input for all veg tiles)
-    nx_s, ny_s, nb_s = size(infiltration)
-    throughfall .= reshape(infiltration, nx_s, ny_s, nb_s, 1)
+    aggregate_soil_influx_kernel!(device_backend)(
+        aggregated_melt, infiltration, throughfall,
+        soil_influx, vegetation_fraction;
+        ndrange = size(infiltration)
+    )
+    return nothing
 end
