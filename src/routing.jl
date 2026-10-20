@@ -2,6 +2,8 @@ const MIN_SLOPE = 1.0f-4    # Minimum channel slope [m/m]
 const MANNING_N = 3.5f-2
 const ROUTING_DT = 600.0f0  # timestep in seconds
 const MAX_RIVER_VELOCITY = 6.0f0  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
+const FUSED_ROUTING_GROUPSIZE = 512  # Max workgroup size on Intel Iris Xe; fastest tested
+const FUSED_ROUTING_MAX_CELLS = 100_000  # Untuned; above this, launch one kernel per sub-step
 
 using Atomix: @atomic
 
@@ -170,94 +172,119 @@ function RoutingState(config, elevation)
     return r_state
 end
 
-@kernel function kinematic_wave_kernel!(
-    area,
-    discharge,
-    inflow_next,
-    inflow_current,
-    cfl_buffer,
-    travel_time_buffer,
-    runoff_forcing_flat,
-    downstream_idx,
-    lengths,
-    alphas,
-    cell_areas,
-    dt,
-    n,
-)
-    # violation_counter)
+# Update a single cell `i` for one routing sub-step.
+@inline function route_cell!(i, area, discharge, inflow_next, inflow_current,
+    cfl_buffer, travel_time_buffer,
+    runoff_forcing_flat, downstream_idx, lengths,
+    alphas, cell_areas, dt)
+    # Load Data
+    A_old = area[i] # Water (area) stored in channel (in this cell)
+    Q_old = discharge[i]
+    Q_in = inflow_current[i] # Inflow from upstream cell(s)
+
+    # Lateral inflow from runoff
+    # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8 
+    runoff_m3s = (runoff_forcing_flat[i] * cell_areas[i]) * 1.15740741f-8
+    Q_total_in = Q_in + runoff_m3s
+
+    # Mass balance
+    dAdt = (Q_total_in - Q_old) / lengths[i] # Rate of change of stored water
+    A_new = max(A_old + dAdt * dt, 0.0f0) # Update amount of water in channel
+
+    # Momentum (Manning's equation)
+    # A_new^(5/3) as A_new * cbrt(A_new)^2: ~5x cheaper than pow on GPU
+    Q_new = alphas[i] * (A_new * cbrt(A_new)^2)
+
+    # Velocity capping
+    # We calculate the theoretical velocity
+    v = 0.0f0
+    if A_new > 1.0f-6
+        v = Q_new / A_new
+        
+        # Check against the limit
+        if v > MAX_RIVER_VELOCITY
+            v = MAX_RIVER_VELOCITY # Clamp velocity
+            Q_new = v * A_new # Recalculate Q to maintain mass consistency (Q = V * A)
+            # KernelAbstractions.@atomic violation_counter[1] += 1 # Diagnostic
+            # violation_counter += 1
+        end
+    end
+
+    # CFL and travel time     
+    current_cfl = 0.0f0
+    t_time = NaN32
+
+    if A_new > 1.0f-4 # Threshold for "water exists"
+        v = Q_new / A_new # Speed of the water
+        c = 1.66666667f0 * v # Wave celerity c = 5/3 * v
+        current_cfl = (c * dt) / lengths[i]
+
+        # Calculate travel time
+        if v > 1.0f-6
+            t_time = lengths[i] / v
+        end
+    end
+
+    cfl_buffer[i] = current_cfl
+    travel_time_buffer[i] = t_time
+
+    # Update states
+    area[i] = A_new
+    discharge[i] = Q_new
+
+    # Scatter / routing
+    dest = downstream_idx[i]
+
+    # Atomic add for safety since multiple upstream cells
+    # can simultaneously flow into the same downstream cell
+    if dest > 0
+        @atomic inflow_next[dest] += Q_new
+    end
+
+    # Clear inflow_current for reuse next sub-step. Keep this store at the end:
+    # placed before the loads above, it made kernel twice as slow.
+    inflow_current[i] = 0.0f0
+    return nothing
+end
+
+@kernel function kinematic_wave_kernel!(area, discharge, inflow_next, inflow_current,
+    cfl_buffer, travel_time_buffer,
+    runoff_forcing_flat, downstream_idx, lengths,
+    alphas, cell_areas, dt, n)
 
     # Backend-agnostic indexing
     i = @index(Global, Linear)
 
     if i <= n
-        # Load Data
-        A_old = area[i] # Water (area) stored in channel (in this cell)
-        Q_old = discharge[i]
-        Q_in = inflow_current[i] # Inflow from upstream cell(s)
+        route_cell!(i, area, discharge, inflow_next, inflow_current,
+            cfl_buffer, travel_time_buffer, runoff_forcing_flat, downstream_idx,
+            lengths, alphas, cell_areas, dt)
+    end
+end
 
-        # Lateral inflow from runoff
-        # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8 
-        runoff_m3s = (runoff_forcing_flat[i] * cell_areas[i]) * 1.15740741f-8
-        Q_total_in = Q_in + runoff_m3s
+# Runs all sub-steps in a single launch, as one workgroup that strides over the cells
+# and synchronizes after every sub-step. Only for small domains, as it uses one
+# workgroup, but there it avoids the launch overhead of one kernel per sub-step.
+@kernel function kinematic_wave_fused_kernel!(area, discharge, inflow_a, inflow_b,
+    cfl_buffer, travel_time_buffer,
+    runoff_forcing_flat, downstream_idx, lengths,
+    alphas, cell_areas, dt, n, n_substeps)
 
-        # Mass balance
-        dAdt = (Q_total_in - Q_old) / lengths[i] # Rate of change of stored water
-        A_new = max(A_old + dAdt * dt, 0.0f0) # Update amount of water in channel
+    lid = @index(Local, Linear)
+    group_size = @groupsize()[1]
 
-        # Momentum (Manning's equation)
-        # A_new^(5/3) as A_new * cbrt(A_new)^2: ~5x cheaper than pow on GPU
-        Q_new = alphas[i] * (A_new * cbrt(A_new)^2)
-
-        # Velocity capping
-        # We calculate the theoretical velocity
-        v = 0.0f0
-        if A_new > 1.0f-6
-            v = Q_new / A_new
-
-            # Check against the limit             
-            if v > MAX_RIVER_VELOCITY
-                v = MAX_RIVER_VELOCITY # Clamp velocity
-                Q_new = v * A_new # Recalculate Q to maintain mass consistency (Q = V * A)
-                # KernelAbstractions.@atomic violation_counter[1] += 1 # Diagnostic
-                # violation_counter += 1
-            end
+    for t in 1:n_substeps
+        # Swap inflow buffers every sub-step, starting with inflow_a as current
+        inflow_current = isodd(t) ? inflow_a : inflow_b
+        inflow_next = isodd(t) ? inflow_b : inflow_a
+        i = lid
+        while i <= n
+            route_cell!(i, area, discharge, inflow_next, inflow_current,
+                cfl_buffer, travel_time_buffer, runoff_forcing_flat, downstream_idx,
+                lengths, alphas, cell_areas, dt)
+            i += group_size
         end
-
-        # CFL and travel time     
-        current_cfl = 0.0f0
-        t_time = NaN32
-
-        if A_new > 1.0f-4 # Threshold for "water exists"
-            v = Q_new / A_new # Speed of the water
-            c = 1.66666667f0 * v # Wave celerity c = 5/3 * v
-            current_cfl = (c * dt) / lengths[i]
-
-            # Calculate travel time
-            if v > 1.0f-6
-                t_time = lengths[i] / v
-            end
-        end
-
-        cfl_buffer[i] = current_cfl
-        travel_time_buffer[i] = t_time
-
-        # Update states
-        area[i] = A_new
-        discharge[i] = Q_new
-
-        # Scatter / routing
-        dest = downstream_idx[i]
-
-        # Atomic add for safety since multiple upstream cells
-        # can simultaneously flow into the same downstream cell
-        if dest > 0
-            @atomic inflow_next[dest] += Q_new
-        end
-
-        # Clear inflow_current for reuse next sub-step. Keep this store at the end:
-        # placed before the loads above, it made kernel twice as slow.
-        inflow_current[i] = 0.0f0
+        @synchronize
     end
 end
 
@@ -271,6 +298,20 @@ function update_routing!(model)
     n_substeps = Int(ceil(dt / ROUTING_DT))
     dt_step = dt / Float32(n_substeps)
     runoff_flat = reshape(total_runoff, :)
+
+    if !(device_backend isa CPU) && n_pixels <= FUSED_ROUTING_MAX_CELLS
+        fused! = kinematic_wave_fused_kernel!(device_backend, FUSED_ROUTING_GROUPSIZE)
+        fused!(routing.area, routing.discharge, routing.inflow_current, routing.inflow_next,
+            routing.cfl, routing.travel_time, runoff_flat, routing.downstream_idx,
+            routing.length, routing.alpha, routing.cell_area, dt_step, n_pixels,
+            Int32(n_substeps); ndrange=FUSED_ROUTING_GROUPSIZE)
+        # With an odd number of sub-steps the next inflow ends up in routing.inflow_next
+        if isodd(n_substeps)
+            copyto!(routing.inflow_current, routing.inflow_next)
+            fill!(routing.inflow_next, 0.0f0)
+        end
+        return nothing
+    end
 
     kernel_launcher! = kinematic_wave_kernel!(device_backend)
 
