@@ -76,7 +76,6 @@ require.
 """
 @kwdef struct Model
     config::Cfg    # all configuration options
-    backend::Backend  # KernelAbstractions backend the model runs on
     clock::Clock   # to keep track of simulation time
     grid_parameters::GridParameters
     vegetation_parameters::VegetationParameters
@@ -168,7 +167,6 @@ function Model(config_file::AbstractString; backend = "auto")
 
     return Model(;
         config,
-        backend,
         clock,
         grid_parameters,
         vegetation_parameters,
