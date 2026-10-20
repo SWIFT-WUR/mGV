@@ -350,7 +350,10 @@ end
 
 Set a model variable `name` to the values in `src`, at indices `inds`.
 """
-function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, value)
+    if !check_if_settable(model, name)
+        error("Variable $name is not settable")
+    end
     dest = BMI.get_value_ptr(model, name)
     dest[inds] = src
     return dest
