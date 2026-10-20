@@ -373,21 +373,21 @@ function BMI.set_value(model::Model, name::String, src)
 end
 
 """
-    BMI.set_value_at_indices(model::Model, name::String, src, inds::Vector{Int})
+    BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, value)
 
-Set a model variable `name` to the values in `src`, at indices `inds`.
+Set a model variable `name` to the values in `value`, at indices `inds`.
 """
-function BMI.set_value_at_indices(model::Model, name::String, src, inds::Vector{Int})
+function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, value)
     dest = BMI.get_value_ptr(model, name)
 
     if occursin(r"_band_\d", name)
         #the extra copy is needed to create a dense vector from 
         # non-contiguous gpu arrays (nbands)
         tmp = copy(dest)
-        tmp[inds] = src
+        tmp[inds] = value
         dest .= reshape(tmp, Base.size(dest)) 
     else 
-        dest[inds] = src
+        dest[inds] = value
     end
     return dest
 end
