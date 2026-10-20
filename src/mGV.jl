@@ -76,6 +76,7 @@ require.
 """
 @kwdef struct Model
     config::Cfg    # all configuration options
+    backend::Backend  # KernelAbstractions backend the model runs on
     clock::Clock   # to keep track of simulation time
     grid_parameters::GridParameters
     vegetation_parameters::VegetationParameters
@@ -97,8 +98,16 @@ end
 include("energy_balance.jl")
 include("evaporation.jl")
 
-function Model(config_file::AbstractString)
+"""
+    Model(config_file; backend="auto")
+
+Initialize the model from `config_file`. `backend` is a backend name or a
+`KernelAbstractions.Backend`, see [`select_backend`](@ref).
+"""
+function Model(config_file::AbstractString; backend = "auto")
     config = load_config(config_file)
+    backend = select_backend(backend)
+    println("Active backend: $(backend_name(backend))")
 
     clock = Clock(config)
     forcing_readers, forcing_variables = initialize_forcing(config)
@@ -123,17 +132,17 @@ function Model(config_file::AbstractString)
         config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
 
     # Move data to backend during model initialization
-    if backend_name != "CPU"
-        grid_parameters = adapt(ArrayType, grid_parameters)
-        vegetation_parameters = adapt(ArrayType, vegetation_parameters)
-        soil_parameters = adapt(ArrayType, soil_parameters)
-        surface_energy_variables = adapt(ArrayType, surface_energy_variables)
-        canopy_variables = adapt(ArrayType, canopy_variables)
-        soil_variables = adapt(ArrayType, soil_variables)
-        snow_variables = adapt(ArrayType, snow_variables)
-        forcing_variables = adapt(ArrayType, forcing_variables)
+    if !(backend isa CPU)
+        grid_parameters = adapt(backend, grid_parameters)
+        vegetation_parameters = adapt(backend, vegetation_parameters)
+        soil_parameters = adapt(backend, soil_parameters)
+        surface_energy_variables = adapt(backend, surface_energy_variables)
+        canopy_variables = adapt(backend, canopy_variables)
+        soil_variables = adapt(backend, soil_variables)
+        snow_variables = adapt(backend, snow_variables)
+        forcing_variables = adapt(backend, forcing_variables)
         if !isnothing(routing)
-            routing = adapt(ArrayType, routing)
+            routing = adapt(backend, routing)
         end
     end
 
@@ -159,6 +168,7 @@ function Model(config_file::AbstractString)
 
     return Model(;
         config,
+        backend,
         clock,
         grid_parameters,
         vegetation_parameters,
@@ -266,8 +276,8 @@ end
     return nothing
 end
 
-function run(config_file::AbstractString)
-    m = Model(config_file)
+function run(config_file::AbstractString; backend = "auto")
+    m = Model(config_file; backend)
 
     end_time = DateTime(m.config.end_year + 1) - m.clock.dt
     while m.clock.time < end_time
