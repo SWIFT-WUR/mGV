@@ -34,11 +34,29 @@ This will provide output netCDF files for the Mekong region, years 1979 to 1984.
 
 ### GPU Acceleration
 
-If a GPU is available the code will try to run on GPU instead of CPU. Currently there is no configuration available here (such as device or backend selection).
+GPU support is provided through package extensions, so no GPU packages are installed by default.
+To run on a GPU, add the package for your hardware to your environment and load it together with mGV:
+
+```julia
+using CUDA, mGV  # or AMDGPU, Metal, oneAPI, OpenCL
+mGV.run("configs/mekong_config.toml")
+```
+
+By default (`backend="auto"`) the model runs on the first loaded GPU package that is functional, and otherwise falls back to CPU.
+A specific backend can be selected with the `backend` keyword, one of `"auto"`, `"cpu"`, `"cuda"`, `"rocm"`, `"metal"`, `"oneapi"`, `"opencl"`:
+
+```julia
+using CUDA, mGV
+mGV.run("configs/mekong_config.toml"; backend="cuda")
+model = mGV.Model("configs/mekong_config.toml"; backend="cpu")
+```
+
+Explicitly requesting a GPU backend whose package is not loaded or not functional raises an error.
+Any other KernelAbstractions backend can be used by passing it directly: `mGV.Model(config_file; backend=MyBackend())`.
+
 GPU acceleration is confirmed to work and actively supported for Nvidia and AMD hardware.
 
-- Apple Metal is currently not supported due to a lack of testing hardware.
-- Intel OneAPI is not supported due to [a bug in OneAPI.jl](https://github.com/JuliaGPU/oneAPI.jl/issues/575).
+- Apple Metal is currently untested due to a lack of testing hardware.
 
 ### Configuration file
 
