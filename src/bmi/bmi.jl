@@ -7,9 +7,14 @@ import BasicModelInterface as BMI
 Initialize the model. Reads the input settings and data as defined in the Config object
 generated from the configuration file `config_file`. Will return a Model that is ready to
 run.
+
+The backend is selected automatically, unless the `MGV_BACKEND` environment variable is
+set to a backend name (see [`select_backend`](@ref)). This allows BMI hosts that can only
+call `initialize` to pick a backend.
 """
 function BMI.initialize(::Type{<:Model}, config_file::AbstractString)
-    return Model(config_file)
+    backend = get(ENV, "MGV_BACKEND", "")
+    return Model(config_file; backend = isempty(backend) ? "auto" : backend)
 end
 
 function BMI.update(model::Model)

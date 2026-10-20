@@ -52,6 +52,9 @@ model = mGV.Model("configs/mekong_config.toml"; backend="cpu")
 ```
 
 Explicitly requesting a GPU backend whose package is not loaded or not functional raises an error.
+
+When the model is initialized through BMI (`BMI.initialize`), the backend can be selected with the `MGV_BACKEND` environment variable, e.g. `MGV_BACKEND=cpu`.
+If it is not set, `"auto"` is used.
 Any other KernelAbstractions backend can be used by passing it directly: `mGV.Model(config_file; backend=MyBackend())`.
 
 GPU acceleration is confirmed to work and actively supported for Nvidia and AMD hardware.

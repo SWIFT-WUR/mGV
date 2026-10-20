@@ -1,6 +1,7 @@
 using Test
 using mGV
 using KernelAbstractions: CPU
+import BasicModelInterface as BMI
 
 @testset "Backend selection" begin
     @test isempty(mGV.BACKEND_REGISTRY)  # no GPU package loaded in the test environment
@@ -10,6 +11,16 @@ using KernelAbstractions: CPU
     @test_throws "requires CUDA.jl" mGV.select_backend("cuda")
     @test_throws "Unknown backend 'foo'" mGV.select_backend("foo")
     @test mGV.backend_options()[1:3] == ["auto", "cpu", "cuda"]
+
+    # MGV_BACKEND overrides the "auto" default of BMI.initialize; the backend is selected
+    # right after reading the config, so this errors before any input data is loaded.
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    withenv("MGV_BACKEND" => "cuda") do
+        @test_throws "requires CUDA.jl" BMI.initialize(mGV.Model, tomlpath)
+    end
+    withenv("MGV_BACKEND" => "foo") do
+        @test_throws "Unknown backend 'foo'" BMI.initialize(mGV.Model, tomlpath)
+    end
 
     # Fake registrations to test the dispatch on registered backends
     constructed = String[]
