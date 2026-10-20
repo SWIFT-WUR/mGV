@@ -100,6 +100,8 @@ include("evaporation.jl")
 
 function Model(config_file::AbstractString)
     config = load_config(config_file)
+    # Check the [output].variables names now, before the expensive setup below
+    output_fields = selected_outputs(config)
 
     clock = Clock(config)
     forcing_readers, forcing_variables = initialize_forcing(config)
@@ -156,7 +158,6 @@ function Model(config_file::AbstractString)
             grid_parameters.average_temperature
     end
 
-    output_fields = selected_outputs(config)
     writer = isempty(output_fields) ? nothing :
         start_io_service(config, grid_parameters, year(clock.time), clock.dt, output_fields)
 
