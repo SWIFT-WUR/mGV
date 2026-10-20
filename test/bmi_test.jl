@@ -148,8 +148,8 @@ end
         @test all(dest .== MaxType[type])
 
         dest = fill(MaxType[type], 3)
-        BMI.set_value_at_indices(model, name, dest, [1, 100, size])
-        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        BMI.set_value_at_indices(model, name, [1, 100, size], dest)
+        BMI.get_value_at_indices(model, name, [1, 100, size], dest)
         @test all(dest .== MaxType[type])
 
     end
