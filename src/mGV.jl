@@ -287,13 +287,19 @@ function run()
     return run(cfg_path)
 end
 
+"""Finalize the model by stopping the output writer and releasing the file handles."""
+function finalize!(model::Model)
+    close_output_files!(model)
+    clear_output_writer!(model)
+end
+
 function close_output_files(model::Model)
     stop_async_service(model.writer.io_service)
     close_output(model.writer.store)
     return nothing
 end 
 
-function set_writer_to_nothing!(model::Model)
+function clear_output_writer!(model::Model)
     model.writer.io_service = nothing
     model.writer.store = nothing
     return nothing
