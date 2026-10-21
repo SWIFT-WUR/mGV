@@ -247,7 +247,18 @@ end
         write_results(model.writer.io_service, model.clock, results)
     end
 
-    new_year_or_end_time(model)
+    # next time step will be new year; close file output
+    if !isnothing(model.writer) &&
+       year(model.clock.time + model.clock.dt) > year(model.clock.time)
+       close_output_files(model)
+    end
+
+    if year(model.clock.time) == model.config.end_year
+        set_writer_to_nothing!(model)
+    else
+        println("Starting new io service...")
+        open_new_file!(model)
+    end
     
     return nothing
 end
@@ -276,39 +287,33 @@ function run()
     return run(cfg_path)
 end
 
+function close_output_files(model::Model)
+    stop_async_service(model.writer.io_service)
+    close_output(model.writer.store)
+    return nothing
+end 
+
+function set_writer_to_nothing!(model::Model)
+    model.writer.io_service = nothing
+    model.writer.store = nothing
+    return nothing
+end
+
+function open_new_file!(model::Model)
+    new_writer = start_io_service(
+        model.config,
+        model.grid_parameters,
+        year(model.clock.time) + 1,
+        model.clock.dt,
+    )
+    model.writer.io_service = new_writer.io_service
+    model.writer.store = new_writer.store
+    return nothing
+end
 
 include("bmi/standard_name_utils.jl")
 include("bmi/standard_name.jl")
 include("bmi/helpers.jl")
 include("bmi/bmi.jl")
-
-function new_year_or_end_time(model::Model)
-    # next time step will be new year; close file output
-    if !isnothing(model.writer) &&
-       year(model.clock.time + model.clock.dt) > year(model.clock.time)
-        # close output
-        stop_async_service(model.writer.io_service)
-        close_output(model.writer.store)
-
-        if year(model.clock.time) == model.config.end_year
-            # if model has reached end time step set writer's elements to nothing
-            model.writer.io_service = nothing
-            model.writer.store = nothing
-
-        else
-            # otherwise set up new output file
-            println("Starting new io service...")
-            new_writer = start_io_service(
-                model.config,
-                model.grid_parameters,
-                year(model.clock.time) + 1,
-                model.clock.dt,
-            )
-            model.writer.io_service = new_writer.io_service
-            model.writer.store = new_writer.store
-        end
-    end
-    return nothing
-end
 
 end # module end
