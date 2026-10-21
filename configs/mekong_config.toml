@@ -7,8 +7,8 @@ enable_snow = true
 dir         = "../output_data/mekong/"
 file_prefix = "outputfile_mekong_"
 format      = "netcdf"
-# Which variables to write, by their names in the output file. Leave out to
-# write all of them; `variables = []` writes nothing.
+# Which variables to write. Leave out to write all of them; `variables = []` writes nothing.
+# See the "Model output" page in the documentation for all possible output variables.
 # variables = ["discharge_output", "total_runoff_output"]
 
 [input]
