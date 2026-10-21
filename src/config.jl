@@ -84,10 +84,7 @@ end
     format::String = "zarr"
     dir::String
     file_prefix::String
-    # Which variables to write, by their names in the output file (see
-    # OUTPUT_VARIABLES in src/postprocess.jl). Leave out to write all of them;
-    # an empty list writes nothing and creates no output file.
-    variables::Union{Nothing, Vector{String}} = nothing
+    variables::Union{Nothing, Vector{String}} = nothing  # variables to write; nothing = all, [] = none
 end
 
 @option "API" struct APISection
