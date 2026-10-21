@@ -184,7 +184,7 @@ The `Results` fields to write, in `OUTPUT_VARIABLES` order, from
 `[output].variables`. Leaving the option out selects every variable; an empty
 list selects none.
 """
-function selected_outputs(config::Cfg)
+function select_outputs(config::Cfg)
     requested = config.output.variables
     isnothing(requested) && return [field for (field, _) in OUTPUT_VARIABLES]
 
@@ -260,7 +260,7 @@ function process_daily_outputs(model)
     # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass. It only
     # computes the groups that feed a selected output; tsurf_output needs the
     # snow group for its snow blend.
-    wanted(field) = field in model.output_fields
+    wanted(field) = field in model.selected_outputs
     with_fluxes = any(wanted, (
         :potential_evaporation, :net_radiation, :transpiration,
         :canopy_evaporation, :water_storage,

@@ -89,7 +89,7 @@ require.
     forcing_readers::ForcingReaders
     routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter,Nothing} # writes model output; nothing when no output is selected
-    output_fields::Vector{Symbol} # the `Results` fields to write, see `selected_outputs`
+    selected_outputs::Vector{Symbol} # the `Results` fields to write, see `select_outputs`
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
@@ -101,7 +101,7 @@ include("evaporation.jl")
 function Model(config_file::AbstractString)
     config = load_config(config_file)
     # Check the [output].variables names now, before the expensive setup below
-    output_fields = selected_outputs(config)
+    selected_outputs = select_outputs(config)
 
     clock = Clock(config)
     forcing_readers, forcing_variables = initialize_forcing(config)
@@ -158,8 +158,8 @@ function Model(config_file::AbstractString)
             grid_parameters.average_temperature
     end
 
-    writer = isempty(output_fields) ? nothing :
-        start_io_service(config, grid_parameters, year(clock.time), clock.dt, output_fields)
+    writer = isempty(selected_outputs) ? nothing :
+        start_io_service(config, grid_parameters, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
@@ -176,7 +176,7 @@ function Model(config_file::AbstractString)
         forcing_readers,
         routing,
         writer,
-        output_fields,
+        selected_outputs,
     )
 end
 
@@ -261,7 +261,7 @@ end
                 model.grid_parameters,
                 year(model.clock.time) + 1,
                 model.clock.dt,
-                model.output_fields,
+                model.selected_outputs,
             )
             model.writer.io_service = new_writer.io_service
             model.writer.store = new_writer.store

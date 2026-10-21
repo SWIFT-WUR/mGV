@@ -1,18 +1,18 @@
 include("async_writer.jl")
 
 """
-One pool buffer: pinned host memory for the selected `fields`, and a 1-element
+One pool buffer: pinned host memory for the `selected_outputs`, and a 1-element
 placeholder for the rest, which nothing reads or writes.
 """
-function create_transfer_buffer(nx, ny, nlayers, fields)
+function create_transfer_buffer(nx, ny, nlayers, selected_outputs)
     function make_pinned(dims...)
         A = zeros(Float32, dims...)
         pin_memory!(A)
         return A
     end
 
-    slice(field) = field in fields ? make_pinned(nx, ny) : zeros(Float32, 1, 1)
-    layered(field) = field in fields ? make_pinned(nx, ny, nlayers) : zeros(Float32, 1, 1, 1)
+    slice(field) = field in selected_outputs ? make_pinned(nx, ny) : zeros(Float32, 1, 1)
+    layered(field) = field in selected_outputs ? make_pinned(nx, ny, nlayers) : zeros(Float32, 1, 1, 1)
 
     Results(
         slice(:surface_temperature),
@@ -55,7 +55,7 @@ close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
 close_output(store::NetCDFOutputStore) = close(store.ds)
 
 
-function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu, fields)
+function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
     println("Initializing Zarr store at: $output_path")
     isdir(output_path) && rm(output_path, recursive=true)
     mkdir(output_path)
@@ -106,13 +106,13 @@ function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_
         else
             make_zarr(output_name(field), (nx, ny, nt), chunk_2d, dim_2d; attrs=get(attrs, field, Dict()))
         end
-        for field in fields
+        for field in selected_outputs
     ]))
 
     return store
 end
 
-function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu, fields)
+function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
     println("Creating NetCDF output file at: $output_file")
     out_ds = NCDataset(output_file, "c")
     
@@ -139,16 +139,16 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
         else
             def_fast_var(output_name(field), ("lon", "lat", "time"); chunks=chunk_2d)
         end
-        for field in fields
+        for field in selected_outputs
     ]))
 
     return store
 end
 
-function async_transfer!(processed_data, buf::TransferBuffer, fields)
+function async_transfer!(processed_data, buf::TransferBuffer, selected_outputs)
     # Copy the selected fields from GPU (processed_data) to CPU (buffer).
     # copyto! detects pinned memory and optimizes automatically on CUDA/AMDGPU
-    for field in fields
+    for field in selected_outputs
         copyto!(getfield(buf, field), getfield(processed_data, field))
     end
     return nothing
@@ -186,7 +186,7 @@ function start_io_service(
     grid_parameters::GridParameters,
     year,
     dt,
-    fields
+    selected_outputs
 )
     nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
 
@@ -199,15 +199,15 @@ function start_io_service(
     if lowercase(config.output.format) == "netcdf"
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).nc")
         # Create a buffer pool 
-        output_store = create_output_netcdf(output_path, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, fields)
+        output_store = create_output_netcdf(output_path, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
     else
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).zarr")
-        output_store = create_output_zarr(output_path, year, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, fields)
+        output_store = create_output_zarr(output_path, year, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
     end
 
     # Start the async pool 
     println("Starting Async I/O Service...")
-    io_service = start_async_service(nx, ny, nlayers, output_store, fields, 6)
+    io_service = start_async_service(nx, ny, nlayers, output_store, selected_outputs, 6)
     return OutputWriter(io_service, output_store)
 end
 
@@ -220,7 +220,7 @@ function write_results(io_service::AsyncBufferService, clock, results::Results)
     current_buf = get_free_buffer(io_service)
 
     # Transfer GPU -> CPU (RAM copy)
-    async_transfer!(results, current_buf, io_service.fields)
+    async_transfer!(results, current_buf, io_service.selected_outputs)
 
     # Hand off to background thread and continue simulation immediately.
     submit_buffer(io_service, time_index, current_buf)
