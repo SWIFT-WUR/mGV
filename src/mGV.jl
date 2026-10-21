@@ -248,18 +248,17 @@ end
     end
 
     # next time step will be new year; close file output
-    if !isnothing(model.writer) &&
-       year(model.clock.time + model.clock.dt) > year(model.clock.time)
-       close_output_files(model)
-    end
+    if (!isnothing(model.writer) &&
+       year(model.clock.time + model.clock.dt) > year(model.clock.time))
 
-    if year(model.clock.time) == model.config.end_year
-        set_writer_to_nothing!(model)
-    else
-        println("Starting new io service...")
-        open_new_file!(model)
+       close_output_files(model)
+       if year(model.clock.time) == model.config.end_year
+          clear_output_writer!(model)
+       else
+          println("Starting new io service...")
+          open_new_file!(model)
+       end
     end
-    
     return nothing
 end
 
@@ -293,18 +292,21 @@ function finalize!(model::Model)
     clear_output_writer!(model)
 end
 
+"""Close the output file and stops the asyncronuous service """
 function close_output_files(model::Model)
     stop_async_service(model.writer.io_service)
     close_output(model.writer.store)
     return nothing
 end 
 
+"""Clear the writer arguments"""
 function clear_output_writer!(model::Model)
     model.writer.io_service = nothing
     model.writer.store = nothing
     return nothing
 end
 
+"""Opens a new output file"""
 function open_new_file!(model::Model)
     new_writer = start_io_service(
         model.config,
