@@ -251,7 +251,7 @@ end
     if (!isnothing(model.writer) &&
        year(model.clock.time + model.clock.dt) > year(model.clock.time))
 
-       close_output_files(model)
+       close_output_files!(model)
        if year(model.clock.time) == model.config.end_year
           clear_output_writer!(model)
        else
