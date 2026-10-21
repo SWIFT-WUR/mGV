@@ -4,7 +4,7 @@ struct AsyncBufferService
     free_pool::Channel{TransferBuffer}             # Buffers ready for the GPU to fill
     job_queue::Channel{Tuple{Int, TransferBuffer}} # Buffers full of data, waiting for disk
     writer_task::Task                              # The background thread handle
-    selected_outputs::Vector{Symbol}               # Output variables to copy from the GPU and write
+    selected_outputs::Vector{Symbol}               # Output variables to copy from the GPU and write to disk
 end
 
 """

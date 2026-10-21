@@ -7,9 +7,7 @@ enable_snow = true
 dir         = "../output_data/mekong/"
 file_prefix = "outputfile_mekong_"
 format      = "netcdf"
-# Variables to write; omit to write all, or use [] for none.
-# See the Model output documentation for available variables.
-# variables = ["discharge_output", "total_runoff_output"]
+# variables = ["discharge_output", "total_runoff_output"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
 
 [input]
 [input.paths]

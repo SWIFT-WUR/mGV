@@ -177,8 +177,9 @@ const OUTPUT_VARIABLES = (
 )
 
 """
-Return the list of output variables to write, based on `[output].variables` in the
-config file. Throws an error for unknown variable names.
+Return the list of output variables to write, based on `[output].variables` set by the user in
+the config file. Throws an error for unknown variable names. Snow and routing outputs are
+skipped when those modules are disabled.
 """
 function select_outputs(config::Cfg)
     all_names = [name for (_, name) in OUTPUT_VARIABLES]
@@ -269,7 +270,7 @@ function process_daily_outputs(model)
     out = model.output_buffers
 
     # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass. Compute only the
-    # groups needed by `selected_outputs`. Surface temperature also requires the snow calculations.
+    # groups needed by `selected_outputs`.
     wanted(field) = field in model.selected_outputs
     with_fluxes = any(wanted, (
         :potential_evaporation, :net_radiation, :transpiration,

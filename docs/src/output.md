@@ -1,13 +1,13 @@
 # Model output
 
 mGV writes the output of each simulated year to the directory specified by `dir` in the `[output]`
-section of the config file: one `.nc` file for NetCDF, or one `.zarr` folder for Zarr (`format`).
+section of the config file: one `.nc` file for NetCDF, or one `.zarr` folder for Zarr.
 Output variables are written for each simulated time step (daily by default) and grid cell. Soil
-moisture is also reported separately for each soil layer.
+moisture is also output separately for each soil layer.
 
 ## Choosing output variables
 
-By default all variables listed below are written. To write only some of them, list them in the config:
+By default all variables listed below are written. To write only some of them, list them in the config, for example:
 
 ```toml
 [output]
@@ -49,7 +49,7 @@ when `enable_routing = false`. If you list such a variable anyway, the model war
 | `soil_evaporation_output` | Evaporation from bare soil | mm/day |
 | `soil_moisture_output` | Soil moisture, per soil layer | mm |
 
-Variables ending in `_summed_output`, and the other snow variables, combine the vegetation types and snow
+Variables ending in `_summed_output`, and the snow variables, combine the vegetation types and snow
 bands in each grid cell into one value: each value is weighted by the fraction of the cell it covers, which
 gives the cell average. Transpiration, canopy evaporation and canopy water storage are also weighted by
 canopy coverage, so only the canopy-covered part of each vegetation type contributes. Snow albedo and snow

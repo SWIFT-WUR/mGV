@@ -243,7 +243,7 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process and write away results
+    # post process and write results to disk
     if !isnothing(model.writer)
         results = process_daily_outputs(model)
         write_results(model.writer.io_service, model.clock, results)
