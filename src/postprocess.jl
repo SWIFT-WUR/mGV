@@ -281,7 +281,7 @@ function process_daily_outputs(model)
         :surface_temperature,  # Included because surface temperature needs snow blending.
     ))
     if with_fluxes || with_snow
-        kernel_launcher! = fused_preprocess_kernel!(device_backend)
+        kernel_launcher! = fused_preprocess_kernel!(get_backend(out.potential_evaporation))
         kernel_launcher!(
             out.potential_evaporation, out.net_radiation, out.transpiration,
             out.canopy_evaporation, out.water_storage,

@@ -124,7 +124,7 @@ function update_canopy_evaporation!(model::Model)
     # Inputs keep their natural shapes -- (nx, ny, nbands, nveg) state,
     # (nx, ny, 1, nveg) vegetation parameters, (nx, ny) forcings -- and the
     # kernel broadcasts them via Cartesian indexing.
-    canopy_evaporation_kernel!(device_backend)(
+    canopy_evaporation_kernel!(get_backend(canopy_evaporation))(
         lai,
         canopy_coverage,
         model.config.fillvalue_threshold,
@@ -329,7 +329,7 @@ function update_transpiration!(model::Model)
     soil_moisture = model.soil_variables.moisture
 
     # 1. Configuration
-    kernel_launcher! = transpiration_kernel!(device_backend)    
+    kernel_launcher! = transpiration_kernel!(get_backend(transpiration))    
     nx, ny = size(transpiration)
 
     # 2. Launch
@@ -386,7 +386,7 @@ function update_water_canopy_storage!(model::Model)
 
     (; canopy_coverage) = model.vegetation_parameters
 
-    water_canopy_storage_kernel!(device_backend)(
+    water_canopy_storage_kernel!(get_backend(water_storage))(
         throughfall, water_storage,
         maximum_water_storage, canopy_evaporation,
         band_precipitation, canopy_coverage;
@@ -422,7 +422,7 @@ function update_total_evapotranspiration!(model)
     (; vegetation_fraction, canopy_coverage) = model.vegetation_parameters
     (; snow_band_area_fraction) = model.grid_parameters
 
-    total_evapotranspiration_kernel!(device_backend)(
+    total_evapotranspiration_kernel!(get_backend(total_evapotranspiration))(
         total_evapotranspiration,
         soil_evaporation, canopy_evaporation, transpiration,
         vegetation_fraction, canopy_coverage, snow_band_area_fraction;

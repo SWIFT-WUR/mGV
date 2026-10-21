@@ -4,10 +4,10 @@ include("async_writer.jl")
 Create a `Results` object with pinned host memory for the `selected_outputs`
 and small 1-element placeholder arrays for unselected outputs.
 """
-function create_transfer_buffer(nx, ny, nlayers, selected_outputs)
+function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Backend = CPU())
     function make_pinned(dims...)
         A = zeros(Float32, dims...)
-        pin_memory!(A)
+        pin_memory!(backend, A)
         return A
     end
 
@@ -188,6 +188,7 @@ function start_io_service(
 )
     nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
 
+    backend = get_backend(grid_parameters.elevation)
     grid_parameters = adapt(Array, grid_parameters)
     nx = length(grid_parameters.longitude)
     ny = length(grid_parameters.latitude)
@@ -205,7 +206,7 @@ function start_io_service(
 
     # Start the async pool 
     println("Starting Async I/O Service...")
-    io_service = start_async_service(nx, ny, nlayers, output_store, selected_outputs, 6)
+    io_service = start_async_service(nx, ny, nlayers, output_store, selected_outputs, backend, 6)
     return OutputWriter(io_service, output_store)
 end
 

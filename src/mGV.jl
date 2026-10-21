@@ -98,9 +98,17 @@ end
 include("energy_balance.jl")
 include("evaporation.jl")
 
-function Model(config_file::AbstractString)
+"""
+    Model(config_file; backend="auto")
+
+Initialize the model from `config_file`. `backend` is a backend name or a
+`KernelAbstractions.Backend`, see [`select_backend`](@ref).
+"""
+function Model(config_file::AbstractString; backend = "auto")
     config = load_config(config_file)
     selected_outputs = select_outputs(config)
+    backend = select_backend(backend)
+    println("Active backend: $(backend_name(backend))")
 
     clock = Clock(config)
     forcing_readers, forcing_variables = initialize_forcing(config)
@@ -125,17 +133,17 @@ function Model(config_file::AbstractString)
         config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
 
     # Move data to backend during model initialization
-    if backend_name != "CPU"
-        grid_parameters = adapt(ArrayType, grid_parameters)
-        vegetation_parameters = adapt(ArrayType, vegetation_parameters)
-        soil_parameters = adapt(ArrayType, soil_parameters)
-        surface_energy_variables = adapt(ArrayType, surface_energy_variables)
-        canopy_variables = adapt(ArrayType, canopy_variables)
-        soil_variables = adapt(ArrayType, soil_variables)
-        snow_variables = adapt(ArrayType, snow_variables)
-        forcing_variables = adapt(ArrayType, forcing_variables)
+    if !(backend isa CPU)
+        grid_parameters = adapt(backend, grid_parameters)
+        vegetation_parameters = adapt(backend, vegetation_parameters)
+        soil_parameters = adapt(backend, soil_parameters)
+        surface_energy_variables = adapt(backend, surface_energy_variables)
+        canopy_variables = adapt(backend, canopy_variables)
+        soil_variables = adapt(backend, soil_variables)
+        snow_variables = adapt(backend, snow_variables)
+        forcing_variables = adapt(backend, forcing_variables)
         if !isnothing(routing)
-            routing = adapt(ArrayType, routing)
+            routing = adapt(backend, routing)
         end
     end
 
@@ -269,8 +277,8 @@ end
     return nothing
 end
 
-function run(config_file::AbstractString)
-    m = Model(config_file)
+function run(config_file::AbstractString; backend = "auto")
+    m = Model(config_file; backend)
 
     end_time = DateTime(m.config.end_year + 1) - m.clock.dt
     while m.clock.time < end_time

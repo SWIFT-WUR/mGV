@@ -66,7 +66,7 @@ function derive_soil_parameters!(soil_parameters)
     ) = soil_parameters
     (; ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG) = Constants
 
-    kernel_launcher! = soil_properties_kernel!(device_backend)
+    kernel_launcher! = soil_properties_kernel!(get_backend(bulk_density))
     
     kernel_launcher!(
         minimum_bulk_density, minimum_particle_density, porosity,
@@ -114,7 +114,7 @@ function convert_nijssen2001_to_arno!(soil_parameters)
       moisture_depth_baseflow_transition, baseflow_curve_exp, maximum_moisture
     ) = soil_parameters
 
-    kernel_launcher! = convert_nijssen2001_kernel!(device_backend)
+    kernel_launcher! = convert_nijssen2001_kernel!(get_backend(nijssen_nonlin_reservoir))
     kernel_launcher!(
         nijssen_nonlin_reservoir, nijssen_lin_reservoir, moisture_depth_baseflow_transition, baseflow_curve_exp, maximum_moisture;
         ndrange=size(nijssen_nonlin_reservoir)
@@ -199,7 +199,7 @@ function calculate_soil_evaporation!(
     b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
 )
     # pe passed in is Step 2 (snow-blended) PE which captures snow energy effects.
-    soil_evaporation_kernel!(device_backend)(
+    soil_evaporation_kernel!(get_backend(soil_evap))(
         soil_evap,
         soil_moisture, soil_moisture_max, residual_moisture,
         potential_evaporation, b_infilt_gpu,
@@ -262,7 +262,7 @@ function update_soil!(model)
     )
 
     # Soil moisture update
-    layer_transpiration_kernel!(device_backend)(
+    layer_transpiration_kernel!(get_backend(transpiration_uptake))(
         transpiration_uptake, transpiration_layers, canopy_coverage;
         ndrange = size(transpiration_uptake)
     )
@@ -332,7 +332,7 @@ function update_soil_conductivity!(model)
     (; minimum_particle_density, minimum_bulk_density, quartz_content, porosity) = model.soil_parameters
     (; thermal_conductivity, moisture, ice_fraction) = model.soil_variables
 
-    kernel = soil_conductivity_kernel!(device_backend)
+    kernel = soil_conductivity_kernel!(get_backend(moisture))
 
     kernel(
         moisture, 
