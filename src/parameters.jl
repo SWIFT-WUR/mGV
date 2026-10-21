@@ -1,4 +1,4 @@
-struct GridParameters{V<:AbstractVector,M<:AbstractMatrix,T<:AbstractArray}
+struct GridParameters{V <: AbstractVector, M <: AbstractMatrix, T <: AbstractArray}
     # Static
     latitude::V
     longitude::V
@@ -12,7 +12,7 @@ end
 
 @adapt_structure GridParameters
 
-struct VegetationParameters{T<:AbstractArray}
+struct VegetationParameters{T <: AbstractArray}
     # Static
     root_fraction::T
     vegetation_fraction::T
@@ -28,7 +28,7 @@ end
 
 @adapt_structure VegetationParameters
 
-struct SoilParameters{M<:AbstractMatrix,T<:AbstractArray}
+struct SoilParameters{M <: AbstractMatrix, T <: AbstractArray}
     # Static soil and baseflow parameters
     hydraulic_conductivity::T
     depth::T
@@ -67,7 +67,7 @@ Due to storage constraints, storing all months of data on GPU uses too
 much VRAM. Instead, copy over the active monthly values at the start of
 each month.
 """
-mutable struct MonthlyVegetationParameters{T<:AbstractArray}
+mutable struct MonthlyVegetationParameters{T <: AbstractArray}
     displacement_height::T
     roughness_length::T
     lai::T
@@ -96,10 +96,10 @@ has not changed, so this costs one transfer per simulated month rather than
 one per timestep.
 """
 function load_monthly_parameters!(
-    veg_params::VegetationParameters,
-    monthly::MonthlyVegetationParameters,
-    current_month::Integer,
-)
+        veg_params::VegetationParameters,
+        monthly::MonthlyVegetationParameters,
+        current_month::Integer,
+    )
     current_month == monthly.loaded_month && return nothing
 
     copy_month!(veg_params.displacement_height, monthly.displacement_height, current_month)
@@ -127,7 +127,7 @@ function copy_month!(dest::AbstractArray, src::Array, month::Integer)
     # Loop through vegetation index as it's not contiguous in memory.
     # Reordering input data to (nx, ny, nveg, month) would simplify this, but does
     # not match input data.
-    for v = 1:nveg
+    for v in 1:nveg
         copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, 1, month, v], n)
     end
     return dest

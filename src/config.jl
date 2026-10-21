@@ -31,7 +31,7 @@ end
     snow_band_elevation::String = "elevation"
     snow_band_precipitation_factor::String = "Pfactor"
 
-    # Vegetation 
+    # Vegetation
     #  (static)
     root_fraction::String = "root_fract"
     vegetation_fraction::String = "Cv"

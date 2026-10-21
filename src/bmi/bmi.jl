@@ -34,7 +34,7 @@ function BMI.update_until(model::Model, time::Float64)
         error("Time can't exceed the current end time: $end_time")
     end
 
-    _div, _rem = divrem(time-model_time, BMI.get_time_step(model))
+    _div, _rem = divrem(time - model_time, BMI.get_time_step(model))
     steps = Int(_div)
     if abs(_rem) > eps()
         error(
@@ -42,13 +42,13 @@ function BMI.update_until(model::Model, time::Float64)
         )
     end
 
-    for _ = 1:steps
+    for _ in 1:steps
         update!(model)
     end
     return nothing
 end
 
-# TODO 
+# TODO
 function BMI.finalize(model::Model)
     if !isnothing(model.writer)
         # close output
@@ -172,7 +172,7 @@ end
 
 # RemoteBMI uses outdated BasicModelInterface.jl definition;
 function BMI.get_grid_y(model::Model, grid::Int)
-    y = zeros(Float64, BMI.get_grid_shape(model, grid)[end-1])
+    y = zeros(Float64, BMI.get_grid_shape(model, grid)[end - 1])
     return BMI.get_grid_y(model, grid, y)
 end
 
@@ -186,8 +186,8 @@ function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
 end
 
 function BMI.get_grid_z(model::Model, grid::Int)
-    if grid == GRIDS["vegetation_snow_grid"] 
-        z=zeros(Int, BMI.get_grid_shape(model, grid)[begin])
+    if grid == GRIDS["vegetation_snow_grid"]
+        z = zeros(Int, BMI.get_grid_shape(model, grid)[begin])
         return BMI.get_grid_z(model, grid, z)
     else
         error("accessing z-coordinate in 2-rank grid")
@@ -208,8 +208,6 @@ function BMI.get_grid_size(model::Model, grid::Int)
     return prod(shape)
     error("unknown grid type $grid")
 end
-
-
 
 
 """
@@ -253,7 +251,7 @@ function BMI.get_var_location(model::Model, name::String)
 end
 
 
-#TIME 
+#TIME
 function BMI.get_current_time(model::Model)
     return datetime2unix(model.clock.time)
 end
@@ -288,7 +286,7 @@ end
     BMI.get_value_ptr(model::Model, name::String)
 """
 function BMI.get_value_ptr(model::Model, name::String)
-    if occursin(r"_layer_\d", name)
+    return if occursin(r"_layer_\d", name)
         name_2d, ind = soil_layer_standard_name(name)
         model_vals, (; gridtype) = get_field_in_model(model, name_2d)
         if gridtype != GRIDS["vegetation_snow_grid"]
@@ -310,7 +308,7 @@ function BMI.get_value_ptr(model::Model, name::String)
             error("Accessing '$name' is not supported.")
         else
             dest = lens(model)
-            if ndims(dest)>1
+            if ndims(dest) > 1
                 dest = vec(dest)
             end
             n = length(dest)
@@ -348,7 +346,7 @@ function BMI.set_value(model::Model, name::String, src)
             "Length mismatch between model $(l_model) and src $(l_src) ",
             "variable $name. Probably you're trying to access a variable without ",
             "specifying a given layer.\n",
-            "Ratio between lengths: $(l_model/l_src)"
+            "Ratio between lengths: $(l_model / l_src)"
         )
     end
     mod_var = BMI.get_value_ptr(model, name)

@@ -4,10 +4,10 @@ using .Constants: T_FREEZE, PA_PER_KPA, P_STD, C_P_AIR, DAY_SEC
 Calculate per-snow-band forcings.
 """
 function calculate_band_forcings!(
-    grid_parameters::GridParameters,
-    forcing_variables::ForcingVariables,
-    snow_variables::SnowVariables
-)
+        grid_parameters::GridParameters,
+        forcing_variables::ForcingVariables,
+        snow_variables::SnowVariables
+    )
     (; elevation, snow_band_elevation, snow_band_area_fraction, snow_band_precipitation_factor) = grid_parameters
     (; air_temperature, precipitation) = forcing_variables
     (; band_air_temperature, band_precipitation) = snow_variables
@@ -16,9 +16,9 @@ function calculate_band_forcings!(
 
     # can't the result of this if-else statement be pre-calculated?
     @. band_precipitation = precipitation * ifelse(
-                    snow_band_area_fraction > 1f-6,
-                    snow_band_precipitation_factor / snow_band_area_fraction,
-                    0.0f0
+        snow_band_area_fraction > 1.0f-6,
+        snow_band_precipitation_factor / snow_band_area_fraction,
+        0.0f0
     )
     return nothing
 end
@@ -36,28 +36,28 @@ function aerodynamic_kernel(z0, d0, tsurf, tair, wind, Z2, Kt, gt, Tf, Ric, z_fl
 
     # 2. Log-law terms
     ratio = clamp(d_eff / rough, 1.0f-6, 1.0f6)
-    L     = log(ratio)
-    L2    = max(L^2, L2_min)
-    a_sq  = (Kt^2) / L2
+    L = log(ratio)
+    L2 = max(L^2, L2_min)
+    a_sq = (Kt^2) / L2
     ccoef = 49.82f0 * a_sq * sqrt(ratio)
 
     # 3. Stability (Richardson Number)
     w_spd = max(wind, w_floor)
-    Tmean = max(((tair + Tf) + (tsurf + Tf)) * 0.5f0, 100f0)
-    
-    Ri_B  = gt * (tair - tsurf) * d_eff / (Tmean * w_spd^2)
-    Ri_B  = clamp(Ri_B, -0.5f0, Ric)
+    Tmean = max(((tair + Tf) + (tsurf + Tf)) * 0.5f0, 100.0f0)
+
+    Ri_B = gt * (tair - tsurf) * d_eff / (Tmean * w_spd^2)
+    Ri_B = clamp(Ri_B, -0.5f0, Ric)
 
     # 4. Friction Factor (Fw)
-    Fw_neg = 1f0 - (9.4f0 * Ri_B) / (1f0 + ccoef * sqrt(abs(Ri_B)))
-    Fw_pos = 1f0 / (1f0 + 4.7f0 * Ri_B)^2
-    Fw     = ifelse(Ri_B < 0.0f0, Fw_neg, Fw_pos)
-    Fw     = clamp(Fw, 1.0f-3, 10f0)
+    Fw_neg = 1.0f0 - (9.4f0 * Ri_B) / (1.0f0 + ccoef * sqrt(abs(Ri_B)))
+    Fw_pos = 1.0f0 / (1.0f0 + 4.7f0 * Ri_B)^2
+    Fw = ifelse(Ri_B < 0.0f0, Fw_neg, Fw_pos)
+    Fw = clamp(Fw, 1.0f-3, 10.0f0)
 
     # 5. Final Resistance
-    C_H = max(1f0 * a_sq * Fw, 1.0f-6)
-    ra_val = 1f0 / (C_H * w_spd)
-    
+    C_H = max(1.0f0 * a_sq * Fw, 1.0f-6)
+    ra_val = 1.0f0 / (C_H * w_spd)
+
     return clamp(ra_val, ra_min, ra_max)
 end
 
@@ -71,14 +71,14 @@ function update_aerodynamic_resistance!(model)
     (; Z2, VON_KARMAN, G, T_FREEZE, RI_CR) = Constants
 
     # Local constants
-    z_floor = 1f-3
-    d_floor = 1f-2
+    z_floor = 1.0f-3
+    d_floor = 1.0f-2
     w_floor = 0.1f0
-    ra_min  = 1.0f0
-    ra_max  = 1f5
+    ra_min = 1.0f0
+    ra_max = 1.0f5
 
     # Pre-calculated log expression
-    L2_min  = 9.901f-5 # = log(1.01)^2
+    L2_min = 9.901f-5 # = log(1.01)^2
 
     # Grid dimensions
     n_all = size(aerodynamic_resistance, 4)
@@ -86,23 +86,23 @@ function update_aerodynamic_resistance!(model)
 
     # soil_tiles (last index)
     @views @. aerodynamic_resistance[:, :, :, n_all:n_all] = aerodynamic_kernel(
-        bare_roughness,                
-        displacement_height[:,:,:,n_all:n_all], 
-        surface_temperature,                     
-        air_temperature,                  
-        wind_speed,                  
-        Z2, VON_KARMAN, G, T_FREEZE, RI_CR, 
+        bare_roughness,
+        displacement_height[:, :, :, n_all:n_all],
+        surface_temperature,
+        air_temperature,
+        wind_speed,
+        Z2, VON_KARMAN, G, T_FREEZE, RI_CR,
         z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
     )
 
     if veg_dim > 0
         @views @. aerodynamic_resistance[:, :, :, 1:veg_dim] = aerodynamic_kernel(
-            roughness_length[:,:,:,1:veg_dim],   
-            displacement_height[:,:,:,1:veg_dim],   
+            roughness_length[:, :, :, 1:veg_dim],
+            displacement_height[:, :, :, 1:veg_dim],
             surface_temperature,
             air_temperature,
             wind_speed,
-            Z2, VON_KARMAN, G, T_FREEZE, RI_CR, 
+            Z2, VON_KARMAN, G, T_FREEZE, RI_CR,
             z_floor, d_floor, w_floor, L2_min, ra_min, ra_max
         )
     end
@@ -113,28 +113,28 @@ end
 Compute the net radiation (ignoring snow).
 """
 function calculate_net_radiation!(
-    forcing_variables::ForcingVariables,
-    surface_energy_variables::SurfaceEnergyVariables,
-    albedo
-)
-    (; shortwave_down, longwave_down) = forcing_variables 
+        forcing_variables::ForcingVariables,
+        surface_energy_variables::SurfaceEnergyVariables,
+        albedo
+    )
+    (; shortwave_down, longwave_down) = forcing_variables
     (; surface_temperature, net_radiation) = surface_energy_variables
     (; EMISSIVITY, SIGMA) = Constants
 
     @. net_radiation = (
         (1.0f0 - albedo) * shortwave_down
-        + longwave_down
-        - EMISSIVITY * SIGMA * @fastmath((surface_temperature + 273.15f0) ^ 4)
+            + longwave_down
+            - EMISSIVITY * SIGMA * @fastmath((surface_temperature + 273.15f0)^4)
     )
     return nothing
 end
 
 @kernel function net_radiation_snow_kernel!(
-    net_radiation,
-    @Const(albedo), @Const(surface_temperature),
-    @Const(shortwave_down), @Const(longwave_down),
-    @Const(coverage), @Const(snow_albedo), @Const(snow_surface_temperature)
-)
+        net_radiation,
+        @Const(albedo), @Const(surface_temperature),
+        @Const(shortwave_down), @Const(longwave_down),
+        @Const(coverage), @Const(snow_albedo), @Const(snow_surface_temperature)
+    )
     (; EMISSIVITY, SIGMA) = Constants
     i, j, b, v = @index(Global, NTuple)
 
@@ -143,14 +143,14 @@ end
     sc = coverage[i, j, b, v]
 
     # Blend albedo and surface temperature with the snow values where snow is present
-    snowy = !(isnan(sc) || sc <= 0f0)
-    eff_alb = snowy ? sc * snow_albedo[i, j, b, v] + (1f0 - sc) * alb : alb
-    eff_t = snowy ? sc * snow_surface_temperature[i, j, b, v] + (1f0 - sc) * ts : ts
+    snowy = !(isnan(sc) || sc <= 0.0f0)
+    eff_alb = snowy ? sc * snow_albedo[i, j, b, v] + (1.0f0 - sc) * alb : alb
+    eff_t = snowy ? sc * snow_surface_temperature[i, j, b, v] + (1.0f0 - sc) * ts : ts
 
     net_radiation[i, j, b, v] = (
-        (1f0 - eff_alb) * shortwave_down[i, j] +
-        longwave_down[i, j] -
-        EMISSIVITY * SIGMA * @fastmath((eff_t + 273.15f0)^4)
+        (1.0f0 - eff_alb) * shortwave_down[i, j] +
+            longwave_down[i, j] -
+            EMISSIVITY * SIGMA * @fastmath((eff_t + 273.15f0)^4)
     )
 end
 
@@ -158,12 +158,12 @@ end
 Compute the net radiation, including the effect of snow cover
 """
 function calculate_net_radiation!(
-    forcing_variables::ForcingVariables,
-    surface_energy_variables::SurfaceEnergyVariables,
-    snow_variables::SnowVariables,
-    albedo
-)
-    (; shortwave_down, longwave_down) = forcing_variables 
+        forcing_variables::ForcingVariables,
+        surface_energy_variables::SurfaceEnergyVariables,
+        snow_variables::SnowVariables,
+        albedo
+    )
+    (; shortwave_down, longwave_down) = forcing_variables
     (; surface_temperature, net_radiation) = surface_energy_variables
     (; coverage) = snow_variables
 
@@ -179,19 +179,19 @@ end
 
 
 @kernel function potential_evaporation_kernel!(
-    potential_evaporation,
-    air_temperature,
-    surface_pressure,
-    vapor_pressure,
-    elevation,
-    net_radiation,
-    aerodynamic_resistance,
-    architectural_resistance,
-    minimum_resistance,
-    lai,
-    nbands,
-    nveg
-)
+        potential_evaporation,
+        air_temperature,
+        surface_pressure,
+        vapor_pressure,
+        elevation,
+        net_radiation,
+        aerodynamic_resistance,
+        architectural_resistance,
+        minimum_resistance,
+        lai,
+        nbands,
+        nveg
+    )
     i, j = @index(Global, NTuple)
 
     # Local coefficients
@@ -206,12 +206,12 @@ end
     scale_height = calculate_scale_height(tair, elevation[i, j])
     gamma = G_COEFF * (
         P_STD * exp(-elevation[i, j] / scale_height)
-        ) / latent_heat
+    ) / latent_heat
     vpd = calculate_vpd(tair, vapor_pressure[i, j])
     air_dens_term = (
         (AIR_C * surface_pressure[i, j] * PA_PER_KPA) /
-        (T_FREEZE + tair) *
-        (C_P_AIR * vpd * DAY_SEC)
+            (T_FREEZE + tair) *
+            (C_P_AIR * vpd * DAY_SEC)
     )
 
     for v in 1:nveg, b in 1:nbands
@@ -220,7 +220,7 @@ end
             # Vegetation: canopy resistance without water stress (rmin / LAI)
             resistance_ratio = (
                 (minimum_resistance[i, j, 1, v] / max(lai[i, j, 1, v], EPS)) +
-                architectural_resistance[i, j, 1, v]
+                    architectural_resistance[i, j, 1, v]
             ) / ra
         else
             # Bare soil (last vegetation class): no canopy resistance
@@ -230,21 +230,21 @@ end
         potential_evaporation[i, j, b, v] = max(
             (
                 (slope * (net_radiation[i, j, b, v] * DAY_SEC) + (air_dens_term / ra)) /
-                (latent_heat * (slope + gamma * (1f0 + resistance_ratio)))
-            ), 0f0
+                    (latent_heat * (slope + gamma * (1.0f0 + resistance_ratio)))
+            ), 0.0f0
         )
     end
 end
 
 function calculate_potential_evaporation!(
-    potential_evaporation,
-    grid_parameters::GridParameters,
-    forcing_variables::ForcingVariables,
-    surface_energy_variables::SurfaceEnergyVariables,
-    architectural_resistance,
-    minimum_resistance,
-    lai
-)
+        potential_evaporation,
+        grid_parameters::GridParameters,
+        forcing_variables::ForcingVariables,
+        surface_energy_variables::SurfaceEnergyVariables,
+        architectural_resistance,
+        minimum_resistance,
+        lai
+    )
     (; elevation) = grid_parameters
     (; net_radiation, aerodynamic_resistance) = surface_energy_variables
     (; air_temperature, surface_pressure, vapor_pressure) = forcing_variables
@@ -315,7 +315,7 @@ function update_energy_balance!(model::Model)
 end
 
 function update_net_radiation_post_closure!(model)
-    calculate_net_radiation!(
+    return calculate_net_radiation!(
         model.forcing_variables,
         model.surface_energy_variables,
         model.snow_variables,
