@@ -272,7 +272,7 @@ function update_routing!(model)
     dt_step = dt / Float32(n_substeps)
     runoff_flat = reshape(total_runoff, :)
 
-    kernel_launcher! = kinematic_wave_kernel!(device_backend)
+    kernel_launcher! = kinematic_wave_kernel!(get_backend(runoff_flat))
 
     # Swap inflow buffers instead of copy+clear
     inflow_current, inflow_next = routing.inflow_current, routing.inflow_next

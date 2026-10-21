@@ -515,7 +515,7 @@ function calculate_snow_dynamics!(
     lat_pos = Int32(lat_mean >= 0.0 ? 1 : 0)
 
     # Dispatch the compute kernel
-    kernel! = snow_dynamics_kernel!(device_backend)
+    kernel! = snow_dynamics_kernel!(get_backend(swe_gpu))
     kernel!(
         swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
         snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
@@ -599,7 +599,7 @@ function update_snow!(model)
     # Total per-band soil influx: pack drainage + rain on bare ground.
     # Also broadcast back to 4D throughfall for downstream soil/runoff modules
     # (they expect throughfall[b,v] = same water input for all veg tiles)
-    aggregate_soil_influx_kernel!(device_backend)(
+    aggregate_soil_influx_kernel!(get_backend(infiltration))(
         aggregated_melt, infiltration, throughfall,
         soil_influx, vegetation_fraction;
         ndrange = size(infiltration)
