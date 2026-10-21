@@ -9,7 +9,7 @@
     @Const(tsurf_in),                   # 2D Surface temperature
     @Const(coverage), @Const(cv), @Const(AreaFract), # Weights
     threshold, fill_val,                # Scalars
-    with_fluxes, with_snow              # Which groups of outputs to compute
+    with_fluxes, with_snow              # Flags to enable flux and snow output calculations
 )
     i, j = @index(Global, NTuple)
     nz(x) = ifelse(isnan(x), 0f0, x)
@@ -92,8 +92,6 @@
         ws_out[i, j] = ifelse(active, acc_ws, fill_val)
     end
 
-    # The snow block also feeds tsurf_out (the blend below), so it runs
-    # whenever surface temperature is written, even with no snow output selected.
     if with_snow
         # Land mask: cells with no active bands/veg → NaN (ocean cells)
         land = cv_sum > 1f-6
@@ -152,9 +150,8 @@ end
 @adapt_structure Results
 
 """
-Every output variable: the `Results` field it comes from, and its name in the
-output file. Single source of truth for `[output].variables` in the config, for
-creating the output file, and for the transfer and write paths in io.jl.
+All available output variables, mapping each variable to its name in the output
+file. Users select which variables to output in the config file.
 """
 const OUTPUT_VARIABLES = (
     (:surface_temperature,      "tsurf_output"),
@@ -180,9 +177,8 @@ const OUTPUT_VARIABLES = (
 )
 
 """
-The `Results` fields to write, in `OUTPUT_VARIABLES` order, from
-`[output].variables`. Leaving the option out selects every variable; an empty
-list selects none.
+Return the list of output variables to write, based on `[output].variables` in the
+config file. Throws an error for unknown variable names.
 """
 function select_outputs(config::Cfg)
     requested = config.output.variables
@@ -195,10 +191,11 @@ function select_outputs(config::Cfg)
             join((name for (_, name) in OUTPUT_VARIABLES), ", ")
         )
     end
+
     return [field for (field, name) in OUTPUT_VARIABLES if name in requested]
 end
 
-"""Output name of the `Results` field `field`."""
+"""Return the name of a variable in the output file."""
 output_name(field::Symbol) = only(name for (f, name) in OUTPUT_VARIABLES if f == field)
 
 """
@@ -257,9 +254,8 @@ function process_daily_outputs(model)
     (; fillvalue_threshold) = model.config
     out = model.output_buffers
 
-    # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass. It only
-    # computes the groups that feed a selected output; tsurf_output needs the
-    # snow group for its snow blend.
+    # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass. Compute only the
+    # groups needed by `selected_outputs`. Surface temperature also requires the snow calculations.
     wanted(field) = field in model.selected_outputs
     with_fluxes = any(wanted, (
         :potential_evaporation, :net_radiation, :transpiration,
@@ -267,7 +263,8 @@ function process_daily_outputs(model)
     ))
     with_snow = any(wanted, (
         :snow_water_equivalent, :snow_coverage, :snow_melt,
-        :snow_albedo, :snow_surface_temperature, :surface_temperature,
+        :snow_albedo, :snow_surface_temperature,
+        :surface_temperature,  # Included because surface temperature needs snow blending.
     ))
     if with_fluxes || with_snow
         kernel_launcher! = fused_preprocess_kernel!(device_backend)

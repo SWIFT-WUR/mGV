@@ -1,8 +1,8 @@
 include("async_writer.jl")
 
 """
-One pool buffer: pinned host memory for the `selected_outputs`, and a 1-element
-placeholder for the rest, which nothing reads or writes.
+Create a `Results` object with pinned host memory for the `selected_outputs`
+and small 1-element placeholder arrays for unselected outputs.
 """
 function create_transfer_buffer(nx, ny, nlayers, selected_outputs)
     function make_pinned(dims...)
@@ -38,8 +38,6 @@ function create_transfer_buffer(nx, ny, nlayers, selected_outputs)
     )
 end
 
-# The selected `Results` fields, each with the array it is written to in the
-# output file, in `OUTPUT_VARIABLES` order.
 const OutputArrays = Vector{Pair{Symbol, Any}}
 
 struct ZarrOutputStore
@@ -145,18 +143,18 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     return store
 end
 
+"""
+Copy the selected outputs from `processed_data` (on the GPU) to the CPU buffer `buf`.
+"""
 function async_transfer!(processed_data, buf::TransferBuffer, selected_outputs)
-    # Copy the selected fields from GPU (processed_data) to CPU (buffer).
-    # copyto! detects pinned memory and optimizes automatically on CUDA/AMDGPU
     for field in selected_outputs
         copyto!(getfield(buf, field), getfield(processed_data, field))
     end
     return nothing
 end
 
-"""Write one field of `buf` into time slice `time_index` of its output array."""
 function write_field!(array, buf::TransferBuffer, field, time_index)
-    if field == :soil_moisture
+    if field == :soil_moisture  # Soil moisture has an additional layer dimension
         array[:, :, time_index, :] = buf.soil_moisture
     else
         array[:, :, time_index] = getfield(buf, field)

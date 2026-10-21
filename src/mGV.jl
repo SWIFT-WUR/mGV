@@ -100,7 +100,6 @@ include("evaporation.jl")
 
 function Model(config_file::AbstractString)
     config = load_config(config_file)
-    # Check the [output].variables names now, before the expensive setup below
     selected_outputs = select_outputs(config)
 
     clock = Clock(config)
@@ -236,7 +235,7 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process and write away results if data writer is available
+    # post process and write away results
     if !isnothing(model.writer)
         results = process_daily_outputs(model)
         write_results(model.writer.io_service, model.clock, results)
