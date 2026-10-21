@@ -89,7 +89,7 @@ require.
     forcing_readers::ForcingReaders
     routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter,Nothing} # writes model output; nothing when no output is selected
-    selected_outputs::Vector{Symbol} # the `Results` fields to write, see `select_outputs`
+    selected_outputs::Vector{Symbol} # output variables to write
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
