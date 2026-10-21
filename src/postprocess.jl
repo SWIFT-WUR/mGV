@@ -181,18 +181,32 @@ Return the list of output variables to write, based on `[output].variables` in t
 config file. Throws an error for unknown variable names.
 """
 function select_outputs(config::Cfg)
+    all_names = [name for (_, name) in OUTPUT_VARIABLES]
     requested = config.output.variables
-    isnothing(requested) && return [field for (field, _) in OUTPUT_VARIABLES]
-
-    known = Set(name for (_, name) in OUTPUT_VARIABLES)
-    for name in requested
-        name in known || error(
-            "Unknown output variable '$name' in [output].variables. Valid names: " *
-            join((name for (_, name) in OUTPUT_VARIABLES), ", ")
-        )
+    if !isnothing(requested)
+        for name in requested
+            name in all_names || error(
+                "Unknown output variable '$name' in [output].variables. Valid names: " *
+                join(all_names, ", ")
+            )
+        end
     end
 
-    return [field for (field, name) in OUTPUT_VARIABLES if name in requested]
+    # Skip outputs of disabled modules; warn only if they were asked for explicitly
+    snow_outputs = ["swe_summed_output", "snow_albedo_output", "snow_surf_temp_output",
+                    "snow_coverage_output", "snow_melt_output"]
+    routing_outputs = ["discharge_output", "travel_time_output"]
+    disabled = String[]
+    for (enabled, outputs, setting) in ((config.enable_snow, snow_outputs, "enable_snow"),
+                                        (config.enable_routing, routing_outputs, "enable_routing"))
+        enabled && continue
+        append!(disabled, outputs)
+        skipped = isnothing(requested) ? String[] : filter(in(outputs), requested)
+        isempty(skipped) || @warn "Not writing $(join(skipped, ", ")), because $setting = false"
+    end
+
+    wanted = isnothing(requested) ? all_names : requested
+    return [field for (field, name) in OUTPUT_VARIABLES if name in wanted && !(name in disabled)]
 end
 
 """Return the name of a variable in the output file."""
