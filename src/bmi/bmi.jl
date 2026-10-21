@@ -48,13 +48,14 @@ function BMI.update_until(model::Model, time::Float64)
     return nothing
 end
 
-# TODO 
+# TODO deallocate memory occupied by the model immutable struct
 function BMI.finalize(model::Model)
-    if !isnothing(model.writer)
-        # close output
-        stop_async_service(model.writer.io_service)
-        close_output(model.writer.store)
-        @set model.writer = nothing
+    if (
+        !isnothing(model.writer) &&
+        !isnothing(model.writer.io_service) &&
+        !isnothing(model.writer.store)
+        )
+        finalize!(model)
     end
     return nothing
 end

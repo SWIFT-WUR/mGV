@@ -40,9 +40,16 @@ function get_value_mean(var_name::String, m::mGV.Model)
     return mean(dest)
 end
 
+function initialization(conf_path::String)
+    config = mGV.load_config(conf_path)
+    clock = mGV.Clock(config)
+    model = BMI.initialize(mGV.Model, conf_path)
+    return model, config, clock
+end
+
 @testset "Simple BMI test" begin
     tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model = BMI.initialize(mGV.Model, tomlpath)
+    model, _ = initialization(tomlpath)
 
     for i = 1:10
         BMI.update(model)
@@ -87,9 +94,7 @@ end
 @testset "Full BMI tests" begin
 
     tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model = BMI.initialize(mGV.Model, tomlpath)
-    config = mGV.load_config(tomlpath)
-    clock = mGV.Clock(config)
+    model, config, clock = initialization(tomlpath)
 
     # initialization and time functions
     @test BMI.get_time_units(model) == "seconds since 1970-01-01T00:00+00:00"

@@ -293,7 +293,7 @@ function finalize!(model::Model)
 end
 
 """Close the output file and stops the asyncronuous service """
-function close_output_files(model::Model)
+function close_output_files!(model::Model)
     stop_async_service(model.writer.io_service)
     close_output(model.writer.store)
     return nothing
