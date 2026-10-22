@@ -6,6 +6,8 @@ using Statistics: mean
 using mGV
 using Dates
 
+MEKONG_CFG = joinpath(@__dir__, "../configs/mekong_config.toml")
+
 const TYPES = Dict(
     "Float16" => Float16,
     "Float32" => Float32,
@@ -47,7 +49,7 @@ function get_initialized_model(conf_path::String)
 end
 
 @testset "Simple BMI test" begin
-    model = initialization("../configs/mekong_config.toml")
+    model = get_initialized_model(MEKONG_CFG)
 
     for i = 1:10
         BMI.update(model)
@@ -91,7 +93,7 @@ end
 
 @testset "Full BMI tests" begin
 
-    model = initialization("../configs/mekong_config.toml")
+    model = get_initialized_model(MEKONG_CFG)
 
     # initialization and time functions
     @test BMI.get_time_units(model) == "seconds since 1970-01-01T00:00+00:00"
