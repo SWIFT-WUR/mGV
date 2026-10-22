@@ -41,15 +41,14 @@ function get_value_mean(var_name::String, m::mGV.Model)
 end
 
 function initialization(conf_path::String)
-    config = mGV.load_config(conf_path)
-    clock = mGV.Clock(config)
-    model = BMI.initialize(mGV.Model, conf_path)
-    return model, config, clock
+    tomlpath = joinpath(@__DIR__, conf_path)
+    model = BMI.initialize(mGV.Model, tomlpath)
+    return model
 end
 
 @testset "Simple BMI test" begin
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model, _ = initialization(tomlpath)
+    # tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    model = initialization("../configs/mekong_config.toml")
 
     for i = 1:10
         BMI.update(model)
@@ -93,15 +92,15 @@ end
 
 @testset "Full BMI tests" begin
 
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model, config, clock = initialization(tomlpath)
+    # tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    model = initialization("../configs/mekong_config.toml")
 
     # initialization and time functions
     @test BMI.get_time_units(model) == "seconds since 1970-01-01T00:00+00:00"
-    @test BMI.get_time_step(model) == Float64(clock.dt.value)
-    @test BMI.get_start_time(model) == datetime2unix(clock.time)
-    @test BMI.get_current_time(model) == datetime2unix(clock.time)
-    @test BMI.get_end_time(model) == datetime2unix(DateTime(config.end_year, 12, 31))
+    @test BMI.get_time_step(model) == Float64(model.clock.dt.value)
+    @test BMI.get_start_time(model) == datetime2unix(model.clock.time)
+    @test BMI.get_current_time(model) == datetime2unix(model.clock.time)
+    @test BMI.get_end_time(model) == datetime2unix(DateTime(model.config.end_year, 12, 31))
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
@@ -125,7 +124,7 @@ end
     for i = 1:10
         BMI.update(model)
         if i == 1
-            @test BMI.get_current_time(model) == datetime2unix(clock.time)
+            @test BMI.get_current_time(model) == datetime2unix(model.clock.time)
         end
     end
 
@@ -153,6 +152,7 @@ end
     @test BMI.get_current_time(model) == time
 
     BMI.finalize(model)
+    model = nothing
 end
 
 

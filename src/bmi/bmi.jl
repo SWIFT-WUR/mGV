@@ -50,11 +50,7 @@ end
 
 # TODO deallocate memory occupied by the model immutable struct
 function BMI.finalize(model::Model)
-    if (
-        !isnothing(model.writer) &&
-        !isnothing(model.writer.io_service) &&
-        !isnothing(model.writer.store)
-        )
+    if is_open(model.writer)
         finalize!(model)
     end
     return nothing

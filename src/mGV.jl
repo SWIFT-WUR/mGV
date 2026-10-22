@@ -12,7 +12,7 @@ using Printf
 using Statistics
 using KernelAbstractions
 using Adapt: adapt, @adapt_structure
-using Accessors: @set, @optic
+using Accessors: @optic
 using StaticArrays: SVector, pushfirst, setindex
 using OrderedCollections: OrderedDict
 
@@ -243,12 +243,12 @@ end
     results = process_daily_outputs(model)
 
     # write away results if data writer is available
-    if !isnothing(model.writer)
+    if is_open(model.writer)
         write_results(model.writer.io_service, model.clock, results)
     end
 
     # next time step will be new year; close file output
-    if (!isnothing(model.writer) &&
+    if (is_open(model.writer) &&
        year(model.clock.time + model.clock.dt) > year(model.clock.time))
 
        close_output_files!(model)
@@ -306,7 +306,16 @@ function clear_output_writer!(model::Model)
     return nothing
 end
 
-"""Open a new output file."""
+"""Check if writer arguments are not nothing"""
+function is_open(writer::OutputWriter)
+    if (!isnothing(writer.io_service) &&
+        !isnothing(writer.store))
+        return true
+    else return false
+    end
+end
+
+"""Opens a new output file"""
 function open_new_file!(model::Model)
     new_writer = start_io_service(
         model.config,
