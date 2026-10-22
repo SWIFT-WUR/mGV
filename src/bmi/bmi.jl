@@ -226,11 +226,11 @@ end
 """
     BMI.get_var_units(model::Model, name::String)
 
-Return the variable's unit
+Return the variable's unit.
 """
 function BMI.get_var_units(model::Model, name::String)
     metadata = check_name(model, name)
-    return to_string(to_SI(metadata.unit); BMI_standard = true)
+    return to_string(metadata.unit)
 end
 
 """

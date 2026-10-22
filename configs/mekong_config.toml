@@ -27,6 +27,9 @@ surface_pressure_file = "../input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5ar
 
 
 [API]
+# set the following to `true` to manually solve subsurface routing via BMI
+#  with a groundwater model (e.g. MODFLOW).
+external_groundwater_routing = false
 variables = [
     "land_surface__radiation~net~upward_energy_flux",
     "land_surface__evaporation~potential",

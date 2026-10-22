@@ -14,7 +14,7 @@ m/s -> Unit(; m = 1, s = -1)
 Positive and negative powers can be split to support e.g.
 m²m⁻² -> Unit(; m = (2, 2))
 
-The `absolute_temperature` flag indicates whether °C => K
+The `absolute_temperature` flag indicates whether degC => K
 requires a +273.15 shift.
 
 Adding support for a new unit is easy:
@@ -147,36 +147,19 @@ function Base.:^(u::Unit, n::Rational{Int})
 end
 
 const UnitStrings = Dict{Symbol,String}(
-    :degC => "°C",
-    :percentage => "%",
     :d => "day",
-    :dt => "Δt",
-    :t => "ton",
-    :deg => "°",
 )
 
-function power_string(power::Rational{Int}, BMI_standard::Bool)
+function power_string(power::Rational{Int})
     (; num, den) = power
-    return if isinteger(power)
-        n = string(Int(power))
-        BMI_standard ? n : replace(n, SUPERSCRIPT_NUMBERS...)
-    else
-        if BMI_standard
-            "$num/$den"
-        else
-            num_str = replace(string(num), SUPERSCRIPT_NUMBERS...)
-            den_str = replace(string(den), SUPERSCRIPT_NUMBERS...)
-            "$(num_str)ᐟ$den_str"
-        end
-    end
+    return isinteger(power) ? string(Int(power)) : "$num/$den"
 end
 
 """
-Represent the Unit as a string,
-following the BMI standard if `BMI_standard = true`:
+Represent the Unit as a string following the BMI standard:
 https://bmi.csdms.io/en/stable/bmi.var_funcs.html#get-var-units
 """
-function to_string(unit::Unit; BMI_standard = false)
+function to_string(unit::Unit)
     n_units = length(Units)
     symbols = ntuple(i -> get(UnitStrings, Units[i], String(Units[i])), Val(n_units))
     powers = ntuple(i -> getfield(unit, Units[i]), Val(n_units))
@@ -186,7 +169,7 @@ function to_string(unit::Unit; BMI_standard = false)
     for (symbol, powers_) in zip(symbols, powers)
         power = powers_[2]
         if !iszero(power)
-            term = isone(power) ? symbol : "$symbol$(power_string(power, BMI_standard))"
+            term = isone(power) ? symbol : "$symbol$(power_string(power))"
             push!(out, term)
         end
     end
@@ -195,7 +178,7 @@ function to_string(unit::Unit; BMI_standard = false)
     for (symbol, powers_) in zip(symbols, powers)
         power = powers_[1]
         if !iszero(power)
-            push!(out, "$symbol$(power_string(-power, BMI_standard))")
+            push!(out, "$symbol$(power_string(-power))")
         end
     end
 
