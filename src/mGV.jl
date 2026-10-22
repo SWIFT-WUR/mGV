@@ -308,10 +308,10 @@ end
 
 """Check if writer arguments are not nothing"""
 function is_open(writer::OutputWriter)
-    if (!isnothing(writer.io_service) &&
-        !isnothing(writer.store))
+    if isnothing(writer.io_service) && isnothing(writer.store)
+        return false
+    else
         return true
-    else return false
     end
 end
 

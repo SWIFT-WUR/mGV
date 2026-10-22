@@ -40,14 +40,13 @@ function get_value_mean(var_name::String, m::mGV.Model)
     return mean(dest)
 end
 
-function initialization(conf_path::String)
+function get_initialized_model(conf_path::String)
     tomlpath = joinpath(@__DIR__, conf_path)
     model = BMI.initialize(mGV.Model, tomlpath)
     return model
 end
 
 @testset "Simple BMI test" begin
-    # tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
     model = initialization("../configs/mekong_config.toml")
 
     for i = 1:10
@@ -92,7 +91,6 @@ end
 
 @testset "Full BMI tests" begin
 
-    # tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
     model = initialization("../configs/mekong_config.toml")
 
     # initialization and time functions
