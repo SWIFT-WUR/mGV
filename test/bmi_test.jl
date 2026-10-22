@@ -6,7 +6,7 @@ using Statistics: mean
 using mGV
 using Dates
 
-MEKONG_CFG = joinpath(@__dir__, "../configs/mekong_config.toml")
+MEKONG_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
 
 const TYPES = Dict(
     "Float16" => Float16,
@@ -43,8 +43,7 @@ function get_value_mean(var_name::String, m::mGV.Model)
 end
 
 function get_initialized_model(conf_path::String)
-    tomlpath = joinpath(@__DIR__, conf_path)
-    model = BMI.initialize(mGV.Model, tomlpath)
+    model = BMI.initialize(mGV.Model, conf_path)
     return model
 end
 
@@ -97,10 +96,10 @@ end
 
     # initialization and time functions
     @test BMI.get_time_units(model) == "seconds since 1970-01-01T00:00+00:00"
-    @test BMI.get_time_step(model) == Float64(model.clock.dt.value)
-    @test BMI.get_start_time(model) == datetime2unix(model.clock.time)
-    @test BMI.get_current_time(model) == datetime2unix(model.clock.time)
-    @test BMI.get_end_time(model) == datetime2unix(DateTime(model.config.end_year, 12, 31))
+    @test BMI.get_time_step(model) == Float64(86400)
+    @test BMI.get_start_time(model) == Float64(2.839968e8) #datetime2unix(model.clock.time)
+    @test BMI.get_current_time(model) == Float64(2.839968e8) #datetime2unix(model.clock.time)
+    @test BMI.get_end_time(model) == Float64(3.470688e8) #datetime2unix(DateTime(model.config.end_year, 12, 31))
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
@@ -124,7 +123,7 @@ end
     for i = 1:10
         BMI.update(model)
         if i == 1
-            @test BMI.get_current_time(model) == datetime2unix(model.clock.time)
+            @test BMI.get_current_time(model) == Float64(2.839968e8) #datetime2unix(model.clock.time)
         end
     end
 
@@ -157,8 +156,7 @@ end
 
 
 @testset "BMI units" begin
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model = BMI.initialize(mGV.Model, tomlpath)
+    model = get_initialized_model(MEKONG_CFG)
     BMI.update(model)
 
     # Values are exchanged in the model's native units
@@ -181,13 +179,13 @@ end
     # Paths in the config are relative to the config file, so write the modified
     #  config next to the original one. Use a separate output directory to avoid
     #  clashing with output files still opened by other models.
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    model = get_initialized_model(MEKONG_CFG)
     toml = replace(
-        read(tomlpath, String),
+        read(MEKONG_CFG, String),
         "external_groundwater_routing = false" => "external_groundwater_routing = true",
         "../output_data/mekong/" => escape_string(mktempdir()),
     )
-    gw_tomlpath, io = mktemp(dirname(tomlpath))
+    gw_tomlpath, io = mktemp(dirname(MEKONG_CFG))
     write(io, toml)
     close(io)
 
