@@ -280,7 +280,7 @@ function start_io_service(
     # Start the async pool 
     println("Starting Async I/O Service...")
     io_service = start_async_service(nx, ny, nlayers, output_store, backend, 6)
-    return OutputWriter(io_service, output_store)
+    return Ref{Union{OutputWriter,Nothing}}(OutputWriter(io_service, output_store))
 end
 
 

@@ -88,7 +88,7 @@ require.
     forcing_variables::ForcingVariables
     forcing_readers::ForcingReaders
     routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter,Nothing} # writes model output
+    writer::Ref{Union{OutputWriter,Nothing}} # writes model output
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
@@ -243,12 +243,12 @@ end
     results = process_daily_outputs(model)
 
     # write away results if data writer is available
-    if is_open(model.writer)
-        write_results(model.writer.io_service, model.clock, results)
+    if !isnothing(model.writer[])
+        write_results(model.writer[].io_service, model.clock, results)
     end
 
     # next time step will be new year; close file output
-    if (is_open(model.writer) &&
+    if (!isnothing(model.writer[]) &&
        year(model.clock.time + model.clock.dt) > year(model.clock.time))
 
        close_output_files!(model)
@@ -294,25 +294,17 @@ end
 
 """Close the output file and stop the asynchronous service."""
 function close_output_files!(model::Model)
-    stop_async_service(model.writer.io_service)
-    close_output(model.writer.store)
+    stop_async_service(model.writer[].io_service)
+    close_output(model.writer[].store)
     return nothing
 end 
 
 """Clear the writer arguments."""
 function clear_output_writer!(model::Model)
-    model.writer.io_service = nothing
-    model.writer.store = nothing
+    model.writer[].io_service = nothing
+    model.writer[].store = nothing
+    model.writer[] = nothing
     return nothing
-end
-
-"""Check if writer arguments are not nothing"""
-function is_open(writer::OutputWriter)
-    if isnothing(writer.io_service) && isnothing(writer.store)
-        return false
-    else
-        return true
-    end
 end
 
 """Opens a new output file"""
@@ -323,8 +315,8 @@ function open_new_file!(model::Model)
         year(model.clock.time) + 1,
         model.clock.dt,
     )
-    model.writer.io_service = new_writer.io_service
-    model.writer.store = new_writer.store
+    model.writer[].io_service = new_writer[].io_service
+    model.writer[].store = new_writer[].store
     return nothing
 end
 
