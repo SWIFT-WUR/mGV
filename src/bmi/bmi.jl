@@ -48,7 +48,6 @@ function BMI.update_until(model::Model, time::Float64)
     return nothing
 end
 
-# TODO deallocate memory occupied by the model immutable struct
 function BMI.finalize(model::Model)
     if is_open(model.writer)
         finalize!(model)
