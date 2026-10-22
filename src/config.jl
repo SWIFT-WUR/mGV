@@ -84,6 +84,7 @@ end
     format::String = "zarr"
     dir::String
     file_prefix::String
+    variables::Union{Nothing, Vector{String}} = nothing  # variables to write; nothing = all, [] = none
 end
 
 @option "API" struct APISection

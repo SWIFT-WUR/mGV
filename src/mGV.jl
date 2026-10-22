@@ -88,7 +88,8 @@ require.
     forcing_variables::ForcingVariables
     forcing_readers::ForcingReaders
     routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter,Nothing} # writes model output
+    writer::Union{OutputWriter,Nothing} # writes model output; nothing when no output is selected
+    selected_outputs::Vector{Symbol} # output variables to write
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
@@ -105,6 +106,7 @@ Initialize the model from `config_file`. `backend` is a backend name or a
 """
 function Model(config_file::AbstractString; backend = "auto")
     config = load_config(config_file)
+    selected_outputs = select_outputs(config)
     backend = select_backend(backend)
     println("Active backend: $(backend_name(backend))")
 
@@ -163,7 +165,8 @@ function Model(config_file::AbstractString; backend = "auto")
             grid_parameters.average_temperature
     end
 
-    writer = start_io_service(config, grid_parameters, year(clock.time), clock.dt)
+    writer = isempty(selected_outputs) ? nothing :
+        start_io_service(config, grid_parameters, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
@@ -180,6 +183,7 @@ function Model(config_file::AbstractString; backend = "auto")
         forcing_readers,
         routing,
         writer,
+        selected_outputs,
     )
 end
 
@@ -239,11 +243,9 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process
-    results = process_daily_outputs(model)
-
-    # write away results if data writer is available
+    # post process and write results to disk
     if !isnothing(model.writer)
+        results = process_daily_outputs(model)
         write_results(model.writer.io_service, model.clock, results)
     end
 
@@ -266,6 +268,7 @@ end
                 model.grid_parameters,
                 year(model.clock.time) + 1,
                 model.clock.dt,
+                model.selected_outputs,
             )
             model.writer.io_service = new_writer.io_service
             model.writer.store = new_writer.store

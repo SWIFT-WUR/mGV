@@ -8,7 +8,8 @@
     @Const(salb_in), @Const(sts_in),    # 4D Snow inputs
     @Const(tsurf_in),                   # 2D Surface temperature
     @Const(coverage), @Const(cv), @Const(AreaFract), # Weights
-    threshold, fill_val                 # Scalars
+    threshold, fill_val,                # Scalars
+    with_fluxes, with_snow              # Flags to enable flux and snow output calculations
 )
     i, j = @index(Global, NTuple)
     nz(x) = ifelse(isnan(x), 0f0, x)
@@ -49,70 +50,78 @@
 
             total_w += w_total # Accumulate total weight (should be close to 1)
 
-            val = pe_in[i, j, b, k]
-            acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_total * val)
+            if with_fluxes
+                val = pe_in[i, j, b, k]
+                acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_total * val)
 
-            val = nr_in[i, j, b, k]
-            acc_nr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(nr_out)), w_total * val)
+                val = nr_in[i, j, b, k]
+                acc_nr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(nr_out)), w_total * val)
 
-            val = tr_in[i, j, b, k]
-            acc_tr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(tr_out)), w_cov * w_af * val) # tr is weighted by coverage in physics
+                val = tr_in[i, j, b, k]
+                acc_tr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(tr_out)), w_cov * w_af * val) # tr is weighted by coverage in physics
 
-            val = ce_in[i, j, b, k]
-            acc_ce += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ce_out)), w_total_cov * val)
+                val = ce_in[i, j, b, k]
+                acc_ce += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ce_out)), w_total_cov * val)
 
-            val = ws_in[i, j, b, k]
-            acc_ws += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ws_out)), w_total_cov * val)
+                val = ws_in[i, j, b, k]
+                acc_ws += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ws_out)), w_total_cov * val)
+            end
 
-            # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
-            swe = swe_in[i, j, b, k]
-            acc_swe += nz(swe) * w_total
-            acc_sc += nz(sc_in[i, j, b, k]) * w_total
-            acc_sm += nz(sm_in[i, j, b, k]) * w_total
+            if with_snow
+                # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
+                swe = swe_in[i, j, b, k]
+                acc_swe += nz(swe) * w_total
+                acc_sc += nz(sc_in[i, j, b, k]) * w_total
+                acc_sm += nz(sm_in[i, j, b, k]) * w_total
 
-            # Albedo/surf_temp: weighted only by the tiles where snow is present
-            w_snow = ifelse(swe > 0f0, w_total, 0f0)
-            snow_w += w_snow
-            acc_salb += nz(salb_in[i, j, b, k]) * w_snow
-            acc_sts += nz(sts_in[i, j, b, k]) * w_snow
+                # Albedo/surf_temp: weighted only by the tiles where snow is present
+                w_snow = ifelse(swe > 0f0, w_total, 0f0)
+                snow_w += w_snow
+                acc_salb += nz(salb_in[i, j, b, k]) * w_snow
+                acc_sts += nz(sts_in[i, j, b, k]) * w_snow
+            end
         end
     end
 
-    active = !isnan(total_w) & (total_w >= eltype(pe_out)(1f-6))
-    pe_out[i, j] = ifelse(active, acc_pe, fill_val)
-    nr_out[i, j] = ifelse(active, acc_nr, fill_val)
-    tr_out[i, j] = ifelse(active, acc_tr, fill_val)
-    ce_out[i, j] = ifelse(active, acc_ce, fill_val)
-    ws_out[i, j] = ifelse(active, acc_ws, fill_val)
+    if with_fluxes
+        active = !isnan(total_w) & (total_w >= eltype(pe_out)(1f-6))
+        pe_out[i, j] = ifelse(active, acc_pe, fill_val)
+        nr_out[i, j] = ifelse(active, acc_nr, fill_val)
+        tr_out[i, j] = ifelse(active, acc_tr, fill_val)
+        ce_out[i, j] = ifelse(active, acc_ce, fill_val)
+        ws_out[i, j] = ifelse(active, acc_ws, fill_val)
+    end
 
-    # Land mask: cells with no active bands/veg → NaN (ocean cells)
-    land = cv_sum > 1f-6
-    swe_masked = ifelse(land, acc_swe, NaN32)
-    coverage_masked = ifelse(land, acc_sc, NaN32)
-    swe_out[i, j] = swe_masked
-    sc_out[i, j] = coverage_masked
-    sm_out[i, j] = ifelse(land, acc_sm, NaN32)
+    if with_snow
+        # Land mask: cells with no active bands/veg → NaN (ocean cells)
+        land = cv_sum > 1f-6
+        swe_masked = ifelse(land, acc_swe, NaN32)
+        coverage_masked = ifelse(land, acc_sc, NaN32)
+        swe_out[i, j] = swe_masked
+        sc_out[i, j] = coverage_masked
+        sm_out[i, j] = ifelse(land, acc_sm, NaN32)
 
-    # Snow-presence mask: cells with meaningful snow coverage (NaN compares false)
-    present = swe_masked > 0f0
-    snow_w = max(snow_w, 1f-6)
-    snow_albedo = ifelse(present, acc_salb / snow_w, NaN32)
-    snow_surf_temp = ifelse(present, acc_sts / snow_w, NaN32)
-    salb_out[i, j] = snow_albedo
-    sts_out[i, j] = snow_surf_temp
+        # Snow-presence mask: cells with meaningful snow coverage (NaN compares false)
+        present = swe_masked > 0f0
+        snow_w = max(snow_w, 1f-6)
+        snow_albedo = ifelse(present, acc_salb / snow_w, NaN32)
+        snow_surf_temp = ifelse(present, acc_sts / snow_w, NaN32)
+        salb_out[i, j] = snow_albedo
+        sts_out[i, j] = snow_surf_temp
 
-    # -----------------------------------------------------------------------
-    # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
-    # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported  
-    # surface temperature is cold (near 0°C) over snow, not the bare-soil temp.
-    # Our tsurf is solved from the vegetation/soil energy balance; it stays
-    # warm even when the cell is snow-covered. We correct this by blending:
-    #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf. TODO: is this reasonable?
-    # -----------------------------------------------------------------------
-    tsurf = tsurf_in[i, j]
-    snow_cov_safe = ifelse(present, coverage_masked, 0f0)
-    snow_t_safe = ifelse(present, snow_surf_temp, tsurf)
-    tsurf_out[i, j] = snow_cov_safe * snow_t_safe + (1f0 - snow_cov_safe) * tsurf
+        # -----------------------------------------------------------------------
+        # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
+        # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported  
+        # surface temperature is cold (near 0°C) over snow, not the bare-soil temp.
+        # Our tsurf is solved from the vegetation/soil energy balance; it stays
+        # warm even when the cell is snow-covered. We correct this by blending:
+        #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf. TODO: is this reasonable?
+        # -----------------------------------------------------------------------
+        tsurf = tsurf_in[i, j]
+        snow_cov_safe = ifelse(present, coverage_masked, 0f0)
+        snow_t_safe = ifelse(present, snow_surf_temp, tsurf)
+        tsurf_out[i, j] = snow_cov_safe * snow_t_safe + (1f0 - snow_cov_safe) * tsurf
+    end
 end
 
 @kwdef struct Results{M, T}
@@ -139,6 +148,70 @@ end
 end
 
 @adapt_structure Results
+
+"""
+All available output variables, mapping each variable to its name in the output
+file. Users select which variables to output in the config file.
+"""
+const OUTPUT_VARIABLES = (
+    (:surface_temperature,      "tsurf_output"),
+    (:air_temperature,          "tair_output"),
+    (:precipitation,            "precipitation_output"),
+    (:total_evapotranspiration, "total_et_output"),
+    (:surface_runoff,           "surface_runoff_output"),
+    (:total_runoff,             "total_runoff_output"),
+    (:discharge,                "discharge_output"),
+    (:travel_time,              "travel_time_output"),
+    (:potential_evaporation,    "potential_evaporation_summed_output"),
+    (:net_radiation,            "net_radiation_summed_output"),
+    (:transpiration,            "transpiration_summed_output"),
+    (:canopy_evaporation,       "canopy_evaporation_summed_output"),
+    (:water_storage,            "water_storage_summed_output"),
+    (:snow_water_equivalent,    "swe_summed_output"),
+    (:snow_albedo,              "snow_albedo_output"),
+    (:snow_surface_temperature, "snow_surf_temp_output"),
+    (:snow_coverage,            "snow_coverage_output"),
+    (:snow_melt,                "snow_melt_output"),
+    (:soil_evaporation,         "soil_evaporation_output"),
+    (:soil_moisture,            "soil_moisture_output"),
+)
+
+"""
+Return the list of output variables to write, based on `[output].variables` set by the user in
+the config file. Throws an error for unknown variable names. Snow and routing outputs are
+skipped when those modules are disabled.
+"""
+function select_outputs(config::Cfg)
+    all_names = [name for (_, name) in OUTPUT_VARIABLES]
+    requested = config.output.variables
+    if !isnothing(requested)
+        for name in requested
+            name in all_names || error(
+                "Unknown output variable '$name' in [output].variables. Valid names: " *
+                join(all_names, ", ")
+            )
+        end
+    end
+
+    # Skip outputs of disabled modules; warn only if they were asked for explicitly
+    snow_outputs = ["swe_summed_output", "snow_albedo_output", "snow_surf_temp_output",
+                    "snow_coverage_output", "snow_melt_output"]
+    routing_outputs = ["discharge_output", "travel_time_output"]
+    disabled = String[]
+    for (enabled, outputs, setting) in ((config.enable_snow, snow_outputs, "enable_snow"),
+                                        (config.enable_routing, routing_outputs, "enable_routing"))
+        enabled && continue
+        append!(disabled, outputs)
+        skipped = isnothing(requested) ? String[] : filter(in(outputs), requested)
+        isempty(skipped) || @warn "Not writing $(join(skipped, ", ")), because $setting = false"
+    end
+
+    wanted = isnothing(requested) ? all_names : requested
+    return [field for (field, name) in OUTPUT_VARIABLES if name in wanted && !(name in disabled)]
+end
+
+"""Return the name of a variable in the output file."""
+output_name(field::Symbol) = only(name for (f, name) in OUTPUT_VARIABLES if f == field)
 
 """
 Preallocated device buffers for the 2D daily outputs that are not model state.
@@ -196,20 +269,33 @@ function process_daily_outputs(model)
     (; fillvalue_threshold) = model.config
     out = model.output_buffers
 
-    # 1. Launch the Fused Kernel, writing all 2D aggregates in one pass
-    kernel_launcher! = fused_preprocess_kernel!(get_backend(out.potential_evaporation))
-    kernel_launcher!(
-        out.potential_evaporation, out.net_radiation, out.transpiration,
-        out.canopy_evaporation, out.water_storage,
-        out.snow_water_equivalent, out.snow_coverage, out.snow_melt,
-        out.snow_albedo, out.snow_surface_temperature, out.surface_temperature,
-        potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
-        snow_water_equivalent, snow_coverage, melt, snow_albedo, snow_surface_temperature,
-        surface_temperature,
-        canopy_coverage, vegetation_fraction, snow_band_area_fraction,
-        fillvalue_threshold, NaN32;
-        ndrange=size(surface_temperature)
-    )
+    # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass. Compute only the
+    # groups needed by `selected_outputs`.
+    wanted(field) = field in model.selected_outputs
+    with_fluxes = any(wanted, (
+        :potential_evaporation, :net_radiation, :transpiration,
+        :canopy_evaporation, :water_storage,
+    ))
+    with_snow = any(wanted, (
+        :snow_water_equivalent, :snow_coverage, :snow_melt,
+        :snow_albedo, :snow_surface_temperature,
+        :surface_temperature,  # Included because surface temperature needs snow blending.
+    ))
+    if with_fluxes || with_snow
+        kernel_launcher! = fused_preprocess_kernel!(get_backend(out.potential_evaporation))
+        kernel_launcher!(
+            out.potential_evaporation, out.net_radiation, out.transpiration,
+            out.canopy_evaporation, out.water_storage,
+            out.snow_water_equivalent, out.snow_coverage, out.snow_melt,
+            out.snow_albedo, out.snow_surface_temperature, out.surface_temperature,
+            potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
+            snow_water_equivalent, snow_coverage, melt, snow_albedo, snow_surface_temperature,
+            surface_temperature,
+            canopy_coverage, vegetation_fraction, snow_band_area_fraction,
+            fillvalue_threshold, NaN32, with_fluxes, with_snow;
+            ndrange=size(surface_temperature)
+        )
+    end
 
     # 2. Handle reshapes (metadata only, instant)
     if model.config.enable_routing
