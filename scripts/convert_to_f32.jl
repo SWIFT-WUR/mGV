@@ -14,7 +14,7 @@ function convert_to_float32(in_path, out_path)
     end
     ds_out = NCDataset(out_path, "c")
 
-    return try
+    try
         # --- Copy Dimensions ---
         for (dname, dlen) in ds_in.dim
             defDim(ds_out, dname, dlen)
@@ -73,6 +73,7 @@ function convert_to_float32(in_path, out_path)
         close(ds_in)
         close(ds_out)
     end
+    return nothing
 end
 
 # 3. Run it

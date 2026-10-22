@@ -207,7 +207,7 @@ function async_transfer!(processed_data, buf::TransferBuffer)
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
-    return Threads.@sync begin
+    Threads.@sync begin
         Threads.@spawn store.data.surface_temperature[:, :, time_index] = buf.surface_temperature
         Threads.@spawn store.data.air_temperature[:, :, time_index] = buf.air_temperature
         Threads.@spawn store.data.precipitation[:, :, time_index] = buf.precipitation
@@ -229,6 +229,7 @@ function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
         Threads.@spawn store.data.soil_evaporation[:, :, time_index] = buf.soil_evaporation
         Threads.@spawn store.data.soil_moisture[:, :, time_index, :] = buf.soil_moisture
     end
+    return nothing
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
@@ -251,7 +252,8 @@ function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
     store.data.snow_coverage[:, :, time_index] = buf.snow_coverage
     store.data.snow_melt[:, :, time_index] = buf.snow_melt
     store.data.soil_evaporation[:, :, time_index] = buf.soil_evaporation
-    return store.data.soil_moisture[:, :, time_index, :] = buf.soil_moisture
+    store.data.soil_moisture[:, :, time_index, :] = buf.soil_moisture
+    return nothing
 end
 
 mutable struct OutputWriter
@@ -301,6 +303,6 @@ function write_results(io_service::AsyncBufferService, clock, results::Results)
     async_transfer!(results, current_buf)
 
     # Hand off to background thread and continue simulation immediately.
-    return submit_buffer(io_service, time_index, current_buf)
-
+    submit_buffer(io_service, time_index, current_buf)
+    return nothing
 end

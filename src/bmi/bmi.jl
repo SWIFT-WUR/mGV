@@ -286,7 +286,7 @@ end
     BMI.get_value_ptr(model::Model, name::String)
 """
 function BMI.get_value_ptr(model::Model, name::String)
-    return if occursin(r"_layer_\d", name)
+    if occursin(r"_layer_\d", name)
         name_2d, ind = soil_layer_standard_name(name)
         model_vals, (; gridtype) = get_field_in_model(model, name_2d)
         if gridtype != GRIDS["vegetation_snow_grid"]
@@ -302,19 +302,17 @@ function BMI.get_value_ptr(model::Model, name::String)
         else
             return @view model_vals[:, :, ind, :]
         end
-    else
-        (; lens) = get_metadata(name; model)
-        if isnothing(lens)
-            error("Accessing '$name' is not supported.")
-        else
-            dest = lens(model)
-            if ndims(dest) > 1
-                dest = vec(dest)
-            end
-            n = length(dest)
-            return @view(dest[1:n])
-        end
     end
+    (; lens) = get_metadata(name; model)
+    if isnothing(lens)
+        error("Accessing '$name' is not supported")
+    end
+    dest = lens(model)
+    if ndims(dest) > 1
+        dest = vec(dest)
+    end
+    n = length(dest)
+    return @view(dest[1:n])
 end
 
 """

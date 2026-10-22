@@ -83,9 +83,10 @@ function convert_to_float32(in_path, out_path)
     end
 
     # Rename temp file to final name upon success
-    return if isfile(temp_out)
+    if isfile(temp_out)
         mv(temp_out, out_path)
         println("Completed: $out_path")
+        return nothing
     end
 end
 
@@ -127,9 +128,10 @@ function process_forcing_directories()
     println("Found $(length(tasks)) files to convert.")
 
     # Process in parallel
-    return Threads.@threads for (in_p, out_p) in tasks
+    Threads.@threads for (in_p, out_p) in tasks
         convert_to_float32(in_p, out_p)
     end
+    return nothing
 end
 
 # --- 3. Execute ---

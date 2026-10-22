@@ -121,7 +121,8 @@ function calculate_and_add_accumulation(filename)
     end
 
     close(ds)
-    return println("Done! Saved to $filename")
+    println("Done! Saved to $filename")
+    return nothing
 end
 
 calculate_and_add_accumulation("./vic_global_5min_routing_param_wbt_f32.nc")

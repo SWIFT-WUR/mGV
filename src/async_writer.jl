@@ -63,7 +63,8 @@ Hand off a full buffer to the background thread.
 - Returns immediately (microseconds).
 """
 function submit_buffer(service::AsyncBufferService, time_index, buf)
-    return put!(service.job_queue, (time_index, buf))
+    put!(service.job_queue, (time_index, buf))
+    return nothing
 end
 
 """
@@ -72,5 +73,6 @@ Stops the service.
 """
 function stop_async_service(service::AsyncBufferService)
     close(service.job_queue) # Tells the loop to stop when empty
-    return wait(service.writer_task) # Wait for the thread to finish
+    wait(service.writer_task) # Wait for the thread to finish
+    return nothing
 end

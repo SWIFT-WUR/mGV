@@ -121,7 +121,8 @@ function calculate_and_add_accumulation(filename)
     end
 
     close(ds)
-    return println("Done! Saved to $filename")
+    println("Done! Saved to $filename")
+    return nothing
 end
 
 calculate_and_add_accumulation("./VIC_rout_params_Mekong.nc")

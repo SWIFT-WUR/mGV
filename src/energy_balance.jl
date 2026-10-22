@@ -315,10 +315,11 @@ function update_energy_balance!(model::Model)
 end
 
 function update_net_radiation_post_closure!(model)
-    return calculate_net_radiation!(
+    calculate_net_radiation!(
         model.forcing_variables,
         model.surface_energy_variables,
         model.snow_variables,
         model.vegetation_parameters.albedo
     )
+    return nothing
 end
