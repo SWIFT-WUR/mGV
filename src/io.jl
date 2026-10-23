@@ -248,7 +248,7 @@ function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
     store.data.soil_moisture[:, :, time_index, :]         = buf.soil_moisture
 end
 
-mutable struct OutputWriter
+struct OutputWriter
     io_service
     store
 end
