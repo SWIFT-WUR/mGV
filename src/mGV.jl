@@ -288,35 +288,33 @@ end
 
 """Finalize the model by closing output files and releasing the file handles."""
 function finalize!(model::Model)
-    close_output_files!(model)
-    clear_output_writer!(model)
+    if !isnothing(model.writer)
+        close_output_files!(model)
+        clear_output_writer!(model)
+    end
 end
 
 """Close the output file and stop the asynchronous service."""
-function close_output_files!(model::Model)
-    stop_async_service(model.writer.io_service)
-    close_output(model.writer.store)
+function close_output_files!(writer::OutputWriter)
+    stop_async_service(writer.io_service)
+    close_output(writer.store)
     return nothing
 end 
 
 """Clear the writer arguments."""
 function clear_output_writer!(model::Model)
-    model.writer.io_service = nothing
-    model.writer.store = nothing
     model.writer = nothing
     return nothing
 end
 
 """Opens a new output file"""
 function open_new_file!(model::Model)
-    new_writer = start_io_service(
+    model.writer = start_io_service(
         model.config,
         model.grid_parameters,
         year(model.clock.time) + 1,
         model.clock.dt,
     )
-    model.writer.io_service = new_writer.io_service
-    model.writer.store = new_writer.store
     return nothing
 end
 
