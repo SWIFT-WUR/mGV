@@ -243,12 +243,12 @@ end
     results = process_daily_outputs(model)
 
     # write away results if data writer is available
-    if !isnothing(model.writer[])
-        write_results(model.writer[].io_service, model.clock, results)
+    if !isnothing(model.writer)
+        write_results(model.writer.io_service, model.clock, results)
     end
 
     # next time step will be new year; close file output
-    if (!isnothing(model.writer[]) &&
+    if (!isnothing(model.writer) &&
        year(model.clock.time + model.clock.dt) > year(model.clock.time))
 
        close_output_files!(model)
@@ -294,16 +294,16 @@ end
 
 """Close the output file and stop the asynchronous service."""
 function close_output_files!(model::Model)
-    stop_async_service(model.writer[].io_service)
-    close_output(model.writer[].store)
+    stop_async_service(model.writer.io_service)
+    close_output(model.writer.store)
     return nothing
 end 
 
 """Clear the writer arguments."""
 function clear_output_writer!(model::Model)
-    model.writer[].io_service = nothing
-    model.writer[].store = nothing
-    model.writer[] = nothing
+    model.writer.io_service = nothing
+    model.writer.store = nothing
+    model.writer = nothing
     return nothing
 end
 
@@ -315,8 +315,8 @@ function open_new_file!(model::Model)
         year(model.clock.time) + 1,
         model.clock.dt,
     )
-    model.writer[].io_service = new_writer[].io_service
-    model.writer[].store = new_writer[].store
+    model.writer.io_service = new_writer.io_service
+    model.writer.store = new_writer.store
     return nothing
 end
 
