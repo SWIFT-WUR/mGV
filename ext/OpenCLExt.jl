@@ -14,7 +14,7 @@ function opencl_functional()
 end
 
 function __init__()
-    mGV.register_backend!("opencl", "OpenCL", opencl_functional, OpenCLBackend)
+    return mGV.register_backend!("opencl", "OpenCL", opencl_functional, OpenCLBackend)
 end
 
 end

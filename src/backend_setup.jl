@@ -18,7 +18,7 @@ const KNOWN_BACKENDS = OrderedDict(
     "opencl" => "OpenCL",
 )
 
-const BACKEND_REGISTRY = Dict{String,BackendEntry}()
+const BACKEND_REGISTRY = Dict{String, BackendEntry}()
 
 """
     register_backend!(name, package, is_functional, construct)
@@ -77,7 +77,7 @@ function select_backend(name::AbstractString = "auto")
         package = KNOWN_BACKENDS[name]
         error(
             "Backend '$name' requires $package.jl. Add it to your environment and load it " *
-            "alongside mGV, e.g. `using $package, mGV`.",
+                "alongside mGV, e.g. `using $package, mGV`.",
         )
     else
         error("Unknown backend '$name'. Valid options are: $(join(backend_options(), ", ")).")

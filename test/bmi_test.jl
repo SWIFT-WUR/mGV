@@ -1,4 +1,3 @@
-
 using Test
 
 import BasicModelInterface as BMI
@@ -50,7 +49,7 @@ end
 @testset "Simple BMI test" begin
     model = get_initialized_model(MEKONG_CFG)
 
-    for i = 1:10
+    for i in 1:10
         BMI.update(model)
     end
 
@@ -67,7 +66,7 @@ end
     # soil moisture should have values >=0
     BMI.get_value(model, sml3, dest)
     bad = findall(x -> !(x >= 0), dest)
-    @test all(x -> isnan(x) || x>=0, dest) # on CPU NaN might be present (ocean)
+    @test all(x -> isnan(x) || x >= 0, dest) # on CPU NaN might be present (ocean)
     @test !all(dest .== 0.0)  # not all values can be 0.0
 
     # set the soil moisture in layer 3 to 0:
@@ -86,7 +85,6 @@ end
 
     BMI.finalize(model)
 end
-
 
 
 @testset "Full BMI tests" begin
@@ -119,7 +117,7 @@ end
 
     out_vars = BMI.get_output_var_names(model)
     in_vars = BMI.get_input_var_names(model)
-    for i = 1:10
+    for i in 1:10
         BMI.update(model)
         if i == 1
             @test BMI.get_current_time(model) == Float64(2.839968e8)
@@ -145,7 +143,7 @@ end
         @test all(dest .== MaxType[type])
     end
 
-    time = BMI.get_current_time(model) + (200*BMI.get_time_step(model))
+    time = BMI.get_current_time(model) + (200 * BMI.get_time_step(model))
     BMI.update_until(model, time)
     @test BMI.get_current_time(model) == time
 
@@ -190,7 +188,7 @@ end
         model = BMI.initialize(mGV.Model, gw_tomlpath)
         @test model.config.API.external_groundwater_routing
 
-        for i = 1:10
+        for i in 1:10
             BMI.update(model)
         end
 
