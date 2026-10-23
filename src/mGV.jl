@@ -74,23 +74,23 @@ mGV model state.
 The model state includes all information the model's update functions
 require.
 """
-@kwdef struct Model
-    config::Cfg    # all configuration options
-    clock::Clock   # to keep track of simulation time
-    grid_parameters::GridParameters
-    vegetation_parameters::VegetationParameters
-    monthly_vegetation_parameters::MonthlyVegetationParameters
-    soil_parameters::SoilParameters
-    surface_energy_variables::SurfaceEnergyVariables
-    canopy_variables::CanopyVariables
-    soil_variables::SoilVariables
-    snow_variables::SnowVariables
-    forcing_variables::ForcingVariables
-    forcing_readers::ForcingReaders
-    routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
-    writer::Ref{Union{OutputWriter,Nothing}} # writes model output
+@kwdef mutable struct Model
+    const config::Cfg    # all configuration options
+    const clock::Clock   # to keep track of simulation time
+    const grid_parameters::GridParameters
+    const vegetation_parameters::VegetationParameters
+    const monthly_vegetation_parameters::MonthlyVegetationParameters
+    const soil_parameters::SoilParameters
+    const surface_energy_variables::SurfaceEnergyVariables
+    const canopy_variables::CanopyVariables
+    const soil_variables::SoilVariables
+    const snow_variables::SnowVariables
+    const forcing_variables::ForcingVariables
+    const forcing_readers::ForcingReaders
+    const routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
+    writer::Union{OutputWriter,Nothing} # writes model output
     # preallocated 2D daily output buffers
-    output_buffers::OutputBuffers =
+    const output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
 end
 
