@@ -1,4 +1,5 @@
 # Model coupling
+<<<<<<< HEAD
 
 mGV implements the [Basic Model Interface](https://bmi.csdms.org/) (BMI), allowing it to
 be coupled to other models. The variables exposed through the BMI are set in the `[API]`
@@ -60,3 +61,7 @@ recharge.
 
 Groundwater abstraction is not implemented in mGV. Water demand and supply belong in a
 human water use model, which can be added as an additional model in the coupling framework.
+=======
+## BMI implementation
+
+>>>>>>> 873d7ca (Movinfg the GPU section to GPU.md and start working on coupling.md)

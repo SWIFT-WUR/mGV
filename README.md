@@ -69,3 +69,27 @@ Start and end years for a model run can be configured there.
 Note that all paths in the configuration file should be;
 1. Absolute (e.g. `/home/username/mgv/data/mekong/...`)
 2. or relative to the *config file*, to aid in portability of data+configs.
+
+### Runic formatter, how to install locally
+
+In Julia v1.12 and later, Runic can be installed as a
+[Pkg app](https://pkgdocs.julialang.org/dev/apps/):
+
+```sh
+julia -e 'using Pkg; Pkg.Apps.add("Runic")'
+```
+
+Assuming `~/.julia/bin` is in your `PATH` you can now invoke `runic` from your shell, e.g.:
+
+```sh
+runic --version # Show version info
+runic --help    # Show documentation
+```
+
+```sh
+# Format all files in-place in the current directory (recursively)
+runic --inplace .
+```
+
+For more instruction see https://github.com/fredrikekre/Runic.jl and https://github.com/fredrikekre/runic-action.
+
