@@ -87,8 +87,8 @@ require.
     const snow_variables::SnowVariables
     const forcing_variables::ForcingVariables
     const forcing_readers::ForcingReaders
-    const routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter,Nothing} # writes model output
+    const routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
+    writer::Union{OutputWriter, Nothing} # writes model output
     # preallocated 2D daily output buffers
     const output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
@@ -248,16 +248,18 @@ end
     end
 
     # next time step will be new year; close file output
-    if (!isnothing(model.writer) &&
-       year(model.clock.time + model.clock.dt) > year(model.clock.time))
+    if (
+            !isnothing(model.writer) &&
+                year(model.clock.time + model.clock.dt) > year(model.clock.time)
+        )
 
-       close_output_files!(model.writer)
-       if year(model.clock.time) == model.config.end_year
-          clear_output_writer!(model.writer)
-       else
-          println("Starting new io service...")
-          open_new_file!(model)
-       end
+        close_output_files!(model.writer)
+        if year(model.clock.time) == model.config.end_year
+            clear_output_writer!(model.writer)
+        else
+            println("Starting new io service...")
+            open_new_file!(model)
+        end
     end
     return nothing
 end
@@ -288,7 +290,7 @@ end
 
 """Finalize the model by closing output files and releasing the file handles."""
 function finalize!(model::Model)
-    if !isnothing(model.writer)
+    return if !isnothing(model.writer)
         close_output_files!(model.writer)
         clear_output_writer!(model.writer)
     end
@@ -299,7 +301,7 @@ function close_output_files!(writer::OutputWriter)
     stop_async_service(writer.io_service)
     close_output(writer.store)
     return nothing
-end 
+end
 
 """Clear the writer arguments."""
 function clear_output_writer!(writer::OutputWriter)
