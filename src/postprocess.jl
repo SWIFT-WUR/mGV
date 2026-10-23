@@ -1,4 +1,8 @@
-@kernel function fused_preprocess_kernel!(
+"""Store `v` at `x[i, j]`, or do nothing when `x` is `nothing` (output not selected)."""
+@inline maybe_store!(::Nothing, i, j, v) = nothing
+@inline maybe_store!(x::AbstractArray, i, j, v) = (x[i, j] = v; nothing)
+
+@kernel function fused_postprocess_kernel!(
     pe_out, nr_out, tr_out, ce_out, ws_out, # 2D Outputs
     swe_out, sc_out, sm_out,                # 2D Snow outputs
     salb_out, sts_out, tsurf_out,           # 2D Snow-weighted outputs
@@ -9,17 +13,22 @@
     @Const(tsurf_in),                   # 2D Surface temperature
     @Const(coverage), @Const(cv), @Const(AreaFract), # Weights
     threshold, fill_val,                # Scalars
-    with_fluxes, with_snow              # Flags to enable flux and snow output calculations
 )
     i, j = @index(Global, NTuple)
     nz(x) = ifelse(isnan(x), 0f0, x)
 
+    # Sums needed by the selected outputs, directly or via another output
+    want(x) = !isnothing(x)
+    want_swe = want(swe_out) | want(salb_out) | want(sts_out) | want(tsurf_out)  # SWE gives the snow mask
+    want_sc = want(sc_out) | want(tsurf_out)
+    want_sts = want(sts_out) | want(tsurf_out)
+
     # 1. Initialize Accumulators
-    acc_pe = zero(eltype(pe_out))
-    acc_nr = zero(eltype(nr_out))
-    acc_tr = zero(eltype(tr_out))
-    acc_ce = zero(eltype(ce_out))
-    acc_ws = zero(eltype(ws_out))
+    acc_pe = 0f0
+    acc_nr = 0f0
+    acc_tr = 0f0
+    acc_ce = 0f0
+    acc_ws = 0f0
 
     acc_swe = 0f0
     acc_sc = 0f0
@@ -31,84 +40,94 @@
 
     n_bands = size(pe_in, 3)
     n_tiles = size(pe_in, 4)
-    total_w = zero(eltype(pe_out))
+    total_w = 0f0
 
     for k in 1:n_tiles
         _cv_raw = cv[i, j, 1, k]
-        w_cv = ifelse(isnan(_cv_raw),  zero(eltype(pe_out)), eltype(pe_out)(_cv_raw))
+        w_cv = ifelse(isnan(_cv_raw), 0f0, Float32(_cv_raw))
         cv_sum += w_cv
 
         _cov_raw = coverage[i, j, 1, k]
-        w_cov = ifelse(isnan(_cov_raw), zero(eltype(pe_out)), eltype(pe_out)(_cov_raw))
+        w_cov = ifelse(isnan(_cov_raw), 0f0, Float32(_cov_raw))
 
         for b in 1:n_bands
             _af_raw = AreaFract[i, j, b]
-            w_af = ifelse(isnan(_af_raw), zero(eltype(pe_out)), eltype(pe_out)(_af_raw))
-            
+            w_af = ifelse(isnan(_af_raw), 0f0, Float32(_af_raw))
+
             w_total = w_cv * w_af
             w_total_cov = w_cv * w_cov * w_af
 
             total_w += w_total # Accumulate total weight (should be close to 1)
 
-            if with_fluxes
+            if want(pe_out)
                 val = pe_in[i, j, b, k]
-                acc_pe += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(pe_out)), w_total * val)
-
+                acc_pe += ifelse(isnan(val) | (abs(val) > threshold), 0f0, w_total * val)
+            end
+            if want(nr_out)
                 val = nr_in[i, j, b, k]
-                acc_nr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(nr_out)), w_total * val)
-
+                acc_nr += ifelse(isnan(val) | (abs(val) > threshold), 0f0, w_total * val)
+            end
+            if want(tr_out)
                 val = tr_in[i, j, b, k]
-                acc_tr += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(tr_out)), w_cov * w_af * val) # tr is weighted by coverage in physics
-
+                acc_tr += ifelse(isnan(val) | (abs(val) > threshold), 0f0, w_cov * w_af * val) # tr is weighted by coverage in physics
+            end
+            if want(ce_out)
                 val = ce_in[i, j, b, k]
-                acc_ce += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ce_out)), w_total_cov * val)
-
+                acc_ce += ifelse(isnan(val) | (abs(val) > threshold), 0f0, w_total_cov * val)
+            end
+            if want(ws_out)
                 val = ws_in[i, j, b, k]
-                acc_ws += ifelse(isnan(val) | (abs(val) > threshold), zero(eltype(ws_out)), w_total_cov * val)
+                acc_ws += ifelse(isnan(val) | (abs(val) > threshold), 0f0, w_total_cov * val)
             end
 
-            if with_snow
-                # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
+            # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
+            if want_swe
                 swe = swe_in[i, j, b, k]
                 acc_swe += nz(swe) * w_total
-                acc_sc += nz(sc_in[i, j, b, k]) * w_total
-                acc_sm += nz(sm_in[i, j, b, k]) * w_total
 
                 # Albedo/surf_temp: weighted only by the tiles where snow is present
                 w_snow = ifelse(swe > 0f0, w_total, 0f0)
                 snow_w += w_snow
-                acc_salb += nz(salb_in[i, j, b, k]) * w_snow
-                acc_sts += nz(sts_in[i, j, b, k]) * w_snow
+                if want(salb_out)
+                    acc_salb += nz(salb_in[i, j, b, k]) * w_snow
+                end
+                if want_sts
+                    acc_sts += nz(sts_in[i, j, b, k]) * w_snow
+                end
+            end
+            if want_sc
+                acc_sc += nz(sc_in[i, j, b, k]) * w_total
+            end
+            if want(sm_out)
+                acc_sm += nz(sm_in[i, j, b, k]) * w_total
             end
         end
     end
 
-    if with_fluxes
-        active = !isnan(total_w) & (total_w >= eltype(pe_out)(1f-6))
-        pe_out[i, j] = ifelse(active, acc_pe, fill_val)
-        nr_out[i, j] = ifelse(active, acc_nr, fill_val)
-        tr_out[i, j] = ifelse(active, acc_tr, fill_val)
-        ce_out[i, j] = ifelse(active, acc_ce, fill_val)
-        ws_out[i, j] = ifelse(active, acc_ws, fill_val)
-    end
+    active = !isnan(total_w) & (total_w >= 1f-6)
+    maybe_store!(pe_out, i, j, ifelse(active, acc_pe, fill_val))
+    maybe_store!(nr_out, i, j, ifelse(active, acc_nr, fill_val))
+    maybe_store!(tr_out, i, j, ifelse(active, acc_tr, fill_val))
+    maybe_store!(ce_out, i, j, ifelse(active, acc_ce, fill_val))
+    maybe_store!(ws_out, i, j, ifelse(active, acc_ws, fill_val))
 
-    if with_snow
-        # Land mask: cells with no active bands/veg → NaN (ocean cells)
-        land = cv_sum > 1f-6
-        swe_masked = ifelse(land, acc_swe, NaN32)
-        coverage_masked = ifelse(land, acc_sc, NaN32)
-        swe_out[i, j] = swe_masked
-        sc_out[i, j] = coverage_masked
-        sm_out[i, j] = ifelse(land, acc_sm, NaN32)
+    # Land mask: cells with no active bands/veg → NaN (ocean cells)
+    land = cv_sum > 1f-6
+    swe_masked = ifelse(land, acc_swe, NaN32)
+    coverage_masked = ifelse(land, acc_sc, NaN32)
+    maybe_store!(swe_out, i, j, swe_masked)
+    maybe_store!(sc_out, i, j, coverage_masked)
+    maybe_store!(sm_out, i, j, ifelse(land, acc_sm, NaN32))
 
-        # Snow-presence mask: cells with meaningful snow coverage (NaN compares false)
-        present = swe_masked > 0f0
-        snow_w = max(snow_w, 1f-6)
-        snow_albedo = ifelse(present, acc_salb / snow_w, NaN32)
-        snow_surf_temp = ifelse(present, acc_sts / snow_w, NaN32)
-        salb_out[i, j] = snow_albedo
-        sts_out[i, j] = snow_surf_temp
+    # Snow-presence mask: cells with meaningful snow coverage (NaN compares false)
+    present = swe_masked > 0f0
+    snow_w = max(snow_w, 1f-6)
+    snow_albedo = ifelse(present, acc_salb / snow_w, NaN32)
+    snow_surf_temp = ifelse(present, acc_sts / snow_w, NaN32)
+    maybe_store!(salb_out, i, j, snow_albedo)
+    maybe_store!(sts_out, i, j, snow_surf_temp)
 
+    if want(tsurf_out)
         # -----------------------------------------------------------------------
         # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
         # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported  
@@ -125,26 +144,26 @@
 end
 
 @kwdef struct Results{M, T}
-    surface_temperature::M # tsurf
-    air_temperature::M # tair
-    precipitation::M # prec
-    total_evapotranspiration::M # total_et
-    surface_runoff::M # surface_runoff
-    total_runoff::M
-    discharge::M # discharge
-    travel_time::M # travel_time
-    potential_evaporation::M # pe_summed
-    net_radiation::M # nr_summed
-    transpiration::M # tr_summed
-    canopy_evaporation::M # ce_summed
-    water_storage::M # ws_summed
-    snow_water_equivalent::M # swe_summed
-    snow_albedo::M
-    snow_surface_temperature::M
-    snow_coverage::M
-    snow_melt::M
-    soil_evaporation::M
-    soil_moisture::T  # 3D (nx, ny, nlayers)
+    surface_temperature::Union{M, Nothing} # tsurf
+    air_temperature::Union{M, Nothing} # tair
+    precipitation::Union{M, Nothing} # prec
+    total_evapotranspiration::Union{M, Nothing} # total_et
+    surface_runoff::Union{M, Nothing} # surface_runoff
+    total_runoff::Union{M, Nothing}
+    discharge::Union{M, Nothing} # discharge
+    travel_time::Union{M, Nothing} # travel_time
+    potential_evaporation::Union{M, Nothing} # pe_summed
+    net_radiation::Union{M, Nothing} # nr_summed
+    transpiration::Union{M, Nothing} # tr_summed
+    canopy_evaporation::Union{M, Nothing} # ce_summed
+    water_storage::Union{M, Nothing} # ws_summed
+    snow_water_equivalent::Union{M, Nothing} # swe_summed
+    snow_albedo::Union{M, Nothing}
+    snow_surface_temperature::Union{M, Nothing}
+    snow_coverage::Union{M, Nothing}
+    snow_melt::Union{M, Nothing}
+    soil_evaporation::Union{M, Nothing}
+    soil_moisture::Union{T, Nothing}  # 3D (nx, ny, nlayers)
 end
 
 @adapt_structure Results
@@ -215,33 +234,32 @@ output_name(field::Symbol) = only(name for (f, name) in OUTPUT_VARIABLES if f ==
 
 """
 Preallocated device buffers for the 2D daily outputs that are not model state.
+Buffers for outputs that are not selected are `nothing`.
 """
 struct OutputBuffers{M}
-    surface_temperature::M
-    discharge::M    # zeros, used when routing is disabled
-    travel_time::M  # zeros, used when routing is disabled
-    potential_evaporation::M
-    net_radiation::M
-    transpiration::M
-    canopy_evaporation::M
-    water_storage::M
-    snow_water_equivalent::M
-    snow_albedo::M
-    snow_surface_temperature::M
-    snow_coverage::M
-    snow_melt::M
+    surface_temperature::Union{M, Nothing}
+    potential_evaporation::Union{M, Nothing}
+    net_radiation::Union{M, Nothing}
+    transpiration::Union{M, Nothing}
+    canopy_evaporation::Union{M, Nothing}
+    water_storage::Union{M, Nothing}
+    snow_water_equivalent::Union{M, Nothing}
+    snow_albedo::Union{M, Nothing}
+    snow_surface_temperature::Union{M, Nothing}
+    snow_coverage::Union{M, Nothing}
+    snow_melt::Union{M, Nothing}
 end
 
 @adapt_structure OutputBuffers
 
-"""Allocate output buffers with the same type and size as the 2D `template`."""
-function OutputBuffers(template::AbstractMatrix)
-    buffer() = similar(template)
-    zero_buffer() = fill!(similar(template), 0f0)
-    return OutputBuffers(
-        buffer(), zero_buffer(), zero_buffer(),
-        buffer(), buffer(), buffer(), buffer(), buffer(),
-        buffer(), buffer(), buffer(), buffer(), buffer(),
+"""Allocate buffers for the `selected_outputs`, with the same type and size as the 2D `template`."""
+function OutputBuffers(template::AbstractMatrix, selected_outputs)
+    buffer(field) = field in selected_outputs ? similar(template) : nothing
+    return OutputBuffers{typeof(template)}(
+        buffer(:surface_temperature), buffer(:potential_evaporation), buffer(:net_radiation),
+        buffer(:transpiration), buffer(:canopy_evaporation), buffer(:water_storage),
+        buffer(:snow_water_equivalent), buffer(:snow_albedo), buffer(:snow_surface_temperature),
+        buffer(:snow_coverage), buffer(:snow_melt),
     )
 end
 
@@ -269,30 +287,22 @@ function process_daily_outputs(model)
     (; fillvalue_threshold) = model.config
     out = model.output_buffers
 
-    # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass. Compute only the
-    # groups needed by `selected_outputs`.
-    wanted(field) = field in model.selected_outputs
-    with_fluxes = any(wanted, (
-        :potential_evaporation, :net_radiation, :transpiration,
-        :canopy_evaporation, :water_storage,
-    ))
-    with_snow = any(wanted, (
-        :snow_water_equivalent, :snow_coverage, :snow_melt,
-        :snow_albedo, :snow_surface_temperature,
-        :surface_temperature,  # Included because surface temperature needs snow blending.
-    ))
-    if with_fluxes || with_snow
-        kernel_launcher! = fused_preprocess_kernel!(get_backend(out.potential_evaporation))
+    # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass
+    outputs = (
+        out.potential_evaporation, out.net_radiation, out.transpiration,
+        out.canopy_evaporation, out.water_storage,
+        out.snow_water_equivalent, out.snow_coverage, out.snow_melt,
+        out.snow_albedo, out.snow_surface_temperature, out.surface_temperature,
+    )
+    if any(!isnothing, outputs)
+        kernel_launcher! = fused_postprocess_kernel!(get_backend(surface_temperature))
         kernel_launcher!(
-            out.potential_evaporation, out.net_radiation, out.transpiration,
-            out.canopy_evaporation, out.water_storage,
-            out.snow_water_equivalent, out.snow_coverage, out.snow_melt,
-            out.snow_albedo, out.snow_surface_temperature, out.surface_temperature,
+            outputs...,
             potential_evaporation, net_radiation, transpiration, canopy_evaporation, water_storage,
             snow_water_equivalent, snow_coverage, melt, snow_albedo, snow_surface_temperature,
             surface_temperature,
             canopy_coverage, vegetation_fraction, snow_band_area_fraction,
-            fillvalue_threshold, NaN32, with_fluxes, with_snow;
+            fillvalue_threshold, NaN32;
             ndrange=size(surface_temperature)
         )
     end
@@ -302,8 +312,8 @@ function process_daily_outputs(model)
         discharge_2d = reshape(model.routing.discharge, size(total_runoff))
         travel_time_2d = reshape(model.routing.travel_time, size(total_runoff)) 
     else
-        discharge_2d = out.discharge
-        travel_time_2d = out.travel_time
+        discharge_2d = nothing
+        travel_time_2d = nothing
     end
 
     return Results(

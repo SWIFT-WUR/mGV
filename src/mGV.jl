@@ -92,7 +92,7 @@ require.
     selected_outputs::Vector{Symbol} # output variables to write
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
-        OutputBuffers(surface_energy_variables.surface_temperature)
+        OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs)
 end
 
 include("energy_balance.jl")
@@ -243,9 +243,9 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process and write results to disk
+    # Compute the outputs that have a buffer, and write them to disk if selected in the config
+    results = process_daily_outputs(model)
     if !isnothing(model.writer)
-        results = process_daily_outputs(model)
         write_results(model.writer.io_service, model.clock, results)
     end
 

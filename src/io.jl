@@ -1,8 +1,8 @@
 include("async_writer.jl")
 
 """
-Create a `Results` object with pinned host memory for the `selected_outputs`
-and small 1-element placeholder arrays for outputs that are not selected.
+Create a `Results` object with pinned host memory for the `selected_outputs`.
+Outputs that are not selected are `nothing`.
 """
 function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Backend = CPU())
     function make_pinned(dims...)
@@ -11,10 +11,10 @@ function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Back
         return A
     end
 
-    slice(field) = field in selected_outputs ? make_pinned(nx, ny) : zeros(Float32, 1, 1)
-    layered(field) = field in selected_outputs ? make_pinned(nx, ny, nlayers) : zeros(Float32, 1, 1, 1)
+    slice(field) = field in selected_outputs ? make_pinned(nx, ny) : nothing
+    layered(field) = field in selected_outputs ? make_pinned(nx, ny, nlayers) : nothing
 
-    Results(
+    TransferBuffer(
         slice(:surface_temperature),
         slice(:air_temperature),
         slice(:precipitation),
