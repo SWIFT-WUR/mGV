@@ -12,7 +12,7 @@ using Printf
 using Statistics
 using KernelAbstractions
 using Adapt: adapt, @adapt_structure
-using Accessors: @set, @optic
+using Accessors: @optic
 using StaticArrays: SVector, pushfirst, setindex
 using OrderedCollections: OrderedDict
 
@@ -74,23 +74,23 @@ mGV model state.
 The model state includes all information the model's update functions
 require.
 """
-@kwdef struct Model
-    config::Cfg    # all configuration options
-    clock::Clock   # to keep track of simulation time
-    grid_parameters::GridParameters
-    vegetation_parameters::VegetationParameters
-    monthly_vegetation_parameters::MonthlyVegetationParameters
-    soil_parameters::SoilParameters
-    surface_energy_variables::SurfaceEnergyVariables
-    canopy_variables::CanopyVariables
-    soil_variables::SoilVariables
-    snow_variables::SnowVariables
-    forcing_variables::ForcingVariables
-    forcing_readers::ForcingReaders
-    routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
+@kwdef mutable struct Model
+    const config::Cfg    # all configuration options
+    const clock::Clock   # to keep track of simulation time
+    const grid_parameters::GridParameters
+    const vegetation_parameters::VegetationParameters
+    const monthly_vegetation_parameters::MonthlyVegetationParameters
+    const soil_parameters::SoilParameters
+    const surface_energy_variables::SurfaceEnergyVariables
+    const canopy_variables::CanopyVariables
+    const soil_variables::SoilVariables
+    const snow_variables::SnowVariables
+    const forcing_variables::ForcingVariables
+    const forcing_readers::ForcingReaders
+    const routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter, Nothing} # writes model output
     # preallocated 2D daily output buffers
-    output_buffers::OutputBuffers =
+    const output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature)
 end
 
@@ -248,27 +248,17 @@ end
     end
 
     # next time step will be new year; close file output
-    if !isnothing(model.writer) &&
-            year(model.clock.time + model.clock.dt) > year(model.clock.time)
-        # close output
-        stop_async_service(model.writer.io_service)
-        close_output(model.writer.store)
+    if (
+            !isnothing(model.writer) &&
+                year(model.clock.time + model.clock.dt) > year(model.clock.time)
+        )
 
+        close_output_files!(model.writer)
         if year(model.clock.time) == model.config.end_year
-            # if model has reached end time step set writer to nothing
-            @set model.writer = nothing
-
+            clear_output_writer!(model.writer)
         else
-            # otherwise set up new output file
             println("Starting new io service...")
-            new_writer = start_io_service(
-                model.config,
-                model.grid_parameters,
-                year(model.clock.time) + 1,
-                model.clock.dt,
-            )
-            model.writer.io_service = new_writer.io_service
-            model.writer.store = new_writer.store
+            open_new_file!(model)
         end
     end
     return nothing
@@ -298,6 +288,37 @@ function run()
     return run(cfg_path)
 end
 
+"""Finalize the model by closing output files and releasing the file handles."""
+function finalize!(model::Model)
+    return if !isnothing(model.writer)
+        close_output_files!(model.writer)
+        clear_output_writer!(model.writer)
+    end
+end
+
+"""Close the output file and stop the asynchronous service."""
+function close_output_files!(writer::OutputWriter)
+    stop_async_service(writer.io_service)
+    close_output(writer.store)
+    return nothing
+end
+
+"""Clear the writer arguments."""
+function clear_output_writer!(writer::OutputWriter)
+    writer = nothing
+    return nothing
+end
+
+"""Opens a new output file"""
+function open_new_file!(model::Model)
+    model.writer = start_io_service(
+        model.config,
+        model.grid_parameters,
+        year(model.clock.time) + 1,
+        model.clock.dt,
+    )
+    return nothing
+end
 
 include("bmi/standard_name_utils.jl")
 include("bmi/standard_name.jl")
