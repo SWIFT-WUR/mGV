@@ -3,7 +3,7 @@ Based on Wflow.jl https://github.com/Deltares/Wflow.jl/blob/main/Wflow/src/units
 MIT License, Copyright (c) 2020 Deltares and contributors
 """
 
-const PowersType = SVector{2,Rational{Int}}
+const PowersType = SVector{2, Rational{Int}}
 argument_error(msg::String) = throw(ArgumentError(msg))
 
 
@@ -58,7 +58,7 @@ struct Unit
     to_SI_factor_without_dt::Float64 # Expected to be last field!
 end
 
-const Units = fieldnames(Unit)[2:(end-1)]
+const Units = fieldnames(Unit)[2:(end - 1)]
 const N_UNITS = length(Units)
 const STANDARD_UNITS = [:K, :s, :m, :kg, :J]
 
@@ -78,26 +78,28 @@ function Unit(absolute_temperature, powers_all...)
 end
 
 @generated function get_powers_tuple(unit::Unit)
-    exprs = [:(getfield(unit, $(i + 1))) for i = 1:N_UNITS]  # +1 to skip absolute_temperature
+    exprs = [:(getfield(unit, $(i + 1))) for i in 1:N_UNITS]  # +1 to skip absolute_temperature
     return :(tuple($(exprs...)))
 end
 
 function Unit(; absolute_temperature = false, kwargs...)
-    powers = ntuple(i -> begin
-        unit = Units[i]
-        powers = return if unit in keys(kwargs)
-            val = kwargs[unit]
+    powers = ntuple(
+        i -> begin
+            unit = Units[i]
+            powers = return if unit in keys(kwargs)
+                val = kwargs[unit]
 
-            if val isa Number
-                val > 0 ? (0, val) : (-val, 0)
+                if val isa Number
+                    val > 0 ? (0, val) : (-val, 0)
+                else
+                    val
+                end
             else
-                val
+                (0 // 1, 0 // 1)
             end
-        else
-            (0 // 1, 0 // 1)
-        end
-        PowersType(powers)
-    end, N_UNITS)
+            PowersType(powers)
+        end, N_UNITS
+    )
     for unit in keys(kwargs)
         (unit ∉ Units) && argument_error("Unrecognized unit $unit.")
     end
@@ -146,7 +148,7 @@ function Base.:^(u::Unit, n::Rational{Int})
     return Unit(u.absolute_temperature, powers_new...)
 end
 
-const UnitStrings = Dict{Symbol,String}(
+const UnitStrings = Dict{Symbol, String}(
     :d => "day",
 )
 
@@ -210,7 +212,7 @@ to_SI(x, unit::Unit; kwargs...) = x
 """
 In-place conversion of an array of values to the corresponding SI unit
 """
-function to_SI!(x::AbstractArray, unit::Unit; dt_val::Union{Nothing,Number} = nothing)
+function to_SI!(x::AbstractArray, unit::Unit; dt_val::Union{Nothing, Number} = nothing)
     unit_ref = Ref(unit)
     @. x = to_SI(x, unit_ref; dt_val)
     return x
@@ -219,7 +221,7 @@ end
 """
 Convert a value in SI unit to the given unit
 """
-function to_SI(x::AbstractArray, unit::Unit; dt_val::Union{Nothing,Number} = nothing)
+function to_SI(x::AbstractArray, unit::Unit; dt_val::Union{Nothing, Number} = nothing)
     out = copy(x)
     return to_SI!(out, unit; dt_val)
 end

@@ -47,7 +47,7 @@ end
 
 function run_steps(backend)
     model = mGV.Model(make_config(backend); backend)
-    for _ = 1:NSTEPS
+    for _ in 1:NSTEPS
         BMI.update(model)
     end
     values = Dict(name => get_values(model, name) for name in VARIABLES)
@@ -68,7 +68,7 @@ end
         @testset "$name" begin
             @test any(valid)
             @test all(isfinite, gpu[valid])
-            @test isapprox(gpu[valid], cpu[valid]; rtol = 1e-3)
+            @test isapprox(gpu[valid], cpu[valid]; rtol = 1.0e-3)
         end
     end
 end

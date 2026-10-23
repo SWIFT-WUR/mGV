@@ -35,14 +35,14 @@ Metadata associated with parameters and variables.
     output::Bool = false
     tags::Vector{Symbol} = []
     function ParameterMetadata(
-        lens::L,
-        unit,
-        description,
-        gridtype,
-        input,
-        output,
-        flags,
-    ) where {L}
+            lens::L,
+            unit,
+            description,
+            gridtype,
+            input,
+            output,
+            flags,
+        ) where {L}
         return new{L}(lens, unit, description, gridtype, input, output, flags)
     end
 end
@@ -52,11 +52,11 @@ function Base.:(==)(a::ParameterMetadata, b::ParameterMetadata)
 end
 
 function metadata_from_lens_string(
-    lens_string::AbstractString,
-    standard_name_map::OrderedDict{String,ParameterMetadata},
-)::Union{ParameterMetadata,Nothing}
+        lens_string::AbstractString,
+        standard_name_map::OrderedDict{String, ParameterMetadata},
+    )::Union{ParameterMetadata, Nothing}
     for metadata_candidate in values(standard_name_map)
-        if string(metadata_candidate.lens)[7:(end-1)] == lens_string
+        if string(metadata_candidate.lens)[7:(end - 1)] == lens_string
             return metadata_candidate
         end
     end
@@ -64,10 +64,10 @@ function metadata_from_lens_string(
 end
 
 function get_metadata(
-    name::AbstractString,
-    types::Vararg{Type};
-    model::Model,
-)::Union{ParameterMetadata,Nothing}
+        name::AbstractString,
+        types::Vararg{Type};
+        model::Model,
+    )::Union{ParameterMetadata, Nothing}
     metadata = nothing
     for type in types
         standard_name_map = get_standard_name_map(model)
@@ -108,10 +108,10 @@ function get_metadata(
 end
 
 function get_metadata(
-    name::AbstractString;
-    model::Model,
-    kwargs...,
-)::Union{ParameterMetadata,Nothing}
+        name::AbstractString;
+        model::Model,
+        kwargs...,
+    )::Union{ParameterMetadata, Nothing}
     # Check whether it is a land variable first
     metadata = get(get_standard_name_map(model), name, nothing)
 
@@ -133,4 +133,3 @@ function get_field_in_model(model, name::AbstractString)
         error("Couldn't obtain a field from this model specified by '$name'.")
     end
 end
-

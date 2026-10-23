@@ -5,7 +5,7 @@ export PhysConsts, SimConsts, SnowConsts
 using Parameters
 
 @consts begin
-    # Air and water density Constants       
+    # Air and water density Constants
     RHO_A::Float32 = 1.225       # Density of air (TODO: make temperature dependent?)
     RHO_W::Float32 = 1000.0      # Density of liquid water (TODO: make temperature dependent?)
 
@@ -36,8 +36,8 @@ using Parameters
     C_P_AIR::Float32 = 1013.0    # Specific heat of moist air (J/kg·K)
 
     # Unit Conversion Constants
-    DAY_SEC::Float32 = 86400.0   # Seconds in a day 
-    MM_IN_M::Float32 = 1000.0    # Conversion factor from mm to m 
+    DAY_SEC::Float32 = 86400.0   # Seconds in a day
+    MM_IN_M::Float32 = 1000.0    # Conversion factor from mm to m
 
     # Evapotranspiration Constants
     G_COEFF::Float32 = 1628.6    # Psychrometric / Evaporation coefficient
@@ -45,9 +45,9 @@ using Parameters
 end
 
 PhysConsts = (;
-    RHO_A, RHO_W, SVP_A, SVP_B, SVP_C, PA_PER_KPA, 
-    K_B, N_A, R_GAS, MW_AIR, R_AIR, T_FREEZE, LAPSE_RATE, 
-    LAT_VAP, G, SIGMA, P_STD, C_P_AIR, DAY_SEC, MM_IN_M, G_COEFF, AIR_C
+    RHO_A, RHO_W, SVP_A, SVP_B, SVP_C, PA_PER_KPA,
+    K_B, N_A, R_GAS, MW_AIR, R_AIR, T_FREEZE, LAPSE_RATE,
+    LAT_VAP, G, SIGMA, P_STD, C_P_AIR, DAY_SEC, MM_IN_M, G_COEFF, AIR_C,
 )
 
 @consts begin
@@ -69,36 +69,36 @@ PhysConsts = (;
     SOIL_DENS_ORG::Float32 = 0.0
 end
 
-SimConsts = (; 
+SimConsts = (;
     K_L, VON_KARMAN, Z2, RI_CR, EMISSIVITY, KI, KW, KDRY_ORG, KS_ORG,
-    ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG
+    ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG,
 )
 
 @consts begin
     # Albedo decay parameters
-    NEW_SNOW_ALB::Float32       = 0.85     # Albedo of newly fallen snow [-]
-    ALB_ACCUM_A::Float32        = 0.94     # Accumulation-season decay factor A [-]
-    ALB_ACCUM_B::Float32        = 0.58     # Accumulation-season decay factor B [-]
-    ALB_THAW_A::Float32         = 0.82     # Melt-season decay factor A [-]
-    ALB_THAW_B::Float32         = 0.46     # Melt-season decay factor B [-]
+    NEW_SNOW_ALB::Float32 = 0.85     # Albedo of newly fallen snow [-]
+    ALB_ACCUM_A::Float32 = 0.94     # Accumulation-season decay factor A [-]
+    ALB_ACCUM_B::Float32 = 0.58     # Accumulation-season decay factor B [-]
+    ALB_THAW_A::Float32 = 0.82     # Melt-season decay factor A [-]
+    ALB_THAW_B::Float32 = 0.46     # Melt-season decay factor B [-]
 
     # Capacities and physical limits
-    TRACESNOW_MM::Float32       = 0.001    # Minimum SWE for active snowpack pruning [mm]
+    TRACESNOW_MM::Float32 = 0.001    # Minimum SWE for active snowpack pruning [mm]
     NEW_SNOW_THRESH_MM::Float32 = 0.001    # Match TRACESNOW [mm]
-    LIQUID_WATER_CAP::Float32   = 0.035    # Liquid water holding capacity fraction [-]
+    LIQUID_WATER_CAP::Float32 = 0.035    # Liquid water holding capacity fraction [-]
     MAX_SURFACE_SWE_MM::Float32 = 125.0    # Maximum snow water equivalent (SWE) in the surface layer [mm]
 
     # Thermodynamic properties
-    VCPICE_WQ::Float32          = 2117.27  # Specific heat capacity of ice per water-equiv [J/(kg·K)]
-    LATICE::Float32             = 334000.0 # Latent heat of fusion for water [J/kg]
-    RHOFW::Float32              = 1000.0   # Density of fresh water [kg/m³]
-    DENSITY::Float32            = 250.0    # Typical density of the snowpack [kg/m³]
+    VCPICE_WQ::Float32 = 2117.27  # Specific heat capacity of ice per water-equiv [J/(kg·K)]
+    LATICE::Float32 = 334000.0 # Latent heat of fusion for water [J/kg]
+    RHOFW::Float32 = 1000.0   # Density of fresh water [kg/m³]
+    DENSITY::Float32 = 250.0    # Typical density of the snowpack [kg/m³]
 end
 
 SnowConsts = (;
     NEW_SNOW_ALB, ALB_ACCUM_A, ALB_ACCUM_B, ALB_THAW_A, ALB_THAW_B,
     TRACESNOW_MM, NEW_SNOW_THRESH_MM, LIQUID_WATER_CAP, MAX_SURFACE_SWE_MM,
-    VCPICE_WQ, LATICE, RHOFW, DENSITY
+    VCPICE_WQ, LATICE, RHOFW, DENSITY,
 )
 
 end

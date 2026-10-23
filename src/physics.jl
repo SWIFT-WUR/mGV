@@ -98,7 +98,7 @@ function SoilVariables(grid_dims, soil_dims)
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
-        zeros(Float32, (grid_dims[1], grid_dims[2], soil_dims[3]-1)),
+        zeros(Float32, (grid_dims[1], grid_dims[2], soil_dims[3] - 1)),
         zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
@@ -147,10 +147,10 @@ Note: input temperature should be in degC
 function calculate_svp_slope(air_temperature)
     # Re-calculate SVP part locally (scalar)
     svp_part = SVP_A * exp((SVP_B * air_temperature) / (SVP_C + air_temperature))
-    
+
     # Calculate Slope
     slope_kpa = (SVP_B * SVP_C * svp_part) / ((SVP_C + air_temperature)^2)
-    
+
     svp_slope = slope_kpa * PA_PER_KPA # [Pa/°C]
     return svp_slope
 end
