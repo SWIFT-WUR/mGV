@@ -85,7 +85,6 @@ end
     @test !all(dest .== 0.0)
 
     BMI.finalize(model)
-    model = nothing
 end
 
 
@@ -151,7 +150,6 @@ end
     @test BMI.get_current_time(model) == time
 
     BMI.finalize(model)
-    model = nothing
 end
 
 
@@ -179,7 +177,6 @@ end
     # Paths in the config are relative to the config file, so write the modified
     #  config next to the original one. Use a separate output directory to avoid
     #  clashing with output files still opened by other models.
-    model = get_initialized_model(MEKONG_CFG)
     toml = replace(
         read(MEKONG_CFG, String),
         "external_groundwater_routing = false" => "external_groundwater_routing = true",

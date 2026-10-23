@@ -49,9 +49,7 @@ function BMI.update_until(model::Model, time::Float64)
 end
 
 function BMI.finalize(model::Model)
-    if !isnothing(model.writer)
-        finalize!(model)
-    end
+    finalize!(model)
     return nothing
 end
 
