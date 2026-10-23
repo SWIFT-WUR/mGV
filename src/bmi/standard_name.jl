@@ -238,7 +238,7 @@ const standard_routing_map = OrderedDict{String, ParameterMetadata}(
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
-        tags = [:routing_parameters],    
+        tags = [:routing_parameters],
     ),
     "channel__cell_area" => ParameterMetadata(;
         lens = @optic(_.routing.cell_area),

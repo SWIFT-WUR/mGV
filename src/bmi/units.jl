@@ -148,7 +148,7 @@ function Base.:^(u::Unit, n::Rational{Int})
     return Unit(u.absolute_temperature, powers_new...)
 end
 
-const UnitStrings = Dict{Symbol,String}(
+const UnitStrings = Dict{Symbol, String}(
     :d => "day",
 )
 

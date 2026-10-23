@@ -188,7 +188,7 @@ end
         model = BMI.initialize(mGV.Model, gw_tomlpath)
         @test model.config.API.external_groundwater_routing
 
-        for i = 1:10
+        for i in 1:10
             BMI.update(model)
         end
 
