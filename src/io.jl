@@ -1,7 +1,7 @@
 include("async_writer.jl")
 
 """
-Create a `Results` object with pinned host memory for the `selected_outputs`.
+Create a `TransferBuffer` with pinned host memory for the `selected_outputs`.
 Outputs that are not selected are `nothing`.
 """
 function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Backend = CPU())

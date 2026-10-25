@@ -127,20 +127,18 @@
     maybe_store!(salb_out, i, j, snow_albedo)
     maybe_store!(sts_out, i, j, snow_surf_temp)
 
-    if want(tsurf_out)
-        # -----------------------------------------------------------------------
-        # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
-        # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported  
-        # surface temperature is cold (near 0°C) over snow, not the bare-soil temp.
-        # Our tsurf is solved from the vegetation/soil energy balance; it stays
-        # warm even when the cell is snow-covered. We correct this by blending:
-        #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf. TODO: is this reasonable?
-        # -----------------------------------------------------------------------
-        tsurf = tsurf_in[i, j]
-        snow_cov_safe = ifelse(present, coverage_masked, 0f0)
-        snow_t_safe = ifelse(present, snow_surf_temp, tsurf)
-        tsurf_out[i, j] = snow_cov_safe * snow_t_safe + (1f0 - snow_cov_safe) * tsurf
-    end
+    # -----------------------------------------------------------------------
+    # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
+    # VIC: energy.Tsurf = snow.surf_temp when snow is present → the reported
+    # surface temperature is cold (near 0°C) over snow, not the bare-soil temp.
+    # Our tsurf is solved from the vegetation/soil energy balance; it stays
+    # warm even when the cell is snow-covered. We correct this by blending:
+    #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf. TODO: is this reasonable?
+    # -----------------------------------------------------------------------
+    tsurf = tsurf_in[i, j]
+    snow_cov_safe = ifelse(present, coverage_masked, 0f0)
+    snow_t_safe = ifelse(present, snow_surf_temp, tsurf)
+    maybe_store!(tsurf_out, i, j, snow_cov_safe * snow_t_safe + (1f0 - snow_cov_safe) * tsurf)
 end
 
 @kwdef struct Results{M, T}
