@@ -12,7 +12,7 @@ Starts the Async service.
 - Allocates `n_buffers` (default 4) to absorb disk latency spikes.
 - Starts the background thread that handles the actual writing.
 """
-function start_async_service(nx, ny, nlayers, output_store, selected_outputs, backend::Backend, n_buffers=4)
+function start_async_service(nx, ny, nlayers, output_store, selected_outputs, backend::Backend, n_buffers = 4)
     # 1. Create Channels with fixed capacity
     free_pool = Channel{TransferBuffer}(n_buffers)
     job_queue = Channel{Tuple{Int, TransferBuffer}}(n_buffers)
@@ -31,11 +31,11 @@ function start_async_service(nx, ny, nlayers, output_store, selected_outputs, ba
         try
             # Loop forever: wait for a job, write it, recycle the buffer
             for (time_index, buf) in job_queue
-                
+
                 # A. Write to disk
                 # This calls the function in io_writer.jl
                 write_slice!(time_index, buf, output_store)
-                
+
                 # B. Recycle buffer
                 # Send the buffer back to the free_pool so the GPU can use it again.
                 put!(free_pool, buf)
@@ -65,6 +65,7 @@ Hand off a full buffer to the background thread.
 """
 function submit_buffer(service::AsyncBufferService, time_index, buf)
     put!(service.job_queue, (time_index, buf))
+    return nothing
 end
 
 """
@@ -74,4 +75,5 @@ Stops the service.
 function stop_async_service(service::AsyncBufferService)
     close(service.job_queue) # Tells the loop to stop when empty
     wait(service.writer_task) # Wait for the thread to finish
+    return nothing
 end

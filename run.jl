@@ -3,7 +3,7 @@ include("src/packages.jl")
 
 # Utilities
 include("src/utils/runtime_utils.jl")
-include("src/utils/diagnostics.jl") 
+include("src/utils/diagnostics.jl")
 
 # Setup backend; device (GPU/CPU) type and float type
 include("src/backend_setup.jl")

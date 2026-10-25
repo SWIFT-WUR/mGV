@@ -34,7 +34,7 @@ function BMI.update_until(model::Model, time::Float64)
         error("Time can't exceed the current end time: $end_time")
     end
 
-    _div, _rem = divrem(time-model_time, BMI.get_time_step(model))
+    _div, _rem = divrem(time - model_time, BMI.get_time_step(model))
     steps = Int(_div)
     if abs(_rem) > eps()
         error(
@@ -42,13 +42,13 @@ function BMI.update_until(model::Model, time::Float64)
         )
     end
 
-    for _ = 1:steps
+    for _ in 1:steps
         update!(model)
     end
     return nothing
 end
 
-# TODO 
+# TODO
 function BMI.finalize(model::Model)
     if !isnothing(model.writer)
         # close output
@@ -172,7 +172,7 @@ end
 
 # RemoteBMI uses outdated BasicModelInterface.jl definition;
 function BMI.get_grid_y(model::Model, grid::Int)
-    y = zeros(Float64, BMI.get_grid_shape(model, grid)[end-1])
+    y = zeros(Float64, BMI.get_grid_shape(model, grid)[end - 1])
     return BMI.get_grid_y(model, grid, y)
 end
 
@@ -186,8 +186,8 @@ function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
 end
 
 function BMI.get_grid_z(model::Model, grid::Int)
-    if grid == GRIDS["vegetation_snow_grid"] 
-        z=zeros(Int, BMI.get_grid_shape(model, grid)[begin])
+    if grid == GRIDS["vegetation_snow_grid"]
+        z = zeros(Int, BMI.get_grid_shape(model, grid)[begin])
         return BMI.get_grid_z(model, grid, z)
     else
         error("accessing z-coordinate in 2-rank grid")
@@ -210,8 +210,6 @@ function BMI.get_grid_size(model::Model, grid::Int)
 end
 
 
-
-
 """
     BMI.get_var_type(model::Model, name::String)
 
@@ -226,11 +224,11 @@ end
 """
     BMI.get_var_units(model::Model, name::String)
 
-Return the variable's unit
+Return the variable's unit.
 """
 function BMI.get_var_units(model::Model, name::String)
     metadata = check_name(model, name)
-    return to_string(to_SI(metadata.unit); BMI_standard = true)
+    return to_string(metadata.unit)
 end
 
 """
@@ -253,7 +251,7 @@ function BMI.get_var_location(model::Model, name::String)
 end
 
 
-#TIME 
+#TIME
 function BMI.get_current_time(model::Model)
     return datetime2unix(model.clock.time)
 end
@@ -304,19 +302,17 @@ function BMI.get_value_ptr(model::Model, name::String)
         else
             return @view model_vals[:, :, ind, :]
         end
-    else
-        (; lens) = get_metadata(name; model)
-        if isnothing(lens)
-            error("Accessing '$name' is not supported.")
-        else
-            dest = lens(model)
-            if ndims(dest)>1
-                dest = vec(dest)
-            end
-            n = length(dest)
-            return @view(dest[1:n])
-        end
     end
+    (; lens) = get_metadata(name; model)
+    if isnothing(lens)
+        error("Accessing '$name' is not supported")
+    end
+    dest = lens(model)
+    if ndims(dest) > 1
+        dest = vec(dest)
+    end
+    n = length(dest)
+    return @view(dest[1:n])
 end
 
 """
@@ -348,7 +344,7 @@ function BMI.set_value(model::Model, name::String, src)
             "Length mismatch between model $(l_model) and src $(l_src) ",
             "variable $name. Probably you're trying to access a variable without ",
             "specifying a given layer.\n",
-            "Ratio between lengths: $(l_model/l_src)"
+            "Ratio between lengths: $(l_model / l_src)"
         )
     end
     mod_var = BMI.get_value_ptr(model, name)

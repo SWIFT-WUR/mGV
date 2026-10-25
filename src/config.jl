@@ -31,7 +31,7 @@ end
     snow_band_elevation::String = "elevation"
     snow_band_precipitation_factor::String = "Pfactor"
 
-    # Vegetation 
+    # Vegetation
     #  (static)
     root_fraction::String = "root_fract"
     vegetation_fraction::String = "Cv"
@@ -89,6 +89,10 @@ end
 
 @option "API" struct APISection
     variables::Vector{String} = []
+    # Set to `true` to exclude subsurface runoff (baseflow) from the total runoff
+    #  that feeds the river routing. The subsurface runoff is then expected to be
+    #  routed by an external groundwater model (e.g. MODFLOW) coupled via BMI.
+    external_groundwater_routing::Bool = false
 end
 
 @option "config" struct Cfg

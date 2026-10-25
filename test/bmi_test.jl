@@ -1,4 +1,3 @@
-
 using Test
 
 import BasicModelInterface as BMI
@@ -44,7 +43,7 @@ end
     tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
     model = BMI.initialize(mGV.Model, tomlpath)
 
-    for i = 1:10
+    for i in 1:10
         BMI.update(model)
     end
 
@@ -61,7 +60,7 @@ end
     # soil moisture should have values >=0
     BMI.get_value(model, sml3, dest)
     bad = findall(x -> !(x >= 0), dest)
-    @test all(x -> isnan(x) || x>=0, dest) # on CPU NaN might be present (ocean)
+    @test all(x -> isnan(x) || x >= 0, dest) # on CPU NaN might be present (ocean)
     @test !all(dest .== 0.0)  # not all values can be 0.0
 
     # set the soil moisture in layer 3 to 0:
@@ -81,7 +80,6 @@ end
     BMI.finalize(model)
     model = nothing
 end
-
 
 
 @testset "Full BMI tests" begin
@@ -117,7 +115,7 @@ end
 
     out_vars = BMI.get_output_var_names(model)
     in_vars = BMI.get_input_var_names(model)
-    for i = 1:10
+    for i in 1:10
         BMI.update(model)
         if i == 1
             @test BMI.get_current_time(model) == datetime2unix(clock.time)
@@ -143,7 +141,68 @@ end
         @test all(dest .== MaxType[type])
     end
 
-    time = BMI.get_current_time(model) + (200*BMI.get_time_step(model))
+    time = BMI.get_current_time(model) + (200 * BMI.get_time_step(model))
     BMI.update_until(model, time)
     @test BMI.get_current_time(model) == time
+
+    BMI.finalize(model)
+end
+
+
+@testset "BMI units" begin
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    model = BMI.initialize(mGV.Model, tomlpath)
+    BMI.update(model)
+
+    # Values are exchanged in the model's native units
+    @test BMI.get_var_units(model, "land_subsurface__runoff") == "mm day-1"
+    @test BMI.get_var_units(model, "land_surface__temperature") == "degC"
+    @test BMI.get_var_units(model, "soil__moisture_layer_1") == "mm"
+    @test BMI.get_var_units(model, "channel_water__volume_flow_rate") == "m3 s-1"
+    @test BMI.get_var_units(model, "soil__ice_fraction_layer_1") == "-"
+
+    name = "land_subsurface__runoff"
+    dest = zeros(Float32, length(BMI.get_value_ptr(model, name)))
+    BMI.get_value(model, name, dest)
+    @test isequal(dest, Array(BMI.get_value_ptr(model, name)))
+
+    BMI.finalize(model)
+end
+
+
+@testset "External groundwater routing" begin
+    # Paths in the config are relative to the config file, so write the modified
+    #  config next to the original one. Use a separate output directory to avoid
+    #  clashing with output files still opened by other models.
+    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
+    toml = replace(
+        read(tomlpath, String),
+        "external_groundwater_routing = false" => "external_groundwater_routing = true",
+        "../output_data/mekong/" => escape_string(mktempdir()),
+    )
+    gw_tomlpath, io = mktemp(dirname(tomlpath))
+    write(io, toml)
+    close(io)
+
+    try
+        model = BMI.initialize(mGV.Model, gw_tomlpath)
+        @test model.config.API.external_groundwater_routing
+
+        for i in 1:10
+            BMI.update(model)
+        end
+
+        get_var(name) = Array(BMI.get_value_ptr(model, name))
+        surface = get_var("land_surface__runoff")
+        subsurface = get_var("land_subsurface__runoff")
+        total = get_var("land__runoff~total")
+
+        # subsurface runoff is computed, but not passed on to the routing
+        @test any(x -> !isnan(x) && x > 0, subsurface)
+        @test isequal(total, surface)
+
+        BMI.finalize(model)
+    finally
+        rm(gw_tomlpath)
+    end
 end

@@ -14,7 +14,7 @@ function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Back
     slice(field) = field in selected_outputs ? make_pinned(nx, ny) : nothing
     layered(field) = field in selected_outputs ? make_pinned(nx, ny, nlayers) : nothing
 
-    TransferBuffer(
+    return TransferBuffer(
         slice(:surface_temperature),
         slice(:air_temperature),
         slice(:precipitation),
@@ -55,57 +55,65 @@ close_output(store::NetCDFOutputStore) = close(store.ds)
 
 function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
     println("Initializing Zarr store at: $output_path")
-    isdir(output_path) && rm(output_path, recursive=true)
+    isdir(output_path) && rm(output_path, recursive = true)
     mkdir(output_path)
 
     # Initialize the group
     group = zgroup(output_path)
 
     # Shuffle options: shuffle = 0 = none, 1 = byte shuffle, 2 = bitshuffle, -1 = auto
-    compressor = Zarr.BloscCompressor(cname="lz4", clevel=1, shuffle=1)
+    compressor = Zarr.BloscCompressor(cname = "lz4", clevel = 1, shuffle = 1)
 
     chunk_2d = (nx, ny, 1)
     chunk_3d_layer = (nx, ny, 1, nlayers)
 
-    function make_zarr(name, dims, chunks, dim_names; attrs=Dict())
-        # Convert input dict to Dict{String, Any} 
+    function make_zarr(name, dims, chunks, dim_names; attrs = Dict())
+        # Convert input dict to Dict{String, Any}
         # This allows it to hold both Strings ("degrees_north") and Vectors (["lat", "lon"])
         full_attrs = Dict{String, Any}(attrs)
         full_attrs["_ARRAY_DIMENSIONS"] = dim_names
-    
+
         # Pass the attributes dict into zcreate
-        arr = zcreate(Float32, group, name, dims...; 
-                      chunks=chunks, 
-                      compressor=compressor, 
-                      fill_value=NaN32,
-                      attrs=full_attrs)
-                      
+        arr = zcreate(
+            Float32, group, name, dims...;
+            chunks = chunks,
+            compressor = compressor,
+            fill_value = NaN32,
+            attrs = full_attrs
+        )
+
         return arr
     end
 
     # Coords and time
-    time_values = collect(0:nt-1) 
-    z_time = make_zarr("time", (nt,), (nt,), ["time"]; 
-                   attrs=Dict("units"=>"days since $year-01-01", "calendar"=>"proleptic_gregorian"))
+    time_values = collect(0:(nt - 1))
+    z_time = make_zarr(
+        "time", (nt,), (nt,), ["time"];
+        attrs = Dict("units" => "days since $year-01-01", "calendar" => "proleptic_gregorian")
+    )
     z_time[:] = time_values
-    z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs=Dict("units"=>"degrees_north", "axis"=>"Y"))
+    z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs = Dict("units" => "degrees_north", "axis" => "Y"))
     z_lat[:] = lat_cpu
-    z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs=Dict("units"=>"degrees_east", "axis"=>"X"))
+    z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs = Dict("units" => "degrees_east", "axis" => "X"))
     z_lon[:] = lon_cpu
 
     # Reversed names to match Python's Row-Major read order
-    dim_2d = ["time", "lat", "lon"] 
-    dim_3d_layer  = ["layer", "time", "lat", "lon"]
+    dim_2d = ["time", "lat", "lon"]
+    dim_3d_layer = ["layer", "time", "lat", "lon"]
 
     attrs = Dict(:travel_time => Dict("units" => "s", "long_name" => "River travel time"))
-    store = ZarrOutputStore(OutputArrays([
-        field => if field == :soil_moisture
-            make_zarr(output_name(field), (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer)
-        else
-            make_zarr(output_name(field), (nx, ny, nt), chunk_2d, dim_2d; attrs=get(attrs, field, Dict()))
-        end
-        for field in selected_outputs
-    ]))
+    store = ZarrOutputStore(
+        OutputArrays(
+            [
+                field => if field == :soil_moisture
+                    make_zarr(output_name(field), (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer)
+                else
+                    make_zarr(output_name(field), (nx, ny, nt), chunk_2d, dim_2d; attrs = get(attrs, field, Dict()))
+                end
+                    for field in selected_outputs
+            ]
+        )
+    )
 
     return store
 end
@@ -113,7 +121,7 @@ end
 function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
     println("Creating NetCDF output file at: $output_file")
     out_ds = NCDataset(output_file, "c")
-    
+
     # Dimensions
     defDim(out_ds, "lon", nx); defDim(out_ds, "lat", ny); defDim(out_ds, "time", nt)
     defDim(out_ds, "qlayers", 2); defDim(out_ds, "layer", nlayers); defDim(out_ds, "top_layer", 1)
@@ -122,8 +130,8 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     chunk_2d = (nx, ny, 1)
     chunk_3d_layer = (nx, ny, 1, nlayers)
 
-    function def_fast_var(name, dims; chunks=nothing)
-        defVar(out_ds, name, Float32, dims; chunksizes=chunks, deflatelevel=0, shuffle=false)
+    function def_fast_var(name, dims; chunks = nothing)
+        return defVar(out_ds, name, Float32, dims; chunksizes = chunks, deflatelevel = 0, shuffle = false)
     end
 
     # Coords
@@ -131,14 +139,18 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
 
     # Store
-    store = NetCDFOutputStore(out_ds, OutputArrays([
-        field => if field == :soil_moisture
-            def_fast_var(output_name(field), ("lon", "lat", "time", "layer"); chunks=chunk_3d_layer)
-        else
-            def_fast_var(output_name(field), ("lon", "lat", "time"); chunks=chunk_2d)
-        end
-        for field in selected_outputs
-    ]))
+    store = NetCDFOutputStore(
+        out_ds, OutputArrays(
+            [
+                field => if field == :soil_moisture
+                    def_fast_var(output_name(field), ("lon", "lat", "time", "layer"); chunks = chunk_3d_layer)
+                else
+                    def_fast_var(output_name(field), ("lon", "lat", "time"); chunks = chunk_2d)
+                end
+                    for field in selected_outputs
+            ]
+        )
+    )
 
     return store
 end
@@ -166,12 +178,14 @@ function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
     Threads.@sync for (field, array) in store.data
         Threads.@spawn write_field!(array, buf, field, time_index)
     end
+    return nothing
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
     for (field, array) in store.data
         write_field!(array, buf, field, time_index)
     end
+    return nothing
 end
 
 mutable struct OutputWriter
@@ -180,12 +194,12 @@ mutable struct OutputWriter
 end
 
 function start_io_service(
-    config::Cfg,
-    grid_parameters::GridParameters,
-    year,
-    dt,
-    selected_outputs
-)
+        config::Cfg,
+        grid_parameters::GridParameters,
+        year,
+        dt,
+        selected_outputs
+    )
     nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
 
     backend = get_backend(grid_parameters.elevation)
@@ -194,17 +208,17 @@ function start_io_service(
     ny = length(grid_parameters.latitude)
 
     nlayers = 3  # hardcoded 3 soil layers
-    
+
     if lowercase(config.output.format) == "netcdf"
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).nc")
-        # Create a buffer pool 
+        # Create a buffer pool
         output_store = create_output_netcdf(output_path, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
     else
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).zarr")
         output_store = create_output_zarr(output_path, year, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
     end
 
-    # Start the async pool 
+    # Start the async pool
     println("Starting Async I/O Service...")
     io_service = start_async_service(nx, ny, nlayers, output_store, selected_outputs, backend, 6)
     return OutputWriter(io_service, output_store)
@@ -213,7 +227,7 @@ end
 
 function write_results(io_service::AsyncBufferService, clock, results::Results)
     time_index = (clock.time - DateTime(year(clock.time))) ÷ clock.dt + 1
-    # Get a free buffer from the pool 
+    # Get a free buffer from the pool
     # (Instant unless disk is >4 days behind)
     local current_buf
     current_buf = get_free_buffer(io_service)
@@ -223,5 +237,5 @@ function write_results(io_service::AsyncBufferService, clock, results::Results)
 
     # Hand off to background thread and continue simulation immediately.
     submit_buffer(io_service, time_index, current_buf)
-
+    return nothing
 end

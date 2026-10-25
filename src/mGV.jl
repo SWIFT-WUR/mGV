@@ -87,8 +87,8 @@ require.
     snow_variables::SnowVariables
     forcing_variables::ForcingVariables
     forcing_readers::ForcingReaders
-    routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter,Nothing} # writes model output; nothing when no output is selected
+    routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
+    writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
     selected_outputs::Vector{Symbol} # output variables to write
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
@@ -251,7 +251,7 @@ end
 
     # next time step will be new year; close file output
     if !isnothing(model.writer) &&
-       year(model.clock.time + model.clock.dt) > year(model.clock.time)
+            year(model.clock.time + model.clock.dt) > year(model.clock.time)
         # close output
         stop_async_service(model.writer.io_service)
         close_output(model.writer.store)

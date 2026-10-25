@@ -6,7 +6,7 @@ import mGV
 mGV.pin_memory!(::CUDABackend, arr) = CUDA.pin(arr)
 
 function __init__()
-    mGV.register_backend!("cuda", "CUDA", CUDA.functional, CUDABackend)
+    return mGV.register_backend!("cuda", "CUDA", CUDA.functional, CUDABackend)
 end
 
 end
