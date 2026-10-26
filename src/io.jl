@@ -256,7 +256,7 @@ function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
     return nothing
 end
 
-mutable struct OutputWriter
+struct OutputWriter
     io_service
     store
 end

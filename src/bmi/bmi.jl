@@ -48,17 +48,10 @@ function BMI.update_until(model::Model, time::Float64)
     return nothing
 end
 
-# TODO
 function BMI.finalize(model::Model)
-    if !isnothing(model.writer)
-        # close output
-        stop_async_service(model.writer.io_service)
-        close_output(model.writer.store)
-        @set model.writer = nothing
-    end
+    finalize!(model)
     return nothing
 end
-
 
 # INPUT, OUTPUT VARIABLE AND MODEL NAME
 function BMI.get_component_name(model::Model)
