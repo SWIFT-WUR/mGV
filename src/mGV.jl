@@ -294,6 +294,7 @@ function finalize!(model::Model)
         close_output_files!(model.writer)
         clear_output_writer!(model)
     end
+    return nothing
 end
 
 """Close the output file and stop the asynchronous service."""
