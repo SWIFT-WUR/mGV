@@ -84,6 +84,7 @@ end
     @test !all(dest .== 0.0)
 
     BMI.finalize(model)
+    @test isnothing(model.writer)
 end
 
 

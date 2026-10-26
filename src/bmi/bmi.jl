@@ -48,12 +48,10 @@ function BMI.update_until(model::Model, time::Float64)
     return nothing
 end
 
-# TODO
 function BMI.finalize(model::Model)
     finalize!(model)
     return nothing
 end
-
 
 # INPUT, OUTPUT VARIABLE AND MODEL NAME
 function BMI.get_component_name(model::Model)

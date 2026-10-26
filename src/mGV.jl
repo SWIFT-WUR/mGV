@@ -255,7 +255,7 @@ end
 
         close_output_files!(model.writer)
         if year(model.clock.time) == model.config.end_year
-            clear_output_writer!(model.writer)
+            clear_output_writer!(model)
         else
             println("Starting new io service...")
             open_new_file!(model)
@@ -292,7 +292,7 @@ end
 function finalize!(model::Model)
     return if !isnothing(model.writer)
         close_output_files!(model.writer)
-        clear_output_writer!(model.writer)
+        clear_output_writer!(model)
     end
 end
 
@@ -304,8 +304,8 @@ function close_output_files!(writer::OutputWriter)
 end
 
 """Clear the writer arguments."""
-function clear_output_writer!(writer::OutputWriter)
-    writer = nothing
+function clear_output_writer!(model::Model)
+    model.writer = nothing
     return nothing
 end
 
