@@ -290,7 +290,7 @@ end
 
 """Finalize the model by closing output files and releasing the file handles."""
 function finalize!(model::Model)
-    return if !isnothing(model.writer)
+    if !isnothing(model.writer)
         close_output_files!(model.writer)
         clear_output_writer!(model)
     end
