@@ -6,6 +6,8 @@ It is a separate package and is not used by mGV yet.
 
 ## How it works
 
+![Sub-basin routing: the network split into sub-basins by level, and one kernel launch per level with one workgroup per sub-basin](subbasin-routing.svg)
+
 The D8 network is split into sub-basins of at most `S` cells (default 2048).
 
 1. **One workgroup per unit.** A unit (one or more sub-basins) runs all sub-steps of a
