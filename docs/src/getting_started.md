@@ -148,3 +148,33 @@ necessarily SI units: for example, runoff is in mm day⁻¹ and temperatures are
 coupling framework is responsible for converting them to the units of the other model.
 
 ### Remote BMI controller
+The mGV model, as any other model coupled with the BMI, can be controlled with the [BMI controller](https://github.com/BSchilperoort/bmi-controller), which is a browser-based controller for [Remote BMI](https://github.com/eWaterCycle/remotebmi) models.
+The controller needs [Node.js](https://nodejs.org/en) 20+ and [pnpm](https://pnpm.io/).
+
+#### Setup
+```bash
+pnpm install
+```
+
+#### Development
+
+```bash
+pnpm dev
+```
+
+Opens at `http://localhost:5173`. The dev server will connect to `http://localhost:50051` upon initialization, so the Remote BMI server must be running before you interact with the UI.
+
+To use the controller a small Julia script like the following is needed:
+```julia
+import RemoteBMI.Server: run_bmi_server
+using mGV
+run_bmi_server(mGV.Model, "127.0.0.1", 8000)
+```
+Assuming that the script is called `server_script.jl`, to launch mGV with the BMI controller is sufficient to type `julia --project=. path/to/server_script.jl` within the mGV folder. 
+This has to be done after launching `pnpm dev` within the `bmi-controller` folder.
+Afterwards, it is possible to initialize the model and control it through the UI.
+Currently, the following features are available:
+- Initialize, step, run-until, and finalize a BMI model
+- Inspect input/output variables
+- Time-series plot for any output variable
+- Grid viewer with per-variable color mapping (2 and 3D variables)
