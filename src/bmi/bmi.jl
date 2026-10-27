@@ -180,7 +180,7 @@ end
 
 function BMI.get_grid_z(model::Model, grid::Int)
     if grid == GRIDS["vegetation_snow_grid"]
-        z = zeros(Int, BMI.get_grid_shape(model, grid)[begin])
+        z = zeros(Float64, BMI.get_grid_shape(model, grid)[begin])
         return BMI.get_grid_z(model, grid, z)
     else
         error("accessing z-coordinate in 2-rank grid")
