@@ -271,7 +271,7 @@ end
 """
 function BMI.get_value(model::Model, name::String, dest)
     if occursin(r"_band_\d", name)
-        #the extra copy is needed to create a dense vector from 
+        #the extra copy is needed to create a dense vector from
         # non-contiguous gpu arrays (nbands)
         copyto!(dest, copy(BMI.get_value_ptr(model, name)))
     else
@@ -320,7 +320,7 @@ end
 function BMI.get_value_at_indices(model::Model, name::String, dest, inds::Vector{Int})
     src = BMI.get_value_ptr(model, name)
     if occursin(r"_band_\d", name)
-        #the extra copy is needed to create a dense vector from 
+        #the extra copy is needed to create a dense vector from
         # non-contiguous gpu arrays (nbands)
         copyto!(dest, copy(src)[inds])
     else
@@ -378,12 +378,12 @@ function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int},
     dest = BMI.get_value_ptr(model, name)
 
     if occursin(r"_band_\d", name)
-        #the extra copy is needed to create a dense vector from 
+        #the extra copy is needed to create a dense vector from
         # non-contiguous gpu arrays (nbands)
         tmp = copy(dest)
         tmp[inds] = value
-        dest .= reshape(tmp, Base.size(dest)) 
-    else 
+        dest .= reshape(tmp, Base.size(dest))
+    else
         dest[inds] = value
     end
     return dest
