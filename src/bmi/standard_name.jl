@@ -220,7 +220,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     ),
     "land_vegetation_canopy__water_storage" => ParameterMetadata(;
         lens = @optic(_.canopy_variables.water_storage),
-        unit = Unit(),
+        unit = Unit(),  # TODO: add unit
         description = "",
         gridtype = GRIDS["vegetation_snow_grid"],
         input = true,
