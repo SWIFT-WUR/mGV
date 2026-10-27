@@ -356,5 +356,5 @@ function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int},
     end
     dest = BMI.get_value_ptr(model, name)
     dest[inds] = src
-    return dest
+    return nothing
 end
