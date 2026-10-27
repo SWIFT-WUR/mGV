@@ -7,7 +7,6 @@ using Dates
 
 MEKONG_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
 
-MEKONG_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
 
 const MaxType = Dict(
     "Float16" => floatmax(Float16),
