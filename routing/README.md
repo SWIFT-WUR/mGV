@@ -58,6 +58,40 @@ route!(router, routing.area, routing.discharge, total_runoff, n_substeps, dt_ste
     slowly there. That size is meant for testing.
 - **`concurrency`:** about the number of compute units (60 on an RX 7800 XT).
 
+## Coupling to mGV through BMI
+
+[`examples/bmi_coupling.jl`](examples/bmi_coupling.jl) runs the Mekong example with
+mGV's built-in routing switched off (`enable_routing = false`) and does the routing
+outside the model:
+
+```julia
+model = BMI.initialize(mGV.Model, config_file)          # enable_routing = false
+...
+for day in 1:ndays
+    BMI.update(model)                                   # land surface
+    BMI.get_value(model, "land__runoff~total", runoff)  # mm/day, on the model's device
+    route!(router, area, discharge, runoff, nsub, dt_step)
+end
+```
+
+- **Network:** built once with mGV's own preprocessing (`mGV.RoutingState`) of the
+  routing parameter file. Elevation isn't available through BMI, so it's read from the
+  parameter file the same way mGV reads it.
+- **Device:** the router runs on the model's backend (taken from the BMI array), so the
+  runoff stays on the device.
+- **Check:** a second mGV instance, with its built-in routing on, provides
+  `channel_water__volume_flow_rate` through BMI. Over 30 days the two are bitwise
+  identical in every cell, on the CPU and on the GPU.
+
+With `external_groundwater_routing = true`, `land__runoff~total` excludes the baseflow,
+which the groundwater model takes through `land_subsurface__runoff`. The coupling loop is
+the place to add the groundwater model's return flow to the runoff before `route!`.
+
+```sh
+julia --project=routing/examples routing/examples/bmi_coupling.jl 30
+MGV_BACKEND=rocm julia --project=routing/examples routing/examples/bmi_coupling.jl 30
+```
+
 ## Performance
 
 On an RX 7800 XT, per daily time step of 144 sub-steps, including lateral inflow, the
