@@ -9,7 +9,7 @@ mGV requires daily weather/climate input data. To keep files on disc small,
 
 ### WFDE5
 
-[`forcing/WFDE5/download-wfde5.py`](forcing/WFDE5/download-wfde5.py) downloads WFDE5 from the
+[`forcing/WFDE5/download-wfde5.py`](https://github.com/SWIFT-WUR/mGV-input-data/blob/main/forcing/WFDE5/download-wfde5.py) downloads WFDE5 from the
 Copernicus Climate Data Store and writes daily forcing (prec, tair, psurf, vp, swdown, lwdown, wind)
 on the 5 arcmin HydroSHEDS grid to a Zarr store. It needs [uv](https://docs.astral.sh/uv/), a
 [CDS API key](https://cds.climate.copernicus.eu/how-to-api) and the HydroSHEDS DEM:
@@ -27,7 +27,7 @@ Interrupted runs continue where they stopped. See `--help` for all options.
 
 ### HydroSHEDS
 
-[`routing/HydroSHEDS/make-routing.py`](routing/HydroSHEDS/make-routing.py) derives the routing
+[`routing/HydroSHEDS/make-routing.py`](https://github.com/SWIFT-WUR/mGV-input-data/blob/main/routing/HydroSHEDS/make-routing.py) derives the routing
 parameters mGV reads (`downstream_id`, `downstream`, `cell_dist`, `cell_area`, `accumulation`) on a
 regular lon/lat grid covering a box (5 arcmin cells by default). It fills the depressions of the
 HydroSHEDS 15 arcsec DEM, derives D8 flow directions and upscales them to the model grid with the
