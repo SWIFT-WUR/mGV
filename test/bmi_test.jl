@@ -42,6 +42,70 @@ function get_initialized_model(conf_path::String)
     return model
 end
 
+function is_soil_or_band_variable(m::mGV.Model, n::String)
+    if occursin(r"_layer_\d", n)
+        name_2d, ind = mGV.soil_layer_standard_name(n)
+        return name_2d, ind, m.soil_parameters.depth
+    elseif occursin(r"_band_\d", n)
+        name_2d, ind = mGV.snow_band_standard_name(n)
+        return name_2d, ind, m.config.nbands
+    end
+    return nothing
+end
+
+function get_cpu_copy_of_slice(m::mGV.Model, n::String)
+    name_2d, index, factor = is_soil_or_band_variable(m, n)
+    _, size, type = get_var_grid_size_type(m,name_2d)
+    #We need to correct the size for the number of soil layers or snow band
+    dest = fill(MaxType[type], size*factor)
+    BMI.get_value(m, name_2d, dest)
+    #Indeces for the flattened CPU array
+    model_val, _ = mGV.get_field_in_model(m,name_2d)
+
+    idx = vec(LinearIndices(model_val)[:, :, index, :])
+    cpu_slice_copy = dest[idx]
+    return cpu_slice_copy
+end
+
+function check_get_value(model::mGV.Model, name::String, cpu_copy::AbstractVector)
+    _, size, type = get_var_grid_size_type(model, name)
+    dest_slice = fill(MaxType[type], size)
+    BMI.get_value(model, name, dest_slice)
+
+    @test isequal(cpu_copy,dest_slice)
+    return nothing
+end
+
+function check_get_value_at_indeces(model::mGV.Model, name::String, cpu_copy::AbstractVector)
+    _, size, type = get_var_grid_size_type(model, name)
+    idx = unique(rand(1:size, 50))
+    dest_slice = fill(MaxType[type], length(idx))
+    BMI.get_value_at_indices(model, name, dest_slice, idx)
+
+    @test isequal(dest_slice, cpu_copy[idx])
+    return nothing
+end
+
+function check_set_value(model::mGV.Model, name::String)
+    _, size, type = get_var_grid_size_type(model, name)
+    dest_slice = fill(MaxType[type], size)
+    BMI.set_value(model, name, dest_slice)
+    cpu_copy = get_cpu_copy_of_slice(model, name)
+
+    @test isequal(cpu_copy,dest_slice)
+    @test all(cpu_copy .== MaxType[type])
+    return nothing
+end
+
+function check_set_value_at_indeces(model::mGV.Model, name::String)
+    _, size, type = get_var_grid_size_type(model, name)
+    idx = unique(rand(1:size, 50))
+    dest_slice = fill(MaxType[type], length(idx))
+    BMI.set_value_at_indices(model, name, idx, dest_slice)
+    cpu_copy = get_cpu_copy_of_slice(model, name)
+    cpu_copy[idx] .= MaxType[type]
+    @test isequal(dest_slice, cpu_copy[idx])
+end
 
 @testset "Simple BMI test" begin
     model = get_initialized_model(MEKONG_CFG)
@@ -80,6 +144,44 @@ end
 
     BMI.finalize(model)
     @test isnothing(model.writer)
+end
+
+@testset "BMI non-continuous views" begin
+    model = get_initialized_model(MEKONG_CFG)
+
+    out_vars = BMI.get_output_var_names(model)
+    in_vars = BMI.get_input_var_names(model)
+
+    for name in out_vars
+        v_slice = BMI.get_value_ptr(model,name)
+        if Base.iscontiguous(v_slice)
+            continue
+        else
+            BMI.update(model)
+            cpu_copy = get_cpu_copy_of_slice(model, name)
+            check_get_value(model, name, cpu_copy)
+            check_get_value_at_indeces(model, name, cpu_copy)
+        end
+    end
+
+    for name in in_vars
+        v_slice = BMI.get_value_ptr(model,name)
+        if Base.iscontiguous(v_slice)
+            continue
+        else
+            BMI.update(model)
+            cpu_copy = get_cpu_copy_of_slice(model, name)
+            check_get_value(model, name, cpu_copy)
+            check_set_value(model, name)
+            
+            BMI.update(model)
+            cpu_copy = get_cpu_copy_of_slice(model, name)
+            check_get_value_at_indeces(model, name, cpu_copy)
+            check_set_value_at_indeces(model, name)
+        end
+    end
+
+    BMI.finalize(model)
 end
 
 @testset "Full BMI tests" begin
