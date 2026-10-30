@@ -1,0 +1,12 @@
+[deps]
+AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+BasicModelInterface = "59605e27-edc0-445a-b93d-c09a3a50b330"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+SubbasinRouting = "6fec89f7-32d3-40d0-b3c4-14d8ad18b238"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+mGV = "b1af0ff3-f930-4051-bc19-f789759b7f7a"
+
+[sources]
+SubbasinRouting = {path = ".."}
+mGV = {path = "../.."}
