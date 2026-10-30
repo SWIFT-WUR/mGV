@@ -95,17 +95,14 @@ end
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
     # 894 active (land) cells of the 36 x 36 grid
-    @test BMI.get_grid_shape(
-        model,
-        BMI.get_var_grid(model, "land_vegetation_canopy__evaporation"),
-    ) == [14, 894]
     grid = BMI.get_var_grid(model, "land_surface__temperature")
     @test BMI.get_grid_type(model, grid) == "unstructured"
-    @test BMI.get_grid_shape(model, grid) == [894]
     @test BMI.get_grid_rank(model, grid) == 2  # x and y
-    @test BMI.get_grid_node_count(model, grid) == 894
+    @test BMI.get_grid_node_count(model, grid) == BMI.get_grid_size(model, grid) == 894
     @test BMI.get_grid_edge_count(model, grid) == 0
     @test BMI.get_grid_face_count(model, grid) == 0
+    @test BMI.get_grid_edge_nodes(model, grid, Int[]) == Int[]
+    @test BMI.get_grid_nodes_per_face(model, grid, Int[]) == Int[]
     @test BMI.get_var_location(model, "land_surface__temperature") == "node"
     @test BMI.get_var_location(model, "soil__moisture_layer_1") == "node"
     x = BMI.get_grid_x(model, grid)

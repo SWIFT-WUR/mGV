@@ -144,7 +144,8 @@ or faces: the values of all variables are located on the nodes.
 """
 function BMI.get_grid_node_count(model::Model, grid::Int)
     grid in values(GRIDS) || error("unknown grid type $grid")
-    return prod(BMI.get_grid_shape(model, grid))
+    n = ncells(model.domain)
+    return grid == GRIDS["vegetation_snow_grid"] ? model.config.nveg * n : n
 end
 
 function BMI.get_grid_edge_count(model::Model, grid::Int)
@@ -157,28 +158,25 @@ function BMI.get_grid_face_count(model::Model, grid::Int)
     return 0
 end
 
-"""
-    BMI.get_grid_shape(model::Model, grid::Int)
-
-The shape of a variable's values: the number of active cells, preceded by the number of
-vegetation types for the vegetation grid. Like the other grid functions, this lists the
-dimensions in the reverse of the (Julia) memory order: for the vegetation grid the values
-of all cells of the first vegetation type come first.
-"""
-function BMI.get_grid_shape(model::Model, grid::Int)
-    # One dimension for the cells, and one for the vegetation types
-    shape = zeros(Int, grid == GRIDS["vegetation_snow_grid"] ? 2 : 1)
-    return BMI.get_grid_shape(model, grid, shape)
+# The grids have no edges or faces, so the connectivity arrays are empty
+function BMI.get_grid_edge_nodes(model::Model, grid::Int, edge_nodes::Vector{Int})
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return edge_nodes
 end
 
-function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
-    if grid in GRIDS_2D
-        shape[1] = ncells(model.domain)
-    elseif grid == GRIDS["vegetation_snow_grid"]
-        shape[1] = model.config.nveg
-        shape[2] = ncells(model.domain)
-    end
-    return shape
+function BMI.get_grid_face_edges(model::Model, grid::Int, face_edges::Vector{Int})
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return face_edges
+end
+
+function BMI.get_grid_face_nodes(model::Model, grid::Int, face_nodes::Vector{Int})
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return face_nodes
+end
+
+function BMI.get_grid_nodes_per_face(model::Model, grid::Int, nodes_per_face::Vector{Int})
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return nodes_per_face
 end
 
 """
@@ -231,17 +229,14 @@ The vegetation type of each node of the vegetation grid.
 """
 function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
     if grid == GRIDS["vegetation_snow_grid"]
-        nveg, n = BMI.get_grid_shape(model, grid)
-        return copyto!(z, repeat(1:nveg; inner = n))
+        return copyto!(z, repeat(1:model.config.nveg; inner = ncells(model.domain)))
     else
         error("No z-coordinate for grid value $grid")
     end
 end
 
 function BMI.get_grid_size(model::Model, grid::Int)
-    shape = BMI.get_grid_shape(model, grid)
-    return prod(shape)
-    error("unknown grid type $grid")
+    return BMI.get_grid_node_count(model, grid)
 end
 
 

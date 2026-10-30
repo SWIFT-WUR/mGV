@@ -24,9 +24,8 @@ longitude varying fastest.
 
 Per-layer and per-band variables (names ending in `_layer_N` or `_band_N`) have one value
 per cell as well. Variables per vegetation type hold the values of all cells for the first
-vegetation type, then for the second, and so on (`get_grid_shape` returns
-`[nveg, ncells]`). Their grid has a node for each cell and vegetation type: `get_grid_z`
-gives the vegetation type (1 to `nveg`) of each node.
+vegetation type, then for the second, and so on. Their grid has a node for each cell and
+vegetation type: `get_grid_z` gives the vegetation type (1 to `nveg`) of each node.
 
 ### Units
 
