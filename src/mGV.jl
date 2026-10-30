@@ -189,14 +189,6 @@ function Model(config_file::AbstractString; backend = "auto")
 end
 
 @timeit_all to function update!(model::Model)
-    update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
-
-    load_monthly_parameters!(
-        model.vegetation_parameters,
-        model.monthly_vegetation_parameters,
-        month(model.clock.time),
-    )
-
     # Initialize surface temperature on first timestep
     if model.clock.iteration == 0
         model.surface_energy_variables.surface_temperature .=
@@ -264,6 +256,15 @@ end
     end
 
     advance!(model.clock)
+
+    if model.clock.time < DateTime(model.config.end_year + 1)
+        update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
+        load_monthly_parameters!(
+            model.vegetation_parameters,
+            model.monthly_vegetation_parameters,
+            month(model.clock.time),
+        )
+    end
     return nothing
 end
 
