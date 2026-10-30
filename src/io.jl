@@ -4,7 +4,7 @@ include("async_writer.jl")
 Create a `TransferBuffer` with pinned host memory for the `selected_outputs`, keyed by their
 name in the output file.
 """
-function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Backend = CPU())
+function create_transfer_buffer(ncells, nlayers, selected_outputs, backend::Backend = CPU())
     function make_pinned(dims...)
         A = zeros(Float32, dims...)
         pin_memory!(backend, A)
@@ -12,7 +12,7 @@ function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Back
     end
 
     return TransferBuffer(
-        meta.output_name => is_layered(meta) ? make_pinned(nx, ny, nlayers) : make_pinned(nx, ny)
+        meta.output_name => is_layered(meta) ? make_pinned(ncells, nlayers) : make_pinned(ncells)
             for meta in selected_outputs
     )
 end
@@ -26,20 +26,43 @@ output_attributes(meta::ParameterMetadata) =
 
 const OutputArrays = Vector{Pair{String, Any}}
 
+"""
+Gridded host arrays per output variable, (nx, ny) or (nx, ny, nlayers), that the active
+cells are scattered into before writing. The inactive cells stay NaN.
+"""
+struct OutputGrids
+    domain::Domain
+    arrays::Dict{String, Array{Float32}}
+end
+
+function OutputGrids(domain::Domain, nlayers, selected_outputs)
+    nx, ny = domain.grid_size
+    return OutputGrids(
+        domain,
+        Dict{String, Array{Float32}}(
+            meta.output_name => fill(NaN32, is_layered(meta) ? (nx, ny, nlayers) : (nx, ny))
+                for meta in selected_outputs
+        ),
+    )
+end
+
 struct ZarrOutputStore
     data::OutputArrays
+    grids::OutputGrids
 end
 
 struct NetCDFOutputStore
     ds::NCDataset
     data::OutputArrays
+    grids::OutputGrids
 end
 
 close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
 close_output(store::NetCDFOutputStore) = close(store.ds)
 
 
-function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
+function create_output_zarr(output_path::String, year, domain, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
+    nx, ny = domain.grid_size
     println("Initializing Zarr store at: $output_path")
     isdir(output_path) && rm(output_path, recursive = true)
     mkdir(output_path)
@@ -97,13 +120,15 @@ function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_
                 end
                     for meta in selected_outputs
             ]
-        )
+        ),
+        OutputGrids(domain, nlayers, selected_outputs),
     )
 
     return store
 end
 
-function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
+function create_output_netcdf(output_file::String, domain, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
+    nx, ny = domain.grid_size
     println("Creating NetCDF output file at: $output_file")
     out_ds = NCDataset(output_file, "c")
 
@@ -134,7 +159,8 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
                 end
                     for meta in selected_outputs
             ]
-        )
+        ),
+        OutputGrids(domain, nlayers, selected_outputs),
     )
 
     return store
@@ -150,8 +176,8 @@ function async_transfer!(model, buf::TransferBuffer, selected_outputs)
     return nothing
 end
 
-function write_field!(array, buf::TransferBuffer, name, time_index)
-    data = buf[name]
+function write_field!(array, buf::TransferBuffer, grids::OutputGrids, name, time_index)
+    data = to_grid!(grids.arrays[name], grids.domain, buf[name])
     if ndims(data) == 3  # Variables with an additional layer dimension
         array[:, :, time_index, :] = data
     else
@@ -162,14 +188,14 @@ end
 
 function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
     Threads.@sync for (name, array) in store.data
-        Threads.@spawn write_field!(array, buf, name, time_index)
+        Threads.@spawn write_field!(array, buf, store.grids, name, time_index)
     end
     return nothing
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
     for (name, array) in store.data
-        write_field!(array, buf, name, time_index)
+        write_field!(array, buf, store.grids, name, time_index)
     end
     return nothing
 end
@@ -182,6 +208,7 @@ end
 function start_io_service(
         config::Cfg,
         grid_parameters::GridParameters,
+        domain::Domain,
         year,
         dt,
         selected_outputs
@@ -190,23 +217,21 @@ function start_io_service(
 
     backend = get_backend(grid_parameters.elevation)
     grid_parameters = adapt(Array, grid_parameters)
-    nx = length(grid_parameters.longitude)
-    ny = length(grid_parameters.latitude)
 
     nlayers = 3  # hardcoded 3 soil layers
 
     if lowercase(config.output.format) == "netcdf"
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).nc")
         # Create a buffer pool
-        output_store = create_output_netcdf(output_path, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
+        output_store = create_output_netcdf(output_path, domain, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
     else
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).zarr")
-        output_store = create_output_zarr(output_path, year, nx, ny, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
+        output_store = create_output_zarr(output_path, year, domain, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
     end
 
     # Start the async pool
     println("Starting Async I/O Service...")
-    io_service = start_async_service(nx, ny, nlayers, output_store, selected_outputs, backend, 6)
+    io_service = start_async_service(ncells(domain), nlayers, output_store, selected_outputs, backend, 6)
     return OutputWriter(io_service, output_store)
 end
 

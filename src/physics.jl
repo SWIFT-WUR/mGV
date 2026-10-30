@@ -1,4 +1,4 @@
-struct SurfaceEnergyVariables{M <: AbstractMatrix, T <: AbstractArray}
+struct SurfaceEnergyVariables{M <: AbstractVector, T <: AbstractArray}
     # State
     surface_temperature::M
 
@@ -65,7 +65,7 @@ function CanopyVariables(dims)
 end
 
 
-struct SoilVariables{M <: AbstractMatrix, T <: AbstractArray}
+struct SoilVariables{M <: AbstractVector, T <: AbstractArray}
     # State
     moisture::T
     temperature::T
@@ -98,7 +98,7 @@ function SoilVariables(grid_dims, soil_dims)
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
         zeros(Float32, grid_dims),
-        zeros(Float32, (grid_dims[1], grid_dims[2], soil_dims[3] - 1)),
+        zeros(Float32, (grid_dims[1], soil_dims[2] - 1)),
         zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),
         zeros(Float32, soil_dims),

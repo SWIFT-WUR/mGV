@@ -90,14 +90,14 @@ end
         minimum_resistance
     )
     # Cartesian indexing lets each input keep its natural shape instead of
-    # being `repeat`d up to (nx, ny, nbands, nveg), which cost ~13 GiB/step.
+    # being `repeat`d up to (ncells, nbands, nveg), which cost ~13 GiB/step.
     I = @index(Global, Cartesian)
-    i, j, band, tile = Tuple(I)
+    i, band, tile = Tuple(I)
 
-    lai_I = lai[i, j, 1, tile]
+    lai_I = lai[i, 1, tile]
 
     maximum_water_storage[I] = calculate_max_water_storage(
-        lai_I, canopy_coverage[i, j, 1, tile], fillvalue_threshold
+        lai_I, canopy_coverage[i, 1, tile], fillvalue_threshold
     )
 
     canopy_evaporation[I], wet_fraction[I] = canopy_evap_physics(
@@ -105,12 +105,12 @@ end
         maximum_water_storage[I],
         potential_evaporation[I],
         aerodynamic_resistance[I],
-        architectural_resistance[i, j, 1, tile],
-        precipitation[i, j],
+        architectural_resistance[i, 1, tile],
+        precipitation[i],
         lai_I,
-        air_temperature[i, j],
-        elevation[i, j],
-        minimum_resistance[i, j, 1, tile]
+        air_temperature[i],
+        elevation[i],
+        minimum_resistance[i, 1, tile]
     )
 end
 
@@ -121,8 +121,8 @@ function update_canopy_evaporation!(model::Model)
     (; canopy_evaporation, wet_fraction, water_storage, maximum_water_storage) = model.canopy_variables
     (; lai, canopy_coverage, minimum_resistance, architectural_resistance) = model.vegetation_parameters
 
-    # Inputs keep their natural shapes -- (nx, ny, nbands, nveg) state,
-    # (nx, ny, 1, nveg) vegetation parameters, (nx, ny) forcings -- and the
+    # Inputs keep their natural shapes -- (ncells, nbands, nveg) state,
+    # (ncells, 1, nveg) vegetation parameters, (ncells) forcings -- and the
     # kernel broadcasts them via Cartesian indexing.
     canopy_evaporation_kernel!(get_backend(canopy_evaporation))(
         lai,
@@ -143,7 +143,7 @@ function update_canopy_evaporation!(model::Model)
     )
 
     # 3. Post-Process: Zero out bare soil (last index)
-    @view(canopy_evaporation[:, :, :, end]) .= 0.0f0
+    @view(canopy_evaporation[:, :, end]) .= 0.0f0
     return nothing
 end
 
@@ -162,13 +162,13 @@ end
         cv_gpu,
         f_n,
         AreaFract,
-        tair_gpu,    # 2D: air temperature [°C] (for Tfactor)
-        vp_gpu       # 2D: vapour pressure [kPa] (for VPDfactor)
+        tair_gpu,    # per cell: air temperature [°C] (for Tfactor)
+        vp_gpu       # per cell: vapour pressure [kPa] (for VPDfactor)
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
     # Boundary Check
-    if i <= size(transpiration_full, 1) && j <= size(transpiration_full, 2)
+    if i <= size(transpiration_full, 1)
 
         # Constants
         EPS = 1.0f-9
@@ -177,27 +177,27 @@ end
 
         # --- 1. SOIL STRESS (g1, g2) ---
         # Load Layer 1
-        W1 = soil_moisture[i, j, 1]
-        Wcr1 = soil_moisture_critical[i, j, 1]
-        Wwp1 = wilting_point[i, j, 1]
+        W1 = soil_moisture[i, 1]
+        Wcr1 = soil_moisture_critical[i, 1]
+        Wwp1 = wilting_point[i, 1]
 
         # Load Layer 2
-        W2 = soil_moisture[i, j, 2]
-        Wcr2 = soil_moisture_critical[i, j, 2]
-        Wwp2 = wilting_point[i, j, 2]
+        W2 = soil_moisture[i, 2]
+        Wcr2 = soil_moisture_critical[i, 2]
+        Wwp2 = wilting_point[i, 2]
 
         # g1 = clamp((W1 - Wwp1) / (Wcr1 - Wwp1 + EPS), 0, 1)
         g1 = clamp((W1 - Wwp1) / (Wcr1 - Wwp1 + EPS), ZERO, ONE)
         g2 = clamp((W2 - Wwp2) / (Wcr2 - Wwp2 + EPS), ZERO, ONE)
 
         # --- 2. VEGETATION LOOP ---
-        nveg = size(root_gpu, 4)
-        nbands = size(transpiration_full, 3)
+        nveg = size(root_gpu, 3)
+        nbands = size(transpiration_full, 2)
 
         for k in 1:nveg
             # Load Root Fractions
-            f1 = root_gpu[i, j, 1, k]
-            f2 = root_gpu[i, j, 2, k]
+            f1 = root_gpu[i, 1, k]
+            f2 = root_gpu[i, 2, k]
 
             # Branchless root-fraction accumulation
             W_root_sum = ifelse(f1 > ZERO, W1, ZERO) + ifelse(f2 > ZERO, W2, ZERO)
@@ -215,11 +215,11 @@ end
 
             for b in 1:nbands
                 # --- Canopy Wetness / Dry Time Factor ---
-                ws = water_storage[i, j, b, k]
-                max_ws = max_water_storage[i, j, b, k]
-                cv = cv_gpu[i, j, 1, k]
-                fn_val = f_n[i, j, b, k]
-                pe = potential_evaporation[i, j, b, k]
+                ws = water_storage[i, b, k]
+                max_ws = max_water_storage[i, b, k]
+                cv = cv_gpu[i, 1, k]
+                fn_val = f_n[i, b, k]
+                pe = potential_evaporation[i, b, k]
 
                 term_inner = clamp((ws / max(cv, EPS)) / max(max_ws, EPS), ZERO, ONE)
                 # term_inner^(2/3) as cbrt(term_inner)^2: ~5x cheaper than pow on GPU
@@ -231,11 +231,11 @@ end
                 # Tfactor: reduces transpiration in cold/hot extremes (max=1 at T=25°C)
                 # VPDfactor: CANOPY_CLOSURE=13000 Pa. Using tair_grid for PE slope
                 # gives better transpiration distribution (95.3% in run49).
-                tair_c_v = tair_gpu[i, j]
+                tair_c_v = tair_gpu[i]
                 Tfactor_raw = 0.08f0 * tair_c_v - 0.0016f0 * tair_c_v * tair_c_v
                 Tfact = Tfactor_raw < 1.0f-10 ? 1.0f-10 : (Tfactor_raw > ONE ? ONE : Tfactor_raw)
                 svp_val_t = SVP_A * exp((SVP_B * tair_c_v) / (SVP_C + tair_c_v))  # kPa
-                vpd_pa_t = max(svp_val_t - vp_gpu[i, j], 0.0f0) * PA_PER_KPA  # Pa
+                vpd_pa_t = max(svp_val_t - vp_gpu[i], 0.0f0) * PA_PER_KPA  # Pa
                 raw_vpd_t = 1.0f0 - vpd_pa_t / 13000.0f0
                 VPDfact = raw_vpd_t < 0.7f0 ? 0.7f0 : (raw_vpd_t > ONE ? ONE : raw_vpd_t)
                 rc_factor = Tfact * VPDfact
@@ -299,17 +299,17 @@ end
                 e2_val = ifelse(k == nveg, ZERO, e2_val)
 
                 # --- WRITE OUTPUTS ---
-                transpiration_full[i, j, b, k] = trans_val
+                transpiration_full[i, b, k] = trans_val
 
                 # Accumulate layers
-                e1_total += e1_val * AreaFract[i, j, b]
-                e2_total += e2_val * AreaFract[i, j, b]
+                e1_total += e1_val * AreaFract[i, b]
+                e2_total += e2_val * AreaFract[i, b]
             end
 
             # 2. Layer distributed transpiration
-            transpiration_layers[i, j, 1, k] = e1_total
-            transpiration_layers[i, j, 2, k] = e2_total
-            transpiration_layers[i, j, 3, k] = ZERO
+            transpiration_layers[i, 1, k] = e1_total
+            transpiration_layers[i, 2, k] = e2_total
+            transpiration_layers[i, 3, k] = ZERO
         end
     end
 end
@@ -330,7 +330,6 @@ function update_transpiration!(model::Model)
 
     # 1. Configuration
     kernel_launcher! = transpiration_kernel!(get_backend(transpiration))
-    nx, ny = size(transpiration)
 
     # 2. Launch
     kernel_launcher!(
@@ -348,7 +347,7 @@ function update_transpiration!(model::Model)
         snow_band_area_fraction,
         air_temperature,
         vapor_pressure;
-        ndrange = (nx, ny)
+        ndrange = size(transpiration, 1)
     )
 
     return nothing
@@ -359,23 +358,23 @@ end
         @Const(maximum_water_storage), @Const(canopy_evaporation),
         @Const(band_precipitation), @Const(canopy_coverage)
     )
-    i, j, b, v = @index(Global, NTuple)
+    i, b, v = @index(Global, NTuple)
 
-    w = water_storage[i, j, b, v]
-    mx = maximum_water_storage[i, j, b, v]
-    e = canopy_evaporation[i, j, b, v]
-    p = band_precipitation[i, j, b]
-    c = canopy_coverage[i, j, 1, v]
+    w = water_storage[i, b, v]
+    mx = maximum_water_storage[i, b, v]
+    e = canopy_evaporation[i, b, v]
+    p = band_precipitation[i, b]
+    c = canopy_coverage[i, 1, v]
 
     # 1. Update Throughfall FIRST
     # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
     # Logic: excess = max(0, (W + P - E) - Wm)
     # Throughfall = (excess * coverage) + (precipitation * (1 - coverage))
-    throughfall[i, j, b, v] = (max(0.0f0, w + p - e - mx) * c) + (p * (1.0f0 - c))
+    throughfall[i, b, v] = (max(0.0f0, w + p - e - mx) * c) + (p * (1.0f0 - c))
 
     # 2. Update Water Storage SECOND
     # Logic: clamped new storage
-    water_storage[i, j, b, v] = clamp(w + p - e, 0.0f0, mx)
+    water_storage[i, b, v] = clamp(w + p - e, 0.0f0, mx)
 end
 
 function update_water_canopy_storage!(model::Model)
@@ -401,18 +400,18 @@ end
         @Const(soil_evaporation), @Const(canopy_evaporation), @Const(transpiration),
         @Const(vegetation_fraction), @Const(canopy_coverage), @Const(AreaFract)
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
     # 1. Initialize with Soil Evaporation
-    acc = soil_evaporation[i, j]
+    acc = soil_evaporation[i]
 
     # 2. Accumulate Vegetation Fluxes
-    for v in 1:size(canopy_evaporation, 4), b in 1:size(canopy_evaporation, 3)
+    for v in 1:size(canopy_evaporation, 3), b in 1:size(canopy_evaporation, 2)
         acc += (
-            canopy_evaporation[i, j, b, v] * vegetation_fraction[i, j, 1, v] + transpiration[i, j, b, v]
-        ) * canopy_coverage[i, j, 1, v] * AreaFract[i, j, b]
+            canopy_evaporation[i, b, v] * vegetation_fraction[i, 1, v] + transpiration[i, b, v]
+        ) * canopy_coverage[i, 1, v] * AreaFract[i, b]
     end
-    total_evapotranspiration[i, j] = acc
+    total_evapotranspiration[i] = acc
 end
 
 # Eq. (23): Total evapotranspiration

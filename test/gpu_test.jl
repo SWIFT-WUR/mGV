@@ -1,4 +1,4 @@
-# Checks the BMI getters and setters on the layer and band views (non-contiguous for 4D
+# Checks the BMI getters and setters on the layer and band views (non-contiguous for 3D
 # arrays) on a locally available GPU backend. Not part of runtests.jl, as it requires a GPU.
 # Run it from an environment with mGV, BasicModelInterface and CUDA and/or AMDGPU:
 #   julia --project=<env> test/gpu_test.jl

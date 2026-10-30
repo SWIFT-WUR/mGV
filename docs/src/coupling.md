@@ -12,6 +12,21 @@ variables = [
 ]
 ```
 
+### Grid
+
+The model only holds the active (land) cells of the input grid (see
+[Model input data](input_data.md)), so the BMI grids are `"unstructured"`: a variable's
+values are a vector with one value per active cell. The grid nodes are the cell centers,
+and all values are located on the nodes (`get_var_location` returns `"node"`); the grids
+have no edges or faces. `get_grid_x` and `get_grid_y` give the longitude and latitude of
+each cell. The cells are in the order of the input grid, with
+longitude varying fastest.
+
+Per-layer and per-band variables (names ending in `_layer_N` or `_band_N`) have one value
+per cell as well. Variables per vegetation type hold the values of all cells for the first
+vegetation type, then for the second, and so on. Their grid has a node for each cell and
+vegetation type: `get_grid_z` gives the vegetation type (1 to `nveg`) of each node.
+
 ### Units
 
 Values are exchanged in mGV's native units, as reported by `get_var_units`. These are not

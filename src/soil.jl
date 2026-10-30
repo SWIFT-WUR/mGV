@@ -11,37 +11,37 @@ include("runoff.jl")
         # Constants
         ORGANIC_FRAC, BULK_DENS_ORG, SOIL_DENS_ORG
     )
-    i, j, k = @index(Global, NTuple)
+    i, k = @index(Global, NTuple)
 
     # 1. Mineral Densities
-    bd_val = bulk_dens[i, j, k]
-    sd_val = soil_dens[i, j, k]
+    bd_val = bulk_dens[i, k]
+    sd_val = soil_dens[i, k]
 
     # We use the types passed in (FloatType) automatically
     bd_min = (bd_val - ORGANIC_FRAC * BULK_DENS_ORG) / (1 - ORGANIC_FRAC)
     sd_min = (sd_val - ORGANIC_FRAC * SOIL_DENS_ORG) / (1 - ORGANIC_FRAC)
 
-    bulk_dens_min[i, j, k] = bd_min
-    soil_dens_min[i, j, k] = sd_min
+    bulk_dens_min[i, k] = bd_min
+    soil_dens_min[i, k] = sd_min
 
     # 2. Porosity
     p = 1 - (bd_val / sd_val)
     # Ensure 0 matches the array type to avoid type promotion issues
     p = max(p, zero(eltype(porosity)))
-    porosity[i, j, k] = p
+    porosity[i, k] = p
 
     # 3. Hydraulic Properties
-    d = depth[i, j, k]
+    d = depth[i, k]
 
     w_max = d * p * 1000
-    soil_moisture_max[i, j, k] = w_max
+    soil_moisture_max[i, k] = w_max
 
     # Fractions
-    soil_moisture_critical[i, j, k] = Wcr[i, j, k] * w_max
-    field_capacity[i, j, k] = Wfc[i, j, k] * w_max
-    wilting_point[i, j, k] = Wpwp[i, j, k] * w_max
+    soil_moisture_critical[i, k] = Wcr[i, k] * w_max
+    field_capacity[i, k] = Wfc[i, k] * w_max
+    wilting_point[i, k] = Wpwp[i, k] * w_max
 
-    residual_moisture[i, j, k] = residmoist[i, j, k] * d * 1000
+    residual_moisture[i, k] = residmoist[i, k] * d * 1000
 end
 
 """
@@ -84,15 +84,15 @@ end
 NIJSSEN2001 BASEFLOW CONVERSION KERNEL
 """
 @kernel function convert_nijssen2001_kernel!(Dsmax, Ds, Ws, @Const(c), @Const(max_moist))
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
-    d1 = Ds[i, j]
-    d2 = Dsmax[i, j]
-    d3 = Ws[i, j]
-    d4 = c[i, j]
+    d1 = Ds[i]
+    d2 = Dsmax[i]
+    d3 = Ws[i]
+    d4 = c[i]
 
     # VIC extracts ARNO limits strictly across the Layer 3 bound natively `options.Nlayer - 1`
-    m_max = max_moist[i, j, 3]
+    m_max = max_moist[i, 3]
 
     T = eltype(Dsmax)
     EPS = T(1.0e-9)
@@ -102,9 +102,9 @@ NIJSSEN2001 BASEFLOW CONVERSION KERNEL
         new_Ds = (d1 * d3) / max(new_Dsmax, EPS)
         new_Ws = d3 / m_max
 
-        Dsmax[i, j] = new_Dsmax
-        Ds[i, j] = new_Ds
-        Ws[i, j] = new_Ws
+        Dsmax[i] = new_Dsmax
+        Ds[i] = new_Ds
+        Ws[i] = new_Ws
     end
 end
 
@@ -169,28 +169,28 @@ end
         @Const(potential_evaporation), @Const(b_infilt),
         @Const(cv), @Const(coverage), @Const(AreaFract)
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
-    sm_top = soil_moisture[i, j, 1]
+    sm_top = soil_moisture[i, 1]
     is_saturated, beta_asp = arno_evaporation_beta(
-        sm_top, soil_moisture_max[i, j, 1], b_infilt[i, j]
+        sm_top, soil_moisture_max[i, 1], b_infilt[i]
     )
-    avail = max(sm_top - residual_moisture[i, j, 1], 0.0f0)
+    avail = max(sm_top - residual_moisture[i, 1], 0.0f0)
 
     # Accumulate over Veg Types and Bands
     acc = 0.0f0
-    for v in 1:size(potential_evaporation, 4), b in 1:size(potential_evaporation, 3)
+    for v in 1:size(potential_evaporation, 3), b in 1:size(potential_evaporation, 2)
         # Esoil = Esoil_pot * beta(sm) * (1-fcanopy) * Cv per tile.
         # Apply the mathematically selected multiplier (beta_asp) directly
         # unless full saturation naturally demands maximum potential evaporation.
-        pe = potential_evaporation[i, j, b, v]
+        pe = potential_evaporation[i, b, v]
         esoil = is_saturated ? pe : pe * beta_asp
-        esoil = esoil * (1.0f0 - coverage[i, j, 1, v]) * (cv[i, j, 1, v] * AreaFract[i, j, b])
+        esoil = esoil * (1.0f0 - coverage[i, 1, v]) * (cv[i, 1, v] * AreaFract[i, b])
 
         # Cap at Available Moisture
         acc += clamp(esoil, 0.0f0, avail)
     end
-    soil_evap[i, j] = acc
+    soil_evap[i] = acc
 end
 
 function calculate_soil_evaporation!(
@@ -212,21 +212,21 @@ end
 
 """
 Sum the per-layer transpiration over vegetation tiles, weighted by canopy
-coverage. `transpiration_layers` holds the soil layers in its third
+coverage. `transpiration_layers` holds the soil layers in its second
 (band-sized) dimension.
 """
 @kernel function layer_transpiration_kernel!(
         transpiration_uptake, @Const(transpiration_layers), @Const(canopy_coverage)
     )
-    i, j, l = @index(Global, NTuple)
+    i, l = @index(Global, NTuple)
 
     acc = 0.0f0
-    if l <= size(transpiration_layers, 3)
-        for v in 1:size(transpiration_layers, 4)
-            acc += transpiration_layers[i, j, l, v] * canopy_coverage[i, j, 1, v]
+    if l <= size(transpiration_layers, 2)
+        for v in 1:size(transpiration_layers, 3)
+            acc += transpiration_layers[i, l, v] * canopy_coverage[i, 1, v]
         end
     end
-    transpiration_uptake[i, j, l] = acc
+    transpiration_uptake[i, l] = acc
 end
 
 function update_soil!(model)
@@ -388,12 +388,12 @@ function estimate_soil_layer_temperature!(model)
     (; surface_temperature) = model.surface_energy_variables
 
     # Define views for clarity
-    T_L1 = @view temperature[:, :, 1]
-    T_L2 = @view temperature[:, :, 2]
-    T_L3 = @view temperature[:, :, 3]
+    T_L1 = @view temperature[:, 1]
+    T_L2 = @view temperature[:, 2]
+    T_L3 = @view temperature[:, 3]
 
-    D_L2 = @view depth[:, :, 2]
-    D_L3 = @view depth[:, :, 3]
+    D_L2 = @view depth[:, 2]
+    D_L3 = @view depth[:, 3]
 
     # --- 1. Update Layer 3 ---
     # Must be done FIRST because it depends on the OLD values of L1 and L2

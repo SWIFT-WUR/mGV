@@ -29,6 +29,7 @@ end
     latitude::String = "lat"
     longitude::String = "lon"
     time::String = "time"
+    run_cell::String = "run_cell"
     elevation::String = "elev"
     average_temperature::String = "avg_T"
     annual_precipitation::String = "annual_prec"

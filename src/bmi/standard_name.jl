@@ -442,42 +442,42 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
 const standard_param_map = OrderedDict{String, ParameterMetadata}(
     #Grid
     "elevation" => ParameterMetadata(;
-        #(lat, lon)
+        # (cell)
         lens = @optic(_.grid_parameters.elevation),
         unit = Unit(; m = 1),
         description = "Elevation of grid cell center",
         tags = [:grid_parameters],
     ),
     "average_temperature" => ParameterMetadata(;
-        # (lat, lon)
+        # (cell)
         lens = @optic(_.grid_parameters.average_temperature),
         unit = Unit(; degC = 1),
         description = "average temperature",
         tags = [:grid_parameters],
     ),
     "annual_precipitation" => ParameterMetadata(;
-        # (lat, lon)
+        # (cell)
         lens = @optic(_.grid_parameters.annual_precipitation),
         unit = Unit(; mm = 1, y = -1),
         description = "annual precipitation",
         tags = [:grid_parameters],
     ),
     "snow_band_area_fraction" => ParameterMetadata(;
-        #(snow_band, lat, lon)
+        #(snow_band, cell)
         lens = @optic(_.grid_parameters.snow_band_area_fraction),
         unit = Unit(),
         description = "Fraction of grid cell area in each snow band",
         tags = [:grid_parameters],
     ),
     "snow_band_elevation" => ParameterMetadata(;
-        #(snow_band, lat, lon)
+        #(snow_band, cell)
         lens = @optic(_.grid_parameters.snow_band_elevation),
         unit = Unit(; m = 1),
         description = "Elevation of snow bands",
         tags = [:grid_parameters],
     ),
     "snow_band_precipitation_factor" => ParameterMetadata(;
-        #(snow_band, lat, lon)
+        #(snow_band, cell)
         lens = @optic(_.grid_parameters.snow_band_precipitation_factor),
         unit = Unit(),
         description = "Fraction of cell precipitation that falls on each elevation band",
@@ -486,7 +486,7 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
 
     #Vegetation  (static)
     "vegetation__root_fraction" => ParameterMetadata(;
-        #(veg_class, root_zone, lat, lon)
+        #(veg_class, root_zone, cell)
         lens = @optic(_.vegetation_parameters.root_fraction),
         unit = Unit(),
         description = "Root zone fraction",
@@ -495,21 +495,21 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
         tags = [:vegetation_parameters],
     ),
     "vegetation__fraction" => ParameterMetadata(;
-        #(veg_class, lat, lon)
+        #(veg_class, cell)
         lens = @optic(_.vegetation_parameters.vegetation_fraction),
         unit = Unit(),
         description = "Vegetation fraction",
         tags = [:vegetation_parameters],
     ),
     "minimum_resistance" => ParameterMetadata(;
-        #(veg_class, lat, lon)
+        #(veg_class, cell)
         lens = @optic(_.vegetation_parameters.minimum_resistance),
         unit = Unit(; s = 1, m = -1),
         description = "Minimum stomatal resistance",
         tags = [:vegetation_parameters],
     ),
     "architectural_resistance" => ParameterMetadata(;
-        #(veg_class, lat, lon)
+        #(veg_class, cell)
         lens = @optic(_.vegetation_parameters.architectural_resistance),
         unit = Unit(; m = (2, 2)),
         description = "Architectural resistance",
@@ -517,35 +517,35 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
     ),
     #active monthly val
     "displacement_height" => ParameterMetadata(;
-        #(veg_class, month, lat, lon)
+        #(veg_class, month, cell)
         lens = @optic(_.vegetation_parameters.displacement_height),
         unit = Unit(; m = 1),
         description = "Vegetation displacement",
         tags = [:vegetation_parameters],
     ),
     "roughness_length" => ParameterMetadata(;
-        #(veg_class, month, lat, lon)
+        #(veg_class, month, cell)
         lens = @optic(_.vegetation_parameters.roughness_length),
         unit = Unit(; m = 1),
         description = "vegetation roughness length",
         tags = [:vegetation_parameters],
     ),
     "vegetation_canopy__leaf_area_index" => ParameterMetadata(;
-        #(veg_class, month, lat, lon)
+        #(veg_class, month, cell)
         lens = @optic(_.vegetation_parameters.lai),
         unit = Unit(; m = (2, 2)),
         description = "leaf area index",
         tags = [:vegetation_parameters],
     ),
     "albedo" => ParameterMetadata(;
-        #(veg_class, month, lat, lon)
+        #(veg_class, month, cell)
         lens = @optic(_.vegetation_parameters.albedo),
         unit = Unit(),
         description = "albedo",
         tags = [:vegetation_parameters],
     ),
     "canopy_coverage" => ParameterMetadata(;
-        #(veg_class, month, lat, lon)
+        #(veg_class, month, cell)
         lens = @optic(_.vegetation_parameters.canopy_coverage),
         unit = Unit(),
         description = "canopy coverage",

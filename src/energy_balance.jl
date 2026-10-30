@@ -81,13 +81,13 @@ function update_aerodynamic_resistance!(model)
     L2_min = 9.901f-5 # = log(1.01)^2
 
     # Grid dimensions
-    n_all = size(aerodynamic_resistance, 4)
+    n_all = size(aerodynamic_resistance, 3)
     veg_dim = max(n_all - 1, 0)
 
     # soil_tiles (last index)
-    @views @. aerodynamic_resistance[:, :, :, n_all:n_all] = aerodynamic_kernel(
+    @views @. aerodynamic_resistance[:, :, n_all:n_all] = aerodynamic_kernel(
         bare_roughness,
-        displacement_height[:, :, :, n_all:n_all],
+        displacement_height[:, :, n_all:n_all],
         surface_temperature,
         air_temperature,
         wind_speed,
@@ -96,9 +96,9 @@ function update_aerodynamic_resistance!(model)
     )
 
     if veg_dim > 0
-        @views @. aerodynamic_resistance[:, :, :, 1:veg_dim] = aerodynamic_kernel(
-            roughness_length[:, :, :, 1:veg_dim],
-            displacement_height[:, :, :, 1:veg_dim],
+        @views @. aerodynamic_resistance[:, :, 1:veg_dim] = aerodynamic_kernel(
+            roughness_length[:, :, 1:veg_dim],
+            displacement_height[:, :, 1:veg_dim],
             surface_temperature,
             air_temperature,
             wind_speed,
@@ -136,20 +136,20 @@ end
         @Const(coverage), @Const(snow_albedo), @Const(snow_surface_temperature)
     )
     (; EMISSIVITY, SIGMA) = Constants
-    i, j, b, v = @index(Global, NTuple)
+    i, b, v = @index(Global, NTuple)
 
-    alb = albedo[i, j, 1, v]
-    ts = surface_temperature[i, j]
-    sc = coverage[i, j, b, v]
+    alb = albedo[i, 1, v]
+    ts = surface_temperature[i]
+    sc = coverage[i, b, v]
 
     # Blend albedo and surface temperature with the snow values where snow is present
     snowy = !(isnan(sc) || sc <= 0.0f0)
-    eff_alb = snowy ? sc * snow_albedo[i, j, b, v] + (1.0f0 - sc) * alb : alb
-    eff_t = snowy ? sc * snow_surface_temperature[i, j, b, v] + (1.0f0 - sc) * ts : ts
+    eff_alb = snowy ? sc * snow_albedo[i, b, v] + (1.0f0 - sc) * alb : alb
+    eff_t = snowy ? sc * snow_surface_temperature[i, b, v] + (1.0f0 - sc) * ts : ts
 
-    net_radiation[i, j, b, v] = (
-        (1.0f0 - eff_alb) * shortwave_down[i, j] +
-            longwave_down[i, j] -
+    net_radiation[i, b, v] = (
+        (1.0f0 - eff_alb) * shortwave_down[i] +
+            longwave_down[i] -
             EMISSIVITY * SIGMA * @fastmath((eff_t + 273.15f0)^4)
     )
 end
@@ -192,7 +192,7 @@ end
         nbands,
         nveg
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
     # Local coefficients
     G_COEFF = 1628.6f0
@@ -200,36 +200,36 @@ end
     EPS = 1.0f-6
 
     # Meteo terms of this grid cell, the same for all its tiles
-    tair = air_temperature[i, j]
+    tair = air_temperature[i]
     slope = calculate_svp_slope(tair)
     latent_heat = calculate_latent_heat(tair)
-    scale_height = calculate_scale_height(tair, elevation[i, j])
+    scale_height = calculate_scale_height(tair, elevation[i])
     gamma = G_COEFF * (
-        P_STD * exp(-elevation[i, j] / scale_height)
+        P_STD * exp(-elevation[i] / scale_height)
     ) / latent_heat
-    vpd = calculate_vpd(tair, vapor_pressure[i, j])
+    vpd = calculate_vpd(tair, vapor_pressure[i])
     air_dens_term = (
-        (AIR_C * surface_pressure[i, j] * PA_PER_KPA) /
+        (AIR_C * surface_pressure[i] * PA_PER_KPA) /
             (T_FREEZE + tair) *
             (C_P_AIR * vpd * DAY_SEC)
     )
 
     for v in 1:nveg, b in 1:nbands
-        ra = aerodynamic_resistance[i, j, b, v]
+        ra = aerodynamic_resistance[i, b, v]
         if v < nveg
             # Vegetation: canopy resistance without water stress (rmin / LAI)
             resistance_ratio = (
-                (minimum_resistance[i, j, 1, v] / max(lai[i, j, 1, v], EPS)) +
-                    architectural_resistance[i, j, 1, v]
+                (minimum_resistance[i, 1, v] / max(lai[i, 1, v], EPS)) +
+                    architectural_resistance[i, 1, v]
             ) / ra
         else
             # Bare soil (last vegetation class): no canopy resistance
-            resistance_ratio = architectural_resistance[i, j, 1, v] / ra
+            resistance_ratio = architectural_resistance[i, 1, v] / ra
         end
 
-        potential_evaporation[i, j, b, v] = max(
+        potential_evaporation[i, b, v] = max(
             (
-                (slope * (net_radiation[i, j, b, v] * DAY_SEC) + (air_dens_term / ra)) /
+                (slope * (net_radiation[i, b, v] * DAY_SEC) + (air_dens_term / ra)) /
                     (latent_heat * (slope + gamma * (1.0f0 + resistance_ratio)))
             ), 0.0f0
         )
@@ -260,8 +260,8 @@ function calculate_potential_evaporation!(
         architectural_resistance,
         minimum_resistance,
         lai,
+        size(potential_evaporation, 2),
         size(potential_evaporation, 3),
-        size(potential_evaporation, 4),
         ndrange = size(air_temperature)
     )
     return nothing
