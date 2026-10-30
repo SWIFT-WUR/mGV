@@ -12,6 +12,9 @@ import ..output_variables
     input_param_file::String
     coverage_file::String
     routing_param_file::String
+    # One file or store with all forcing variables; the per-variable entries below
+    # default to it, and override it when given.
+    forcing_file::Union{Nothing, String} = nothing
     precipitation_file::String
     air_temperature_file::String
     wind_speed_file::String
@@ -122,6 +125,29 @@ function validate_zarr_store(path)
     return any(isfile(joinpath(path, name)) for name in (".zgroup", ".zarray", "zarr.json"))
 end
 
+const FORCING_FILE_KEYS = [
+    "precipitation_file",
+    "air_temperature_file",
+    "wind_speed_file",
+    "vapor_pressure_file",
+    "shortwave_down_file",
+    "longwave_down_file",
+    "surface_pressure_file",
+]
+
+"""
+Use `forcing_file` for every forcing variable without its own file entry.
+"""
+function fill_forcing_paths!(paths)
+    for key in FORCING_FILE_KEYS
+        haskey(paths, key) && continue
+        haskey(paths, "forcing_file") ||
+            error("No input path for '$key': set it, or set 'forcing_file' for all forcing variables")
+        paths[key] = paths["forcing_file"]
+    end
+    return paths
+end
+
 """Validate the path of a file relative to the given directory."""
 function validate_path(file, dir, years)
     file = abspath(joinpath(dir, file))
@@ -143,6 +169,7 @@ function load_config(config_file)
     # require a file it never opens.
     routing_enabled = get(cfg_dict, "enable_routing", true)
     years = cfg_dict["start_year"]:cfg_dict["end_year"]
+    fill_forcing_paths!(cfg_dict["input"]["paths"])
     for (key, path) in cfg_dict["input"]["paths"]
         if key == "routing_param_file" && !routing_enabled
             continue

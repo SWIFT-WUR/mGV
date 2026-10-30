@@ -1,5 +1,6 @@
 using NCDatasets.CommonDataModel: CFVariable, MFCFVariable
-using Dates: DateTime, Millisecond
+using NCDatasets.CFTime: timedecode
+using Dates: DateTime
 
 const FORCING_VARS = [
     "precipitation",
@@ -14,9 +15,6 @@ const FORCING_VARS = [
 # RAM for caching forcing timesteps (all 7 variables per step). 2 GiB measured
 # 25-38% faster than 256 MiB at global resolution, with no gain going higher.
 const FORCING_CACHE_BUDGET_BYTES = 2 * 1024^3
-
-# Zarr forcing stores time as milliseconds since this date
-const ZARR_TIME_EPOCH = DateTime(1970, 1, 1)
 
 function getval(data::Any, name::String)
     return getfield(data, Symbol(name))
@@ -37,9 +35,10 @@ end
 const ForcingVar = Union{CFVariable, MFCFVariable}
 
 """
-One forcing variable stored as one Zarr array per year.
+One forcing variable stored as one Zarr array per year (or one for all years).
 `arrays[i]` holds year `i` of the run, and `offsets[i]` is the run timestep of
 its first day. E.g. for a 1979-1980 daily run: `offsets = [1, 366]`.
+Every array is (lon, lat, time), see `check_zarr_dims`.
 """
 struct ZarrForcingVar{A}
     arrays::Vector{A}
@@ -75,7 +74,7 @@ function open_forcing_netcdf(cfg::Cfg)
 
     sources = Dict{String, ForcingVar}(
         var => datasets[i][getval(cfg.input.names, var)]
-        for (i, var) in enumerate(FORCING_VARS)
+            for (i, var) in enumerate(FORCING_VARS)
     )
 
     times = collect(DateTime, datasets[1][getval(cfg.input.names, "time")][:])
@@ -103,6 +102,9 @@ function open_forcing_zarr(cfg::Cfg)
         groups = [zopen(p) for p in paths]
 
         arrays = [group[getval(cfg.input.names, var)] for group in groups]
+        for (array, p) in zip(arrays, paths)
+            check_zarr_dims(array, cfg.input.names, "$var in '$p'")
+        end
         offsets = Int[]
         next = 1
         for array in arrays
@@ -114,13 +116,77 @@ function open_forcing_zarr(cfg::Cfg)
         # Every variable shares one time axis, so only read it once.
         if isempty(times)
             for group in groups
-                append!(times, ZARR_TIME_EPOCH .+ Millisecond.(group["time"][:]))
+                append!(times, read_zarr_time(group[cfg.input.names.time]))
             end
         end
     end
 
+    check_zarr_forcing(sources, length(times))
     nx, ny, _ = size(first(sources[FORCING_VARS[1]].arrays))
     return sources, times, (nx, ny)
+end
+
+"""
+Decode a Zarr time coordinate to `DateTime`s, using its CF `units` (e.g.
+"days since 1970-01-01") and `calendar` attributes.
+"""
+function read_zarr_time(time_array)
+    haskey(time_array.attrs, "units") ||
+        error("Zarr time coordinate '$(time_array.path)' has no 'units' attribute")
+    units = time_array.attrs["units"]
+    calendar = get(time_array.attrs, "calendar", "standard")
+    return collect(DateTime, timedecode(time_array[:], units, calendar))
+end
+
+"""
+Dimension names of a Zarr array in Julia order (the reverse of the order in the
+store), or `nothing` if the store does not name them. Zarr v2 stores them in the
+`_ARRAY_DIMENSIONS` attribute (xarray convention), v3 as `dimension_names`.
+"""
+function zarr_dimnames(array::ZArray)
+    names = if array.metadata.zarr_format == 3
+        metadata = Zarr.JSON.parse(String(array.storage[array.path, "zarr.json"]))
+        get(metadata, "dimension_names", nothing)
+    else
+        get(array.attrs, "_ARRAY_DIMENSIONS", nothing)
+    end
+    return isnothing(names) ? nothing : reverse(String.(names))
+end
+
+"""
+Check that a forcing array is ordered (lon, lat, time), as the cache is. Arrays
+without dimension names are assumed to be.
+"""
+function check_zarr_dims(array::ZArray, names, description)
+    ndims(array) == 3 || error("Forcing $description must have 3 dimensions, has $(ndims(array))")
+    dims = zarr_dimnames(array)
+    expected = [names.longitude, names.latitude, names.time]
+    if !isnothing(dims) && dims != expected
+        error(
+            "Forcing $description has dimensions $dims (in Julia order), expected $expected. " *
+                "In Python (C order) this is (time, lat, lon)."
+        )
+    end
+    return nothing
+end
+
+"""
+Check that all forcing arrays share a grid and cover every timestep, and warn
+when their time chunks differ (reading stays correct, but some chunks are then
+decompressed more than once).
+"""
+function check_zarr_forcing(sources::Dict{String, ZarrForcingVar}, ntimes::Int)
+    arrays = [array for var in FORCING_VARS for array in sources[var].arrays]
+    grids = unique(size(array)[1:2] for array in arrays)
+    length(grids) == 1 || error("Zarr forcing arrays have different grid sizes: $grids")
+    for var in FORCING_VARS
+        n = sum(array -> size(array, 3), sources[var].arrays)
+        n == ntimes || error("Zarr forcing variable $var has $n timesteps, the time coordinate $ntimes")
+    end
+    chunks = unique(array.metadata.chunks[3] for array in arrays)
+    length(chunks) == 1 ||
+        @warn "Zarr forcing arrays have different time chunk lengths ($chunks), reading will be slower"
+    return nothing
 end
 
 """
@@ -160,7 +226,8 @@ end
 
 """
 Number of timesteps in one chunk, from the Zarr metadata of the first forcing
-variable. 1 for NetCDF, which is read per timestep.
+variable (time is its third axis, see `check_zarr_dims`). 1 for NetCDF, which
+is read per timestep.
 """
 time_chunk_length(sources) = 1
 time_chunk_length(sources::Dict{String, ZarrForcingVar}) =
@@ -170,6 +237,8 @@ time_chunk_length(sources::Dict{String, ZarrForcingVar}) =
 Timestep at which the chunk holding timestep `idx` starts. Chunks are counted
 from the first timestep of each store (e.g. each year).
 """
+chunk_start(readers::ForcingReaders, idx::Int) =
+    chunk_start(readers.sources[FORCING_VARS[1]], idx, readers.time_chunk)
 chunk_start(src, idx::Int, time_chunk::Int) = idx
 function chunk_start(src::ZarrForcingVar, idx::Int, time_chunk::Int)
     offset = src.offsets[searchsortedlast(src.offsets, idx)]
@@ -201,7 +270,8 @@ end
 
 """
 Read `len` timesteps, starting at `start`, from a Zarr variable into the cache,
-one chunk per read. Handles crossing year boundaries.
+one chunk per read. Handles crossing year boundaries. Time is the third axis
+(checked by `check_zarr_dims`).
 """
 function load_block!(cache::Array{Float32, 3}, src::ZarrForcingVar, start::Int, len::Int)
     nx, ny, _ = size(cache)
@@ -217,8 +287,10 @@ function load_block!(cache::Array{Float32, 3}, src::ZarrForcingVar, start::Int, 
             # Plain Array, not a view: Zarr then unpacks straight into the cache (2-3x faster)
             GC.@preserve cache begin
                 dest = unsafe_wrap(Array, pointer(cache, (step - start) * nx * ny + 1), (nx, ny, n))
-                Zarr.readblock!(dest, array,
-                    CartesianIndices((1:nx, 1:ny, (step - offset + 1):(step - offset + n))))
+                Zarr.readblock!(
+                    dest, array,
+                    CartesianIndices((1:nx, 1:ny, (step - offset + 1):(step - offset + n)))
+                )
             end
             step += n
         end
@@ -230,7 +302,7 @@ end
 Fill the cache, starting at the beginning of the chunk that holds timestep `idx`.
 """
 function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
-    start = chunk_start(readers.sources[FORCING_VARS[1]], idx, readers.time_chunk)
+    start = chunk_start(readers, idx)
     len = min(readers.capacity, length(readers.times) - start + 1)
     load_all_vars!(readers, start, len)
     readers.cache_start = start
