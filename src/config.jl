@@ -5,7 +5,7 @@ export load_config
 using Configurations
 using TOML
 
-import ..OUTPUT_VARIABLES
+import ..output_variables
 
 
 @option "paths" struct InputPaths
@@ -163,7 +163,8 @@ function validate_output_variables(cfg::Cfg)
     requested = cfg.output.variables
     isnothing(requested) && return nothing
 
-    all_names = [var.name for var in OUTPUT_VARIABLES]
+    output_names(; kwargs...) = [meta.output_name for meta in values(output_variables(; kwargs...))]
+    all_names = output_names()
     for name in requested
         name in all_names || error(
             "Unknown output variable '$name' in [output].variables. Valid names: " *
@@ -173,7 +174,7 @@ function validate_output_variables(cfg::Cfg)
 
     for setting in (:enable_snow, :enable_routing)
         getfield(cfg, setting) && continue
-        skipped = [var.name for var in OUTPUT_VARIABLES if var.requires == setting && var.name in requested]
+        skipped = filter(!in(output_names(; setting => false)), requested)
         isempty(skipped) || @warn "Not writing $(join(skipped, ", ")), because $setting = false"
     end
     return nothing

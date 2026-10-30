@@ -42,7 +42,7 @@ function written_variables(variables; kwargs...)
     return filter(name -> isdir(joinpath(store, name)) && !(name in COORDS), readdir(store))
 end
 
-all_names = [var.name for var in mGV.OUTPUT_VARIABLES]
+all_names = [meta.output_name for meta in values(mGV.output_variables())]
 
 @testset "Output variable selection" begin
     @testset "All variables are written by default" begin
@@ -68,5 +68,18 @@ all_names = [var.name for var in mGV.OUTPUT_VARIABLES]
     @testset "Unknown variable names are rejected when loading the config" begin
         config_file = write_test_config(mktempdir(), ["not_a_variable"])
         @test_throws r"Unknown output variable 'not_a_variable'" mGV.Config.load_config(config_file)
+    end
+
+    @testset "Postprocessed variables are available through BMI without writing them" begin
+        name = "land_surface__evaporation~potential~cell-average"
+        dir = mktempdir()
+        config_file = write_test_config(dir, String[]; API = Dict("variables" => [name]))
+        model = BMI.initialize(mGV.Model, config_file)
+        BMI.update(model)
+        @test name in BMI.get_output_var_names(model)
+        dest = fill(NaN32, BMI.get_grid_size(model, BMI.get_var_grid(model, name)))
+        BMI.get_value(model, name, dest)
+        @test any(isfinite, dest)
+        @test !any(endswith(".zarr"), readdir(dir))
     end
 end

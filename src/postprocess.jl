@@ -123,44 +123,15 @@ end
     maybe_store!(tsurf_out, i, j, snow_cov_safe * snow_t_safe + (1.0f0 - snow_cov_safe) * tsurf)
 end
 
-@kwdef struct Results{M, T}
-    surface_temperature::Union{M, Nothing} # tsurf
-    air_temperature::Union{M, Nothing} # tair
-    precipitation::Union{M, Nothing} # prec
-    total_evapotranspiration::Union{M, Nothing} # total_et
-    surface_runoff::Union{M, Nothing} # surface_runoff
-    total_runoff::Union{M, Nothing}
-    discharge::Union{M, Nothing} # discharge
-    travel_time::Union{M, Nothing} # travel_time
-    potential_evaporation::Union{M, Nothing} # pe_summed
-    net_radiation::Union{M, Nothing} # nr_summed
-    transpiration::Union{M, Nothing} # tr_summed
-    canopy_evaporation::Union{M, Nothing} # ce_summed
-    water_storage::Union{M, Nothing} # ws_summed
-    snow_water_equivalent::Union{M, Nothing} # swe_summed
-    snow_albedo::Union{M, Nothing}
-    snow_surface_temperature::Union{M, Nothing}
-    snow_coverage::Union{M, Nothing}
-    snow_melt::Union{M, Nothing}
-    soil_evaporation::Union{M, Nothing}
-    soil_moisture::Union{T, Nothing}  # 3D (nx, ny, nlayers)
-end
-
 """
-Return the fields of the output variables to write, based on `[output].variables` set by the user
-in the config file (all variables when not set). Variables of disabled modules are skipped.
+Return the metadata of the output variables to write, based on `[output].variables` set by the
+user in the config file (all variables when not set). Variables of disabled modules are skipped.
 """
 function select_outputs(config::Cfg)
     requested = config.output.variables
-    return [
-        var.field for var in OUTPUT_VARIABLES
-            if (isnothing(requested) || var.name in requested) &&
-            (isnothing(var.requires) || getfield(config, var.requires))
-    ]
+    available = output_variables(; config.enable_snow, config.enable_routing)
+    return [meta for meta in values(available) if isnothing(requested) || meta.output_name in requested]
 end
-
-"""Return the name of a variable in the output file."""
-output_name(field::Symbol) = only(var.name for var in OUTPUT_VARIABLES if var.field == field)
 
 """
 Preallocated device buffers for the 2D daily outputs that are not model state.
@@ -180,25 +151,37 @@ struct OutputBuffers{M}
     snow_melt::Union{M, Nothing}
 end
 
-"""Allocate buffers for the `selected_outputs`, with the same type and size as the 2D `template`."""
-function OutputBuffers(template::AbstractMatrix, selected_outputs)
-    buffer(field) = field in selected_outputs ? similar(template) : nothing
+"""
+Allocate buffers for the outputs written to file (`selected_outputs`) or exposed through BMI
+(`[API].variables` in the config), with the same type and size as the 2D `template`.
+"""
+function OutputBuffers(template::AbstractMatrix, selected_outputs, config::Cfg)
+    available = output_variables(; config.enable_snow, config.enable_routing)
+    api_outputs = [available[name] for name in config.API.variables if haskey(available, name)]
+    lenses = [meta.lens for meta in [selected_outputs; api_outputs]]
+    buffer(lens) = lens in lenses ? similar(template) : nothing
     return OutputBuffers{typeof(template)}(
-        buffer(:surface_temperature), buffer(:potential_evaporation), buffer(:net_radiation),
-        buffer(:transpiration), buffer(:canopy_evaporation), buffer(:water_storage),
-        buffer(:snow_water_equivalent), buffer(:snow_albedo), buffer(:snow_surface_temperature),
-        buffer(:snow_coverage), buffer(:snow_melt),
+        buffer(@optic(_.output_buffers.surface_temperature)),
+        buffer(@optic(_.output_buffers.potential_evaporation)),
+        buffer(@optic(_.output_buffers.net_radiation)),
+        buffer(@optic(_.output_buffers.transpiration)),
+        buffer(@optic(_.output_buffers.canopy_evaporation)),
+        buffer(@optic(_.output_buffers.water_storage)),
+        buffer(@optic(_.output_buffers.snow_water_equivalent)),
+        buffer(@optic(_.output_buffers.snow_albedo)),
+        buffer(@optic(_.output_buffers.snow_surface_temperature)),
+        buffer(@optic(_.output_buffers.snow_coverage)),
+        buffer(@optic(_.output_buffers.snow_melt)),
     )
 end
 
 
-function process_daily_outputs(model)
-
-    (;
-        surface_temperature, total_evapotranspiration, potential_evaporation, net_radiation,
-    ) = model.surface_energy_variables
-    (; air_temperature, precipitation) = model.forcing_variables
-    (; surface_runoff, total_runoff) = model.soil_variables
+"""
+Compute the 2D grid cell averages in `model.output_buffers` that are allocated (selected for
+output or BMI).
+"""
+function process_daily_outputs!(model)
+    (; surface_temperature, potential_evaporation, net_radiation) = model.surface_energy_variables
     (; transpiration, canopy_evaporation, water_storage) = model.canopy_variables
     (; snow_band_area_fraction) = model.grid_parameters
 
@@ -207,15 +190,12 @@ function process_daily_outputs(model)
     snow_surface_temperature = model.snow_variables.surface_temperature
     snow_coverage = model.snow_variables.coverage
 
-    soil_moisture = model.soil_variables.moisture
-    soil_evaporation = model.soil_variables.evaporation
-
     (; vegetation_fraction, canopy_coverage) = model.vegetation_parameters
 
     (; fillvalue_threshold) = model.config
     out = model.output_buffers
 
-    # 1. Launch the Fused Kernel, writing the 2D aggregates in one pass
+    # Launch the Fused Kernel, writing the 2D aggregates in one pass
     outputs = (
         out.potential_evaporation, out.net_radiation, out.transpiration,
         out.canopy_evaporation, out.water_storage,
@@ -234,36 +214,5 @@ function process_daily_outputs(model)
             ndrange = size(surface_temperature)
         )
     end
-
-    # 2. Handle reshapes (metadata only, instant)
-    if model.config.enable_routing
-        discharge_2d = reshape(model.routing.discharge, size(total_runoff))
-        travel_time_2d = reshape(model.routing.travel_time, size(total_runoff))
-    else
-        discharge_2d = nothing
-        travel_time_2d = nothing
-    end
-
-    return Results(
-        surface_temperature = out.surface_temperature,
-        air_temperature = air_temperature,
-        precipitation = precipitation,
-        total_evapotranspiration = total_evapotranspiration,
-        surface_runoff = surface_runoff,
-        total_runoff = total_runoff,
-        discharge = discharge_2d,
-        travel_time = travel_time_2d,
-        potential_evaporation = out.potential_evaporation,
-        net_radiation = out.net_radiation,
-        transpiration = out.transpiration,
-        canopy_evaporation = out.canopy_evaporation,
-        water_storage = out.water_storage,
-        snow_water_equivalent = out.snow_water_equivalent,
-        snow_albedo = out.snow_albedo,
-        snow_surface_temperature = out.snow_surface_temperature,
-        snow_coverage = out.snow_coverage,
-        snow_melt = out.snow_melt,
-        soil_evaporation = soil_evaporation,
-        soil_moisture = soil_moisture,
-    )
+    return nothing
 end

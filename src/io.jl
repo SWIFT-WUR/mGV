@@ -1,8 +1,8 @@
 include("async_writer.jl")
 
 """
-Create a `TransferBuffer` with pinned host memory for the `selected_outputs`.
-Outputs that are not selected are `nothing`.
+Create a `TransferBuffer` with pinned host memory for the `selected_outputs`, keyed by their
+name in the output file.
 """
 function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Backend = CPU())
     function make_pinned(dims...)
@@ -11,34 +11,20 @@ function create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend::Back
         return A
     end
 
-    slice(field) = field in selected_outputs ? make_pinned(nx, ny) : nothing
-    layered(field) = field in selected_outputs ? make_pinned(nx, ny, nlayers) : nothing
-
     return TransferBuffer(
-        slice(:surface_temperature),
-        slice(:air_temperature),
-        slice(:precipitation),
-        slice(:total_evapotranspiration),
-        slice(:surface_runoff),
-        slice(:total_runoff),
-        slice(:discharge),
-        slice(:travel_time),
-        slice(:potential_evaporation),
-        slice(:net_radiation),
-        slice(:transpiration),
-        slice(:canopy_evaporation),
-        slice(:water_storage),
-        slice(:snow_water_equivalent),
-        slice(:snow_albedo),
-        slice(:snow_surface_temperature),
-        slice(:snow_coverage),
-        slice(:snow_melt),
-        slice(:soil_evaporation),
-        layered(:soil_moisture),
+        meta.output_name => is_layered(meta) ? make_pinned(nx, ny, nlayers) : make_pinned(nx, ny)
+            for meta in selected_outputs
     )
 end
 
-const OutputArrays = Vector{Pair{Symbol, Any}}
+"""Whether an output variable has an additional soil layer dimension."""
+is_layered(meta::ParameterMetadata) = meta.gridtype == GRIDS["soil_grid"]
+
+"""Attributes of an output variable in the output file."""
+output_attributes(meta::ParameterMetadata) =
+    Dict{String, Any}("units" => to_string(meta.unit), "long_name" => meta.description)
+
+const OutputArrays = Vector{Pair{String, Any}}
 
 struct ZarrOutputStore
     data::OutputArrays
@@ -101,16 +87,15 @@ function create_output_zarr(output_path::String, year, nx, ny, nt, nlayers, lat_
     dim_2d = ["time", "lat", "lon"]
     dim_3d_layer = ["layer", "time", "lat", "lon"]
 
-    attrs = Dict(:travel_time => Dict("units" => "s", "long_name" => "River travel time"))
     store = ZarrOutputStore(
         OutputArrays(
             [
-                field => if field == :soil_moisture
-                    make_zarr(output_name(field), (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer)
+                meta.output_name => if is_layered(meta)
+                    make_zarr(meta.output_name, (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer; attrs = output_attributes(meta))
                 else
-                    make_zarr(output_name(field), (nx, ny, nt), chunk_2d, dim_2d; attrs = get(attrs, field, Dict()))
+                    make_zarr(meta.output_name, (nx, ny, nt), chunk_2d, dim_2d; attrs = output_attributes(meta))
                 end
-                    for field in selected_outputs
+                    for meta in selected_outputs
             ]
         )
     )
@@ -130,8 +115,8 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     chunk_2d = (nx, ny, 1)
     chunk_3d_layer = (nx, ny, 1, nlayers)
 
-    function def_fast_var(name, dims; chunks = nothing)
-        return defVar(out_ds, name, Float32, dims; chunksizes = chunks, deflatelevel = 0, shuffle = false)
+    function def_fast_var(name, dims; chunks = nothing, attrib = Dict())
+        return defVar(out_ds, name, Float32, dims; chunksizes = chunks, deflatelevel = 0, shuffle = false, attrib)
     end
 
     # Coords
@@ -142,12 +127,12 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
     store = NetCDFOutputStore(
         out_ds, OutputArrays(
             [
-                field => if field == :soil_moisture
-                    def_fast_var(output_name(field), ("lon", "lat", "time", "layer"); chunks = chunk_3d_layer)
+                meta.output_name => if is_layered(meta)
+                    def_fast_var(meta.output_name, ("lon", "lat", "time", "layer"); chunks = chunk_3d_layer, attrib = output_attributes(meta))
                 else
-                    def_fast_var(output_name(field), ("lon", "lat", "time"); chunks = chunk_2d)
+                    def_fast_var(meta.output_name, ("lon", "lat", "time"); chunks = chunk_2d, attrib = output_attributes(meta))
                 end
-                    for field in selected_outputs
+                    for meta in selected_outputs
             ]
         )
     )
@@ -156,34 +141,35 @@ function create_output_netcdf(output_file::String, nx, ny, nt, nlayers, lat_cpu,
 end
 
 """
-Copy the selected outputs from `processed_data` (on the GPU) to the CPU buffer `buf`.
+Copy the selected outputs from the `model` (on the GPU) to the CPU buffer `buf`.
 """
-function async_transfer!(processed_data, buf::TransferBuffer, selected_outputs)
-    for field in selected_outputs
-        copyto!(getfield(buf, field), getfield(processed_data, field))
+function async_transfer!(model, buf::TransferBuffer, selected_outputs)
+    for meta in selected_outputs
+        copyto!(buf[meta.output_name], meta.lens(model))
     end
     return nothing
 end
 
-function write_field!(array, buf::TransferBuffer, field, time_index)
-    if field == :soil_moisture  # Soil moisture has an additional layer dimension
-        array[:, :, time_index, :] = buf.soil_moisture
+function write_field!(array, buf::TransferBuffer, name, time_index)
+    data = buf[name]
+    if ndims(data) == 3  # Variables with an additional layer dimension
+        array[:, :, time_index, :] = data
     else
-        array[:, :, time_index] = getfield(buf, field)
+        array[:, :, time_index] = data
     end
     return nothing
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
-    Threads.@sync for (field, array) in store.data
-        Threads.@spawn write_field!(array, buf, field, time_index)
+    Threads.@sync for (name, array) in store.data
+        Threads.@spawn write_field!(array, buf, name, time_index)
     end
     return nothing
 end
 
 function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
-    for (field, array) in store.data
-        write_field!(array, buf, field, time_index)
+    for (name, array) in store.data
+        write_field!(array, buf, name, time_index)
     end
     return nothing
 end
@@ -225,7 +211,7 @@ function start_io_service(
 end
 
 
-function write_results(io_service::AsyncBufferService, clock, results::Results)
+function write_results(io_service::AsyncBufferService, clock, model)
     time_index = (clock.time - DateTime(year(clock.time))) ÷ clock.dt + 1
     # Get a free buffer from the pool
     # (Instant unless disk is >4 days behind)
@@ -233,7 +219,7 @@ function write_results(io_service::AsyncBufferService, clock, results::Results)
     current_buf = get_free_buffer(io_service)
 
     # Transfer GPU -> CPU (RAM copy)
-    async_transfer!(results, current_buf, io_service.selected_outputs)
+    async_transfer!(model, current_buf, io_service.selected_outputs)
 
     # Hand off to background thread and continue simulation immediately.
     submit_buffer(io_service, time_index, current_buf)

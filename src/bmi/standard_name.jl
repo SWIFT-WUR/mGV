@@ -72,11 +72,12 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     "land_surface__evaporation~total" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.total_evapotranspiration),
         unit = Unit(; mm = 1, d = -1),
-        description = "",
+        description = "Total evapotranspiration",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
         tags = [:surface_energy_variables],
+        output_name = "total_et",
     ),
     #TODO do we want to expose these variables?
     # "energy_error" => ParameterMetadata(;
@@ -109,6 +110,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         input = true,
         output = true,
         tags = [:soil_variables_layer],
+        output_name = "soil_moisture",
     ),
     "soil__moisture~maximum" => ParameterMetadata(;
         lens = @optic(_.soil_parameters.maximum_moisture),
@@ -165,11 +167,12 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     "soil__evaporation" => ParameterMetadata(;
         lens = @optic(_.soil_variables.evaporation),
         unit = Unit(; mm = 1, d = -1),
-        description = "",
+        description = "Evaporation from bare soil",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
         tags = [:soil_variables],
+        output_name = "soil_evaporation",
     ),
     "soil__infiltration" => ParameterMetadata(;
         lens = @optic(_.soil_variables.infiltration),
@@ -183,11 +186,12 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
     "land_surface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.surface_runoff),
         unit = Unit(; mm = 1, d = -1),
-        description = "",
+        description = "Surface runoff",
         gridtype = GRIDS["2D_grid"],
         input = false,
         output = true,
         tags = [:soil_variables],
+        output_name = "surface_runoff",
     ),
     "land_subsurface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.subsurface_runoff),
@@ -206,6 +210,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         input = false,
         output = true,
         tags = [:soil_variables],
+        output_name = "total_runoff",
     ),
 
     #Canopy variables >2d
@@ -266,7 +271,162 @@ const standard_routing_map = OrderedDict{String, ParameterMetadata}(
         input = false,
         output = true,
         tags = [:routing_parameters],
-    )
+        output_name = "discharge",
+    ),
+    "channel_water__travel_time" => ParameterMetadata(;
+        lens = @optic(_.routing.travel_time),
+        unit = Unit(; s = 1),
+        description = "Time for water to flow through the grid cell",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:routing_parameters],
+        output_name = "travel_time",
+    ),
+)
+
+"""
+Mapping of (CSDMS) standard names to the metadata of the variables that are only computed for
+the output (see `process_daily_outputs`), or that are not model state otherwise exposed through
+BMI. `~cell-average` marks the grid cell averages of variables that are also available per
+vegetation type and snow band.
+"""
+const standard_output_map = OrderedDict{String, ParameterMetadata}(
+    # Forcing
+    "atmosphere_bottom_air__temperature" => ParameterMetadata(;
+        lens = @optic(_.forcing_variables.air_temperature),
+        unit = Unit(; degC = 1),
+        description = "Air temperature (from the forcing)",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:forcing_variables],
+        output_name = "tair",
+    ),
+    "atmosphere_water__precipitation_leq-volume_flux" => ParameterMetadata(;
+        lens = @optic(_.forcing_variables.precipitation),
+        unit = Unit(; mm = 1, d = -1),
+        description = "Precipitation (from the forcing)",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:forcing_variables],
+        output_name = "precipitation",
+    ),
+
+    # Grid cell averages, computed by the postprocessing kernel
+    "land_surface__temperature~cell-average" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.surface_temperature),
+        unit = Unit(; degC = 1),
+        description = "Surface temperature, blended with the snow surface temperature according to snow coverage",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:output_variables],
+        output_name = "tsurf",
+    ),
+    "land_surface__evaporation~potential~cell-average" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.potential_evaporation),
+        unit = Unit(; mm = 1, d = -1),
+        description = "Potential evaporation, weighted sum over vegetation types and snow bands",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:output_variables],
+        output_name = "potential_evaporation",
+    ),
+    "land_surface__radiation~net~upward_energy_flux~cell-average" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.net_radiation),
+        unit = Unit(; J = 1, s = -1, m = -2),
+        description = "Net radiation, weighted sum over vegetation types and snow bands",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:output_variables],
+        output_name = "net_radiation",
+    ),
+    "land_vegetation__transpiration" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.transpiration),
+        unit = Unit(; mm = 1, d = -1),
+        description = "Transpiration, weighted sum over vegetation types and snow bands",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:output_variables],
+        output_name = "transpiration",
+    ),
+    "land_vegetation_canopy__evaporation~cell-average" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.canopy_evaporation),
+        unit = Unit(; mm = 1, d = -1),
+        description = "Evaporation of water held on the vegetation canopy, weighted sum over vegetation types and snow bands",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:output_variables],
+        output_name = "canopy_evaporation",
+    ),
+    "land_vegetation_canopy_water__depth" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.water_storage),
+        unit = Unit(; mm = 1),
+        description = "Water held on the vegetation canopy, weighted sum over vegetation types and snow bands",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:output_variables],
+        output_name = "water_storage",
+    ),
+
+    # Snow grid cell averages, only available when `enable_snow = true`
+    "snowpack__liquid-equivalent_depth" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.snow_water_equivalent),
+        unit = Unit(; mm = 1),
+        description = "Snow water equivalent",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:snow_variables],
+        output_name = "swe",
+    ),
+    "snowpack_surface__albedo" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.snow_albedo),
+        unit = Unit(),
+        description = "Snow albedo, only where there is snow",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:snow_variables],
+        output_name = "snow_albedo",
+    ),
+    "snowpack_surface__temperature" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.snow_surface_temperature),
+        unit = Unit(; degC = 1),
+        description = "Snow surface temperature, only where there is snow",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:snow_variables],
+        output_name = "snow_surf_temp",
+    ),
+    "snowpack__area_fraction" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.snow_coverage),
+        unit = Unit(),
+        description = "Fraction of the grid cell covered by snow",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:snow_variables],
+        output_name = "snow_coverage",
+    ),
+    "snowpack__melt_volume_flux" => ParameterMetadata(;
+        lens = @optic(_.output_buffers.snow_melt),
+        unit = Unit(; mm = 1, d = -1),
+        description = "Snowmelt",
+        gridtype = GRIDS["2D_grid"],
+        input = false,
+        output = true,
+        tags = [:snow_variables],
+        output_name = "snow_melt",
+    ),
 )
 
 #TODO decide which ones to include
@@ -404,3 +564,23 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
         tags = [:soil_input],
     )
 )
+
+"""
+Merge the standard name maps, leaving out the variables of the snow and routing modules when
+these are disabled.
+"""
+function standard_name_maps(; enable_snow = true, enable_routing = true)
+    maps = [standard_name_map, standard_output_map]
+    enable_routing && push!(maps, standard_routing_map)
+    merged = merge(maps...)
+    enable_snow || filter!(((_, meta),) -> !(:snow_variables in meta.tags), merged)
+    return merged
+end
+
+"""
+Metadata of the variables that can be written to the output file (those with an `output_name`),
+keyed by standard name. Users select which of these to write in the config file.
+"""
+function output_variables(; kwargs...)
+    return filter(((_, meta),) -> !isnothing(meta.output_name), standard_name_maps(; kwargs...))
+end

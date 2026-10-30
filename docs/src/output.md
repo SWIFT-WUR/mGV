@@ -28,8 +28,12 @@ when `enable_routing = false`. If you list such a variable anyway, the model war
 
 ```@eval
 using mGV, Markdown
-rows = ["| `$(var.name)` | $(var.description) | $(var.unit) |" for var in mGV.OUTPUT_VARIABLES]
-Markdown.parse(join(["| Name | Description | Unit |", "|------|-------------|------|", rows...], "\n"))
+rows = [
+    "| `$(meta.output_name)` | $(meta.description) | `$(mGV.to_string(meta.unit))` | `$standard_name` |"
+        for (standard_name, meta) in mGV.output_variables()
+]
+header = ["| Name | Description | Unit | Standard name |", "|------|-------------|------|---------------|"]
+Markdown.parse(join([header; rows], "\n"))
 ```
 
 The weighted sums and the snow variables combine the vegetation types and snow

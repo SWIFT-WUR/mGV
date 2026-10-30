@@ -6,49 +6,9 @@ MIT License, Copyright (c) 2020 Deltares and contributors
 
 # wrapper methods for standard name mapping
 function get_standard_name_map(model::Model)
-    if isnothing(model.routing)
-        return standard_name_map
-    else
-        name_map = merge(standard_name_map, standard_routing_map)
-        return name_map
-    end
-end
-
-"""
-Metadata associated with parameters and variables.
-
-# Arguments
-- `lens`: The path in the model data structure to the parameter/variable if it exists
-- `unit`: The unit of the parameter/variable in the Wflow input
-- `description`: The description of the parameter/variable provided in the Wflow docs
-- 'gridtype': The grid type of the paremeter/variable if it exists
-- 'input': flag needed to set a variable
-- 'output': flag needed to get a variable
-- `tags`: Identifiers to filter parameters/variables for specific tables in the docs
-"""
-@kwdef struct ParameterMetadata{L}
-    lens::L = nothing
-    unit::Unit = EMPTY_UNIT
-    description::String = ""
-    gridtype::Int = 0
-    input::Bool = false
-    output::Bool = false
-    tags::Vector{Symbol} = []
-    function ParameterMetadata(
-            lens::L,
-            unit,
-            description,
-            gridtype,
-            input,
-            output,
-            flags,
-        ) where {L}
-        return new{L}(lens, unit, description, gridtype, input, output, flags)
-    end
-end
-
-function Base.:(==)(a::ParameterMetadata, b::ParameterMetadata)
-    return all(getfield(a, f) == getfield(b, f) for f in fieldnames(ParameterMetadata))
+    return standard_name_maps(;
+        enable_snow = model.config.enable_snow, enable_routing = !isnothing(model.routing),
+    )
 end
 
 function metadata_from_lens_string(

@@ -16,7 +16,9 @@ using Accessors: @set, @optic
 using StaticArrays: SVector, pushfirst, setindex
 using OrderedCollections: OrderedDict
 
-include("output_variables.jl")
+include("bmi/units.jl")
+include("bmi/metadata.jl")
+include("bmi/standard_name.jl")
 include("config.jl")
 using .Config: load_config, Cfg
 include("backend_setup.jl")
@@ -32,7 +34,6 @@ include("routing.jl")
 include("temperature.jl")
 include("postprocess.jl")
 include("io.jl")
-include("bmi/units.jl")
 
 
 const to = TimerOutputs.TimerOutput()
@@ -90,10 +91,10 @@ require.
     forcing_readers::ForcingReaders
     routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
-    selected_outputs::Vector{Symbol} # output variables to write
+    selected_outputs::Vector{ParameterMetadata} # output variables to write
     # preallocated 2D daily output buffers
     output_buffers::OutputBuffers =
-        OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs)
+        OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs, config)
 end
 
 include("energy_balance.jl")
@@ -245,9 +246,9 @@ end
     update_net_radiation_post_closure!(model)
 
     # Compute the outputs that have a buffer, and write them to disk if selected in the config
-    results = process_daily_outputs(model)
+    process_daily_outputs!(model)
     if !isnothing(model.writer)
-        write_results(model.writer.io_service, model.clock, results)
+        write_results(model.writer.io_service, model.clock, model)
     end
 
     # next time step will be new year; close file output
@@ -304,7 +305,6 @@ end
 
 
 include("bmi/standard_name_utils.jl")
-include("bmi/standard_name.jl")
 include("bmi/helpers.jl")
 include("bmi/bmi.jl")
 

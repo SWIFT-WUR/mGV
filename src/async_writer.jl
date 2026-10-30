@@ -1,10 +1,10 @@
-TransferBuffer = Results{Matrix{Float32}, Array{Float32, 3}}
+const TransferBuffer = Dict{String, Array{Float32}}  # pinned host buffers, keyed by output name
 
 struct AsyncBufferService
     free_pool::Channel{TransferBuffer}             # Buffers ready for the GPU to fill
     job_queue::Channel{Tuple{Int, TransferBuffer}} # Buffers full of data, waiting for disk
     writer_task::Task                              # The background thread handle
-    selected_outputs::Vector{Symbol}               # Output variables to copy from the GPU and write to disk
+    selected_outputs::Vector{ParameterMetadata}    # Output variables to copy from the GPU and write to disk
 end
 
 """
