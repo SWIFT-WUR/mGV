@@ -174,9 +174,10 @@ function check_zarr_dims(array::ZArray, names, description)
 end
 
 """
-Check that all forcing arrays share a grid and cover every timestep, and warn
-when their time chunks differ (reading stays correct, but some chunks are then
-decompressed more than once).
+Check that all forcing arrays share a grid and cover every timestep, and that no
+time chunk is longer than that of the first array, which sets the size of the
+staging buffer (see `time_chunk_length`). Warn when the time chunks differ (reading
+stays correct, but some chunks are then decompressed more than once).
 """
 function check_zarr_forcing(sources::Dict{String, ZarrForcingVar}, ntimes::Int)
     arrays = [array for var in FORCING_VARS for array in sources[var].arrays]
@@ -187,6 +188,12 @@ function check_zarr_forcing(sources::Dict{String, ZarrForcingVar}, ntimes::Int)
         n == ntimes || error("Zarr forcing variable $var has $n timesteps, the time coordinate $ntimes")
     end
     chunks = unique(array.metadata.chunks[3] for array in arrays)
+    time_chunk = time_chunk_length(sources)
+    maximum(chunks) <= time_chunk || error(
+        "Zarr forcing arrays have time chunks of up to $(maximum(chunks)) steps, longer than " *
+            "the $time_chunk steps of the first $(FORCING_VARS[1]) store, which sets the " *
+            "size of the read buffer. Rechunk the forcing to equal time chunks."
+    )
     length(chunks) == 1 ||
         @warn "Zarr forcing arrays have different time chunk lengths ($chunks), reading will be slower"
     return nothing
@@ -309,6 +316,9 @@ function load_block!(cache::Matrix{Float32}, staging::Array{Float32, 3}, cells, 
             # Read up to the end of the chunk that holds `step`
             chunk_stop = offset + ((step - offset) ÷ time_chunk + 1) * time_chunk - 1
             n = min(chunk_stop, stop, store_stop) - step + 1
+            # unsafe_wrap does no bounds check: a larger read would write past the buffer
+            n <= size(staging, 3) ||
+                error("Zarr time chunk of $n steps does not fit the staging buffer of $(size(staging, 3)) steps")
             # Plain Array, not a view: Zarr then unpacks straight into the buffer (2-3x faster)
             GC.@preserve staging begin
                 dest = unsafe_wrap(Array, pointer(staging), (nx, ny, n))
