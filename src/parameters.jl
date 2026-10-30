@@ -1,10 +1,10 @@
-struct GridParameters{V <: AbstractVector, T <: AbstractArray}
+struct GridParameters{V <: AbstractVector, M <: AbstractVector, T <: AbstractArray}
     # Static
     latitude::V   # of the input grid (ny)
     longitude::V  # of the input grid (nx)
-    elevation::V
-    average_temperature::V
-    annual_precipitation::V
+    elevation::M
+    average_temperature::M
+    annual_precipitation::M
     snow_band_area_fraction::T
     snow_band_elevation::T
     snow_band_precipitation_factor::T
