@@ -50,6 +50,7 @@ variables = [
     "land_subsurface__runoff",
     "land__runoff~total",
     "land_vegetation_canopy__evaporation",
+    "land_vegetation_canopy__water_storage",
     "channel__length",
     "channel__cell_area",
     "channel_water__area~cross-sectional",

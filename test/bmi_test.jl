@@ -5,17 +5,9 @@ using Statistics: mean
 using mGV
 using Dates
 
-const TYPES = Dict(
-    "Float16" => Float16,
-    "Float32" => Float32,
-    "Float64" => Float64,
-    "UInt8" => UInt8,
-    "UInt16" => UInt16,
-    "UInt32" => UInt32,
-    "Int16" => Int16,
-    "Int32" => Int32,
-    "Int64" => Int64,
-)
+MEKONG_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
+
+
 const MaxType = Dict(
     "Float16" => floatmax(Float16),
     "Float32" => floatmax(Float32),
@@ -28,20 +20,30 @@ const MaxType = Dict(
     "Int64" => typemax(Int64),
 )
 function _zeros(type::String, size::Int)
-    return zeros(TYPES[type], size)
+    return zeros(mGV.TYPES[type], size)
+end
+
+function get_var_grid_size_type(m::mGV.Model, name::String)
+    g = BMI.get_var_grid(m, name)
+    s = BMI.get_grid_size(m, g)
+    t = BMI.get_var_type(m, name)
+    return g, s, t
 end
 
 function get_value_mean(var_name::String, m::mGV.Model)
-    grid = BMI.get_var_grid(m, var_name)
-    var_type = BMI.get_var_type(m, var_name)
-    dest = _zeros(var_type, BMI.get_grid_size(m, grid))
+    _, size, var_type = get_var_grid_size_type(m, var_name)
+    dest = _zeros(var_type, size)
     BMI.get_value(m, var_name, dest)
     return mean(dest)
 end
 
+function get_initialized_model(conf_path::String)
+    model = BMI.initialize(mGV.Model, conf_path)
+    return model
+end
+
 @testset "Simple BMI test" begin
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model = BMI.initialize(mGV.Model, tomlpath)
+    model = get_initialized_model(MEKONG_CFG)
 
     for i in 1:10
         BMI.update(model)
@@ -52,9 +54,7 @@ end
     @test sml3 in BMI.get_input_var_names(model)
     @test sml3 in BMI.get_output_var_names(model)
 
-    sm_grid = BMI.get_var_grid(model, sml3)
-    sm_size = BMI.get_grid_size(model, sm_grid)
-    sm_type = BMI.get_var_type(model, sml3)
+    sm_grid, sm_size, sm_type = get_var_grid_size_type(model, sml3)
     dest = _zeros(sm_type, sm_size)
 
     # soil moisture should have values >=0
@@ -78,23 +78,19 @@ end
     @test !all(dest .== 0.0)
 
     BMI.finalize(model)
-    model = nothing
+    @test isnothing(model.writer)
 end
-
 
 @testset "Full BMI tests" begin
 
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model = BMI.initialize(mGV.Model, tomlpath)
-    config = mGV.load_config(tomlpath)
-    clock = mGV.Clock(config)
+    model = get_initialized_model(MEKONG_CFG)
 
     # initialization and time functions
     @test BMI.get_time_units(model) == "seconds since 1970-01-01T00:00+00:00"
-    @test BMI.get_time_step(model) == Float64(clock.dt.value)
-    @test BMI.get_start_time(model) == datetime2unix(clock.time)
-    @test BMI.get_current_time(model) == datetime2unix(clock.time)
-    @test BMI.get_end_time(model) == datetime2unix(DateTime(config.end_year, 12, 31))
+    @test BMI.get_time_step(model) == Float64(86400)
+    @test BMI.get_start_time(model) == Float64(2.839968e8)
+    @test BMI.get_current_time(model) == Float64(2.839968e8)
+    @test BMI.get_end_time(model) == Float64(3.470688e8)
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
@@ -118,23 +114,28 @@ end
     for i in 1:10
         BMI.update(model)
         if i == 1
-            @test BMI.get_current_time(model) == datetime2unix(clock.time)
+            @test BMI.get_current_time(model) == Float64(2.839968e8)
         end
     end
 
     for name in out_vars
-        grid = BMI.get_var_grid(model, name)
-        size = BMI.get_grid_size(model, grid)
-        type = BMI.get_var_type(model, name)
+        grid, size, type = get_var_grid_size_type(model, name)
         dest = fill(MaxType[type], size)
         BMI.get_value(model, name, dest)
+        @test all(dest .!= MaxType[type])
+
+        dest = fill(MaxType[type], 3)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
         @test all(dest .!= MaxType[type])
     end
 
     for name in in_vars
-        grid = BMI.get_var_grid(model, name)
-        size = BMI.get_grid_size(model, grid)
-        type = BMI.get_var_type(model, name)
+        grid, size, type = get_var_grid_size_type(model, name)
+        dest = fill(MaxType[type], 3)
+        BMI.set_value_at_indices(model, name, [1, 100, size], dest)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        @test all(dest .== MaxType[type])
+
         dest = fill(MaxType[type], size)
         BMI.set_value(model, name, dest)
         BMI.get_value(model, name, dest)
@@ -150,8 +151,7 @@ end
 
 
 @testset "BMI units" begin
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
-    model = BMI.initialize(mGV.Model, tomlpath)
+    model = get_initialized_model(MEKONG_CFG)
     BMI.update(model)
 
     # Values are exchanged in the model's native units
@@ -174,13 +174,12 @@ end
     # Paths in the config are relative to the config file, so write the modified
     #  config next to the original one. Use a separate output directory to avoid
     #  clashing with output files still opened by other models.
-    tomlpath = joinpath(@__DIR__, "../configs/mekong_config.toml")
     toml = replace(
-        read(tomlpath, String),
+        read(MEKONG_CFG, String),
         "external_groundwater_routing = false" => "external_groundwater_routing = true",
         "../output_data/mekong/" => escape_string(mktempdir()),
     )
-    gw_tomlpath, io = mktemp(dirname(tomlpath))
+    gw_tomlpath, io = mktemp(dirname(MEKONG_CFG))
     write(io, toml)
     close(io)
 
