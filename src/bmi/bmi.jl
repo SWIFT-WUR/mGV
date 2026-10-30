@@ -26,7 +26,7 @@ function BMI.update_until(model::Model, time::Float64)
     model_time = BMI.get_current_time(model)
     end_time = BMI.get_end_time(model)
     if time == model_time
-        warn("Model is already at time=$time")
+        @warn "Model is already at time=$time"
         return nothing
     elseif time < model_time
         error("Time must be in the model's future")
@@ -38,7 +38,7 @@ function BMI.update_until(model::Model, time::Float64)
     steps = Int(_div)
     if abs(_rem) > eps()
         error(
-            "Provided `time` $time minus timestamp $t is not a multiple of $(model.clock.dt.value)",
+            "Provided `time` $time minus timestamp $model_time is not a multiple of $(model.clock.dt.value)",
         )
     end
 

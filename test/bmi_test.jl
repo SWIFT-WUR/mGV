@@ -161,6 +161,8 @@ end
     time = BMI.get_current_time(model) + (200 * BMI.get_time_step(model))
     BMI.update_until(model, time)
     @test BMI.get_current_time(model) == time
+    @test_logs (:warn, r"already at time") BMI.update_until(model, time)
+    @test_throws r"not a multiple" BMI.update_until(model, time + 1.0)
 
     BMI.finalize(model)
 end
