@@ -15,17 +15,15 @@ end
 ncells(domain::Domain) = length(domain.cells)
 
 """
-Read the active cells from the parameter file: the cells with vegetation, where the sum of
-the vegetation fractions (`Cv`) over the vegetation types is larger than zero. Missing or
-NaN fractions count as zero.
+Read the active cells from the parameter file: the cells where the run cell mask
+(`run_cell`) is larger than zero. Missing values count as zero.
 """
 function Domain(config::Cfg)
-    name = config.input.names.vegetation_fraction
+    name = config.input.names.run_cell
     ds = open_param_source(config.input.paths.input_param_file)
-    cv = replace(readfull(ds, name, 0.0), NaN => 0)
+    run_cell = readfull(ds, name, 0)
     close_param_source(ds)
-    cv_sum = dropdims(sum(cv; dims = 3:ndims(cv)); dims = Tuple(3:ndims(cv)))
-    active = cv_sum .> 1.0e-6
+    active = run_cell .> 0
 
     domain = Domain(size(active), findall(vec(active)))
     ncells(domain) > 0 || error("The parameter file has no active cells ($name is zero everywhere)")
