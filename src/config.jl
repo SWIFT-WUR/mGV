@@ -5,6 +5,8 @@ export load_config
 using Configurations
 using TOML
 
+import ..output_variables
+
 
 @option "paths" struct InputPaths
     input_param_file::String
@@ -84,6 +86,7 @@ end
     format::String = "zarr"
     dir::String
     file_prefix::String
+    variables::Union{Nothing, Vector{String}} = nothing  # variables to write; nothing = all, [] = none
 end
 
 @option "API" struct APISection
@@ -147,7 +150,34 @@ function load_config(config_file)
         error("Output directory '$(cfg_dict["output"]["dir"])' does not exist")
     end
 
-    return from_dict(Cfg, cfg_dict)
+    cfg = from_dict(Cfg, cfg_dict)
+    validate_output_variables(cfg)
+    return cfg
+end
+
+"""
+Check the names in `[output].variables`: throw an error for unknown names, and warn about
+variables that will not be written because the module they need is disabled.
+"""
+function validate_output_variables(cfg::Cfg)
+    requested = cfg.output.variables
+    isnothing(requested) && return nothing
+
+    output_names(; kwargs...) = [meta.output_name for meta in values(output_variables(; kwargs...))]
+    all_names = output_names()
+    for name in requested
+        name in all_names || error(
+            "Unknown output variable '$name' in [output].variables. Valid names: " *
+                join(all_names, ", ")
+        )
+    end
+
+    for setting in (:enable_snow, :enable_routing)
+        getfield(cfg, setting) && continue
+        skipped = filter(!in(output_names(; setting => false)), requested)
+        isempty(skipped) || @warn "Not writing $(join(skipped, ", ")), because $setting = false"
+    end
+    return nothing
 end
 
 

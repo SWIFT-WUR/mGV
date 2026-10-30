@@ -16,6 +16,9 @@ using Accessors: @optic
 using StaticArrays: SVector, pushfirst, setindex
 using OrderedCollections: OrderedDict
 
+include("bmi/units.jl")
+include("bmi/metadata.jl")
+include("bmi/standard_name.jl")
 include("config.jl")
 using .Config: load_config, Cfg
 include("backend_setup.jl")
@@ -31,7 +34,6 @@ include("routing.jl")
 include("temperature.jl")
 include("postprocess.jl")
 include("io.jl")
-include("bmi/units.jl")
 
 
 const to = TimerOutputs.TimerOutput()
@@ -88,10 +90,11 @@ require.
     const forcing_variables::ForcingVariables
     const forcing_readers::ForcingReaders
     const routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter, Nothing} # writes model output
+    writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
+    const selected_outputs::Vector{ParameterMetadata} # output variables to write
     # preallocated 2D daily output buffers
     const output_buffers::OutputBuffers =
-        OutputBuffers(surface_energy_variables.surface_temperature)
+        OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs, config)
 end
 
 include("energy_balance.jl")
@@ -105,6 +108,7 @@ Initialize the model from `config_file`. `backend` is a backend name or a
 """
 function Model(config_file::AbstractString; backend = "auto")
     config = load_config(config_file)
+    selected_outputs = select_outputs(config)
     backend = select_backend(backend)
     println("Active backend: $(backend_name(backend))")
 
@@ -163,7 +167,8 @@ function Model(config_file::AbstractString; backend = "auto")
             grid_parameters.average_temperature
     end
 
-    writer = start_io_service(config, grid_parameters, year(clock.time), clock.dt)
+    writer = isempty(selected_outputs) ? nothing :
+        start_io_service(config, grid_parameters, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
@@ -180,6 +185,7 @@ function Model(config_file::AbstractString; backend = "auto")
         forcing_readers,
         routing,
         writer,
+        selected_outputs,
     )
 end
 
@@ -239,12 +245,10 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process
-    results = process_daily_outputs(model)
-
-    # write away results if data writer is available
+    # Compute the outputs that have a buffer, and write them to disk if selected in the config
+    process_daily_outputs!(model)
     if !isnothing(model.writer)
-        write_results(model.writer.io_service, model.clock, results)
+        write_results(model.writer.io_service, model.clock, model)
     end
 
     # next time step will be new year; close file output
@@ -317,12 +321,12 @@ function open_new_file!(model::Model)
         model.grid_parameters,
         year(model.clock.time) + 1,
         model.clock.dt,
+        model.selected_outputs,
     )
     return nothing
 end
 
 include("bmi/standard_name_utils.jl")
-include("bmi/standard_name.jl")
 include("bmi/helpers.jl")
 include("bmi/bmi.jl")
 
