@@ -562,6 +562,9 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
     ),
     "nijssen_nonlin_reservoir" => ParameterMetadata(;
         lens = @optic(_.soil_parameters.nijssen_nonlin_reservoir),
+        # TODO: unit is likely wrong. As input (Nijssen D2) it is mm^(1-c) day-1, so mm-1 day-1
+        # for c = 2. But `convert_nijssen2001_to_arno!` overwrites this field at initialization
+        # with the ARNO Dsmax...
         unit = Unit(; mm = -2, d = -1),
         description = "Nonlinear reservoir coefficient for Nijssen baseflow",
         tags = [:soil_input],
