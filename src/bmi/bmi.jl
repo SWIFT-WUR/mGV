@@ -254,7 +254,7 @@ function BMI.get_start_time(model::Model)
 end
 
 function BMI.get_end_time(model::Model)
-    return datetime2unix(DateTime(model.config.end_year, 12, 31))
+    return datetime2unix(DateTime(model.config.end_year + 1))
 end
 
 function BMI.get_time_units(::Model)

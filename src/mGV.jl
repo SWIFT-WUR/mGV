@@ -53,13 +53,12 @@ end
 """
 Advance clock one step in time.
 
-Note: at iteration 0 the clock is not advanced in time,
-to have the model start time at iteration 1.
+The clock is advanced at the end of each update, so during an update `clock.time`
+is the start of the time step being computed, and afterwards it is the model time
+reached (as reported by BMI).
 """
 function advance!(clock)
-    if clock.iteration != 0
-        clock.time += clock.dt
-    end
+    clock.time += clock.dt
     clock.iteration += 1
     return nothing
 end
@@ -190,8 +189,6 @@ function Model(config_file::AbstractString; backend = "auto")
 end
 
 @timeit_all to function update!(model::Model)
-    advance!(model.clock)
-
     update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
 
     load_monthly_parameters!(
@@ -201,7 +198,7 @@ end
     )
 
     # Initialize surface temperature on first timestep
-    if model.clock.iteration == 1
+    if model.clock.iteration == 0
         model.surface_energy_variables.surface_temperature .=
             model.forcing_variables.air_temperature
     end
@@ -237,7 +234,7 @@ end
     update_soil_volumetric_heat_capacity!(model)
     estimate_soil_layer_temperature!(model)
 
-    if model.clock.iteration == 1
+    if model.clock.iteration == 0
         update_surface_temperature!(model)
         update_aerodynamic_resistance!(model)
     end
@@ -265,13 +262,15 @@ end
             open_new_file!(model)
         end
     end
+
+    advance!(model.clock)
     return nothing
 end
 
 function run(config_file::AbstractString; backend = "auto")
     m = Model(config_file; backend)
 
-    end_time = DateTime(m.config.end_year + 1) - m.clock.dt
+    end_time = DateTime(m.config.end_year + 1)
     while m.clock.time < end_time
         update!(m)
     end
