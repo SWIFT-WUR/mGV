@@ -39,7 +39,7 @@ print(f"VIC active land cells: {n_vic}")
 
 # Pre-load arrays for speed
 vic_swe_all   = vic['OUT_SWE'].values[:N]          # (N, lat, lon)
-mgv_swe_all   = mgv['swe_summed_output'].values     # (N, lat, lon)
+mgv_swe_all   = mgv['swe'].values     # (N, lat, lon)
 mgv_swe_all   = np.where(mgv_swe_all > 1e14, np.nan, mgv_swe_all)
 mgv_swe_all   = np.where(np.isnan(mgv_swe_all), 0.0, mgv_swe_all)
 
@@ -50,11 +50,11 @@ mgv_swe_all   = np.where(np.isnan(mgv_swe_all), 0.0, mgv_swe_all)
 #                        Uses consistent denominator = #VIC snow cells that day
 # -------------------------------------------------------------------------
 vars_cfg = [
-    ('SWE',            'OUT_SWE',           'swe_summed_output',      'all'),
-    ('Snow Melt',      'OUT_SNOW_MELT',      'snow_melt_output',       'all'),
-    ('Snow Coverage',  'OUT_SNOW_COVER',     'snow_coverage_output',   'all'),
-    ('Snow Albedo',    'OUT_SALBEDO',        'snow_albedo_output',     'vic_snow'),
-    ('Snow Surf Temp', 'OUT_SNOW_SURF_TEMP', 'snow_surf_temp_output',  'vic_snow'),
+    ('SWE',            'OUT_SWE',           'swe',      'all'),
+    ('Snow Melt',      'OUT_SNOW_MELT',      'snow_melt',       'all'),
+    ('Snow Coverage',  'OUT_SNOW_COVER',     'snow_coverage',   'all'),
+    ('Snow Albedo',    'OUT_SALBEDO',        'snow_albedo',     'vic_snow'),
+    ('Snow Surf Temp', 'OUT_SNOW_SURF_TEMP', 'snow_surf_temp',  'vic_snow'),
 ]
 
 fig, axes = plt.subplots(5, 1, figsize=(14, 18))

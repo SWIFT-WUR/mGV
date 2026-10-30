@@ -16,6 +16,7 @@ using Accessors: @set, @optic
 using StaticArrays: SVector, pushfirst, setindex
 using OrderedCollections: OrderedDict
 
+include("output_variables.jl")
 include("config.jl")
 using .Config: load_config, Cfg
 include("backend_setup.jl")

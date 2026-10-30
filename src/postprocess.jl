@@ -2,6 +2,18 @@
 @inline maybe_store!(::Nothing, i, j, v) = nothing
 @inline maybe_store!(x::AbstractArray, i, j, v) = (x[i, j] = v; nothing)
 
+"""Whether a sum is needed: an output array, `nothing` (not selected), or a precomputed flag."""
+@inline want(::Nothing) = false
+@inline want(::AbstractArray) = true
+@inline want(flag::Bool) = flag
+
+"""Add `w * x[i, j, b, k]` to `acc`, skipping NaN and values beyond `threshold`; no-op unless `want(out)`."""
+@inline function add_weighted(acc, out, x, i, j, b, k, w, threshold = Inf32)
+    want(out) || return acc
+    val = x[i, j, b, k]
+    return acc + ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w * val)
+end
+
 @kernel function fused_postprocess_kernel!(
         pe_out, nr_out, tr_out, ce_out, ws_out, # 2D Outputs
         swe_out, sc_out, sm_out,                # 2D Snow outputs
@@ -18,7 +30,6 @@
     nz(x) = ifelse(isnan(x), 0.0f0, x)
 
     # Sums needed by the selected outputs, directly or via another output
-    want(x) = !isnothing(x)
     want_swe = want(swe_out) | want(salb_out) | want(sts_out) | want(tsurf_out)  # SWE gives the snow mask
     want_sc = want(sc_out) | want(tsurf_out)
     want_sts = want(sts_out) | want(tsurf_out)
@@ -43,42 +54,21 @@
     total_w = 0.0f0
 
     for k in 1:n_tiles
-        _cv_raw = cv[i, j, 1, k]
-        w_cv = ifelse(isnan(_cv_raw), 0.0f0, Float32(_cv_raw))
+        w_cv = nz(Float32(cv[i, j, 1, k]))
         cv_sum += w_cv
-
-        _cov_raw = coverage[i, j, 1, k]
-        w_cov = ifelse(isnan(_cov_raw), 0.0f0, Float32(_cov_raw))
+        w_cov = nz(Float32(coverage[i, j, 1, k]))
 
         for b in 1:n_bands
-            _af_raw = AreaFract[i, j, b]
-            w_af = ifelse(isnan(_af_raw), 0.0f0, Float32(_af_raw))
-
+            w_af = nz(Float32(AreaFract[i, j, b]))
             w_total = w_cv * w_af
             w_total_cov = w_cv * w_cov * w_af
-
             total_w += w_total # Accumulate total weight (should be close to 1)
 
-            if want(pe_out)
-                val = pe_in[i, j, b, k]
-                acc_pe += ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w_total * val)
-            end
-            if want(nr_out)
-                val = nr_in[i, j, b, k]
-                acc_nr += ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w_total * val)
-            end
-            if want(tr_out)
-                val = tr_in[i, j, b, k]
-                acc_tr += ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w_cov * w_af * val) # tr is weighted by coverage in physics
-            end
-            if want(ce_out)
-                val = ce_in[i, j, b, k]
-                acc_ce += ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w_total_cov * val)
-            end
-            if want(ws_out)
-                val = ws_in[i, j, b, k]
-                acc_ws += ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w_total_cov * val)
-            end
+            acc_pe = add_weighted(acc_pe, pe_out, pe_in, i, j, b, k, w_total, threshold)
+            acc_nr = add_weighted(acc_nr, nr_out, nr_in, i, j, b, k, w_total, threshold)
+            acc_tr = add_weighted(acc_tr, tr_out, tr_in, i, j, b, k, w_cov * w_af, threshold) # tr is weighted by coverage in physics
+            acc_ce = add_weighted(acc_ce, ce_out, ce_in, i, j, b, k, w_total_cov, threshold)
+            acc_ws = add_weighted(acc_ws, ws_out, ws_in, i, j, b, k, w_total_cov, threshold)
 
             # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
             if want_swe
@@ -88,19 +78,11 @@
                 # Albedo/surf_temp: weighted only by the tiles where snow is present
                 w_snow = ifelse(swe > 0.0f0, w_total, 0.0f0)
                 snow_w += w_snow
-                if want(salb_out)
-                    acc_salb += nz(salb_in[i, j, b, k]) * w_snow
-                end
-                if want_sts
-                    acc_sts += nz(sts_in[i, j, b, k]) * w_snow
-                end
+                acc_salb = add_weighted(acc_salb, salb_out, salb_in, i, j, b, k, w_snow)
+                acc_sts = add_weighted(acc_sts, want_sts, sts_in, i, j, b, k, w_snow)
             end
-            if want_sc
-                acc_sc += nz(sc_in[i, j, b, k]) * w_total
-            end
-            if want(sm_out)
-                acc_sm += nz(sm_in[i, j, b, k]) * w_total
-            end
+            acc_sc = add_weighted(acc_sc, want_sc, sc_in, i, j, b, k, w_total)
+            acc_sm = add_weighted(acc_sm, sm_out, sm_in, i, j, b, k, w_total)
         end
     end
 
@@ -164,75 +146,21 @@ end
     soil_moisture::Union{T, Nothing}  # 3D (nx, ny, nlayers)
 end
 
-@adapt_structure Results
-
 """
-All available output variables, mapping each variable to its name in the output
-file. Users select which variables to output in the config file.
-"""
-const OUTPUT_VARIABLES = (
-    (:surface_temperature, "tsurf_output"),
-    (:air_temperature, "tair_output"),
-    (:precipitation, "precipitation_output"),
-    (:total_evapotranspiration, "total_et_output"),
-    (:surface_runoff, "surface_runoff_output"),
-    (:total_runoff, "total_runoff_output"),
-    (:discharge, "discharge_output"),
-    (:travel_time, "travel_time_output"),
-    (:potential_evaporation, "potential_evaporation_summed_output"),
-    (:net_radiation, "net_radiation_summed_output"),
-    (:transpiration, "transpiration_summed_output"),
-    (:canopy_evaporation, "canopy_evaporation_summed_output"),
-    (:water_storage, "water_storage_summed_output"),
-    (:snow_water_equivalent, "swe_summed_output"),
-    (:snow_albedo, "snow_albedo_output"),
-    (:snow_surface_temperature, "snow_surf_temp_output"),
-    (:snow_coverage, "snow_coverage_output"),
-    (:snow_melt, "snow_melt_output"),
-    (:soil_evaporation, "soil_evaporation_output"),
-    (:soil_moisture, "soil_moisture_output"),
-)
-
-"""
-Return the list of output variables to write, based on `[output].variables` set by the user in
-the config file. Throws an error for unknown variable names. Snow and routing outputs are
-skipped when those modules are disabled.
+Return the fields of the output variables to write, based on `[output].variables` set by the user
+in the config file (all variables when not set). Variables of disabled modules are skipped.
 """
 function select_outputs(config::Cfg)
-    all_names = [name for (_, name) in OUTPUT_VARIABLES]
     requested = config.output.variables
-    if !isnothing(requested)
-        for name in requested
-            name in all_names || error(
-                "Unknown output variable '$name' in [output].variables. Valid names: " *
-                    join(all_names, ", ")
-            )
-        end
-    end
-
-    # Skip outputs of disabled modules; warn only if they were asked for explicitly
-    snow_outputs = [
-        "swe_summed_output", "snow_albedo_output", "snow_surf_temp_output",
-        "snow_coverage_output", "snow_melt_output",
+    return [
+        var.field for var in OUTPUT_VARIABLES
+            if (isnothing(requested) || var.name in requested) &&
+            (isnothing(var.requires) || getfield(config, var.requires))
     ]
-    routing_outputs = ["discharge_output", "travel_time_output"]
-    disabled = String[]
-    for (enabled, outputs, setting) in (
-            (config.enable_snow, snow_outputs, "enable_snow"),
-            (config.enable_routing, routing_outputs, "enable_routing"),
-        )
-        enabled && continue
-        append!(disabled, outputs)
-        skipped = isnothing(requested) ? String[] : filter(in(outputs), requested)
-        isempty(skipped) || @warn "Not writing $(join(skipped, ", ")), because $setting = false"
-    end
-
-    wanted = isnothing(requested) ? all_names : requested
-    return [field for (field, name) in OUTPUT_VARIABLES if name in wanted && !(name in disabled)]
 end
 
 """Return the name of a variable in the output file."""
-output_name(field::Symbol) = only(name for (f, name) in OUTPUT_VARIABLES if f == field)
+output_name(field::Symbol) = only(var.name for var in OUTPUT_VARIABLES if var.field == field)
 
 """
 Preallocated device buffers for the 2D daily outputs that are not model state.
@@ -251,8 +179,6 @@ struct OutputBuffers{M}
     snow_coverage::Union{M, Nothing}
     snow_melt::Union{M, Nothing}
 end
-
-@adapt_structure OutputBuffers
 
 """Allocate buffers for the `selected_outputs`, with the same type and size as the 2D `template`."""
 function OutputBuffers(template::AbstractMatrix, selected_outputs)

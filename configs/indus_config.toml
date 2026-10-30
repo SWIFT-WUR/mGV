@@ -8,7 +8,7 @@ nveg = 22
 dir         = "../output_data/indus/"
 file_prefix = "outputfile_indus_"
 format      = "netcdf"
-# variables = ["discharge_output", "total_runoff_output"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
+# variables = ["discharge", "total_runoff"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
 
 [input]
 [input.paths]

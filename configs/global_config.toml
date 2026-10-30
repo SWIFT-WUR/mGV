@@ -10,7 +10,7 @@ fillvalue_threshold = 1e15
 dir         = "../output_data/global/"
 file_prefix = "outputfile_global_"
 format      = "netcdf"
-# variables = ["discharge_output", "total_runoff_output"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
+# variables = ["discharge", "total_runoff"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
 
 [input]
 [input.paths]

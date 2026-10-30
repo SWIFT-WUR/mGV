@@ -11,7 +11,7 @@ By default all variables listed below are written. To write only some of them, l
 
 ```toml
 [output]
-variables = ["discharge_output", "total_runoff_output"]
+variables = ["discharge", "total_runoff"]
 ```
 
 - Leave out the `variables` line to write all of them.
@@ -26,30 +26,13 @@ when `enable_routing = false`. If you list such a variable anyway, the model war
 
 ## Available output variables
 
-| Name | Description | Unit |
-|------|-------------|------|
-| `tsurf_output` | Surface temperature, blended with the snow surface temperature according to snow coverage | °C |
-| `tair_output` | Air temperature (from the forcing) | °C |
-| `precipitation_output` | Precipitation (from the forcing) | mm/day |
-| `total_et_output` | Total evapotranspiration | mm/day |
-| `surface_runoff_output` | Surface runoff | mm/day |
-| `total_runoff_output` | Total runoff (surface and subsurface) | mm/day |
-| `discharge_output` | River discharge (routing) | m³/s |
-| `travel_time_output` | Time for water to flow through the grid cell (routing) | s |
-| `potential_evaporation_summed_output` | Potential evaporation | mm/day |
-| `net_radiation_summed_output` | Net radiation | W/m² |
-| `transpiration_summed_output` | Transpiration | mm/day |
-| `canopy_evaporation_summed_output` | Evaporation of water held on the vegetation canopy | mm/day |
-| `water_storage_summed_output` | Water held on the vegetation canopy | mm |
-| `swe_summed_output` | Snow water equivalent | mm |
-| `snow_albedo_output` | Snow albedo, only where there is snow | fraction (0–1) |
-| `snow_surf_temp_output` | Snow surface temperature, only where there is snow | °C |
-| `snow_coverage_output` | Fraction of the grid cell covered by snow | fraction (0–1) |
-| `snow_melt_output` | Snowmelt | mm/day |
-| `soil_evaporation_output` | Evaporation from bare soil | mm/day |
-| `soil_moisture_output` | Soil moisture, per soil layer | mm |
+```@eval
+using mGV, Markdown
+rows = ["| `$(var.name)` | $(var.description) | $(var.unit) |" for var in mGV.OUTPUT_VARIABLES]
+Markdown.parse(join(["| Name | Description | Unit |", "|------|-------------|------|", rows...], "\n"))
+```
 
-Variables ending in `_summed_output`, and the snow variables, combine the vegetation types and snow
+The weighted sums and the snow variables combine the vegetation types and snow
 bands in each grid cell into one value: each value is weighted by the fraction of the cell it covers, which
 gives the cell average. Transpiration, canopy evaporation and canopy water storage are also weighted by
 canopy coverage, so only the canopy-covered part of each vegetation type contributes. Snow albedo and snow
