@@ -86,16 +86,17 @@ the snow band area fraction and vegetation fraction of every tile.
 """
 @kernel function mean_albedo_resistance_kernel!(
         mean_albedo, ra_eff,
-        @Const(AreaFract), @Const(cv), @Const(albedo), @Const(ra)
+        @Const(AreaFract), @Const(cv), @Const(albedo), @Const(ra),
+        @Const(cell_tiles), @Const(band)
     )
     i = @index(Global, Linear)
 
     acc_albedo = 0.0f0
     acc_ra_inv = 0.0f0
-    for v in 1:size(ra, 3), b in 1:size(ra, 2)
-        w = AreaFract[i, b] * cv[i, 1, v]
-        acc_albedo += w * albedo[i, 1, v]
-        acc_ra_inv += w / max(ra[i, b, v], 1.0f-9)
+    for t in cell_tiles[i]:(cell_tiles[i + 1] - 1)
+        w = AreaFract[band[t]] * cv[t]
+        acc_albedo += w * albedo[t]
+        acc_ra_inv += w / max(ra[t], 1.0f-9)
     end
 
     mean_albedo[i] = acc_albedo
@@ -125,7 +126,8 @@ function update_surface_temperature!(model)
     # 2. Calculate ra_eff correctly (Inverse weighted sum)
     mean_albedo_resistance_kernel!(get_backend(mean_albedo))(
         mean_albedo, effective_aerodynamic_resistance,
-        snow_band_area_fraction, vegetation_fraction, albedo, aerodynamic_resistance;
+        snow_band_area_fraction, vegetation_fraction, albedo, aerodynamic_resistance,
+        model.tiles.cell_tiles, model.tiles.band;
         ndrange = size(surface_temperature)
     )
 

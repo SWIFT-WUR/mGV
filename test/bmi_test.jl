@@ -116,14 +116,17 @@ end
     n_outputs = count(meta -> meta.output, values(mGV.standard_name_map))
     @test BMI.get_input_item_count(model) >= n_inputs
     @test BMI.get_output_item_count(model) >= n_outputs
-    # Vegetation grid: a node per cell and vegetation type (z), all cells of a type together
-    veg_grid = BMI.get_var_grid(model, "land_vegetation_canopy__evaporation")
-    nveg = model.config.nveg
-    @test BMI.get_grid_rank(model, veg_grid) == 3
-    @test BMI.get_grid_node_count(model, veg_grid) == nveg * 894
-    @test BMI.get_grid_z(model, veg_grid) == repeat(1:nveg; inner = 894)
-    @test BMI.get_grid_x(model, veg_grid) == repeat(x, nveg)
-    @test BMI.get_grid_y(model, veg_grid) == repeat(y, nveg)
+    # Tile grid: a node per snow band and vegetation type (z) with area in a cell. The Mekong
+    # cells have a single snow band each, and on average 4 of the 14 vegetation types.
+    tile_grid = BMI.get_var_grid(model, "land_vegetation_canopy__evaporation")
+    tile_cell = Array(model.tiles.cell)
+    @test BMI.get_grid_rank(model, tile_grid) == 3
+    @test BMI.get_grid_node_count(model, tile_grid) == 3580
+    @test issorted(tile_cell) && unique(tile_cell) == 1:894
+    @test BMI.get_grid_z(model, tile_grid) == Array(model.tiles.veg)
+    @test BMI.get_grid_x(model, tile_grid) == x[tile_cell]
+    @test BMI.get_grid_y(model, tile_grid) == y[tile_cell]
+    @test length(BMI.get_value_ptr(model, "land_vegetation_canopy__evaporation")) == 3580
 
     out_vars = BMI.get_output_var_names(model)
     in_vars = BMI.get_input_var_names(model)

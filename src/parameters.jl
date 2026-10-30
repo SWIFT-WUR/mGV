@@ -1,20 +1,22 @@
-struct GridParameters{V <: AbstractVector, M <: AbstractVector, T <: AbstractArray}
+struct GridParameters{V <: AbstractVector, M <: AbstractVector, B <: AbstractVector}
     # Static
     latitude::V   # of the input grid (ny)
     longitude::V  # of the input grid (nx)
     elevation::M
     average_temperature::M
     annual_precipitation::M
-    snow_band_area_fraction::T
-    snow_band_elevation::T
-    snow_band_precipitation_factor::T
+    # Per active snow band, see `Tiles`
+    snow_band_area_fraction::B
+    snow_band_elevation::B
+    snow_band_precipitation_factor::B
 end
 
 @adapt_structure GridParameters
 
-struct VegetationParameters{T <: AbstractArray}
+"""Vegetation parameters per tile (see `Tiles`), and per root zone for `root_fraction`."""
+struct VegetationParameters{T <: AbstractVector, M <: AbstractMatrix}
     # Static
-    root_fraction::T
+    root_fraction::M
     vegetation_fraction::T
     minimum_resistance::T
     architectural_resistance::T
@@ -61,13 +63,13 @@ end
 @adapt_structure SoilParameters
 
 """
-Full 12-month vegetation parameters
+Full 12-month vegetation parameters, of size (ntiles, 12).
 
 Due to storage constraints, storing all months of data on GPU uses too
 much VRAM. Instead, copy over the active monthly values at the start of
 each month.
 """
-mutable struct MonthlyVegetationParameters{T <: AbstractArray}
+mutable struct MonthlyVegetationParameters{T <: AbstractMatrix}
     displacement_height::T
     roughness_length::T
     lai::T
@@ -76,9 +78,9 @@ mutable struct MonthlyVegetationParameters{T <: AbstractArray}
     loaded_month::Int
 end
 
-"""Allocate the single-month device buffer matching a (ncells, 12, nveg) field."""
-function current_month_buffer(monthly_field::AbstractArray)
-    return zeros(eltype(monthly_field), size(monthly_field, 1), 1, size(monthly_field, 3))
+"""Allocate the single-month device buffer matching a (ntiles, 12) field."""
+function current_month_buffer(monthly_field::AbstractMatrix)
+    return zeros(eltype(monthly_field), size(monthly_field, 1))
 end
 
 """
@@ -109,20 +111,15 @@ end
 """
     copy_month!(dest, src, month)
 
-Copy `src[:, month, :]` of a (ncells, 12, nveg) host array into the
-(ncells, 1, nveg) buffer `dest`. Each block of cells is contiguous in `src`, so
-it is copied directly with one `copyto!` per vegetation class. This avoids the
-host temporary of slicing and the device temporary + kernel of `dest[:] = ...`.
+Copy `src[:, month]` of a (ntiles, 12) host array into the (ntiles) buffer
+`dest`. The month is contiguous in `src`, so it is copied directly with one
+`copyto!`. This avoids the host temporary of slicing and the device temporary +
+kernel of `dest[:] = ...`.
 """
-function copy_month!(dest::AbstractArray, src::Array, month::Integer)
-    n, _, nveg = size(src)
-    @assert size(dest) == (n, 1, nveg)
-    # Loop through vegetation index as it's not contiguous in memory.
-    # Reordering input data to (ncells, nveg, month) would simplify this, but does
-    # not match input data.
-    for v in 1:nveg
-        copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, month, v], n)
-    end
+function copy_month!(dest::AbstractVector, src::Matrix, month::Integer)
+    n = size(src, 1)
+    @assert length(dest) == n
+    copyto!(dest, 1, src, (month - 1) * n + 1, n)
     return dest
 end
 
@@ -142,13 +139,21 @@ readfull(ds, name::AbstractString, fallback) = Array(ds[name])
 close_param_source(ds::NCDataset) = close(ds)
 close_param_source(ds) = nothing
 
-"""Insert a singleton second dimension in a (ncells, nveg) array, to match (ncells, 1, nveg)."""
-add_band_dim(x::AbstractArray) = ndims(x) == 2 ? reshape(x, size(x, 1), 1, size(x, 2)) : x
-
+"""
+Read the parameters, and find the `Tiles` from the snow band area fraction and the
+vegetation fraction. Returns the parameters and the tiles, all on the host.
+"""
 function read_parameters(config::Cfg, domain::Domain)
     ds_params = open_param_source(config.input.paths.input_param_file)
     # Read a gridded variable, and keep the active cells
     readcells(ds, name, fallback) = to_cells(domain, readfull(ds, name, fallback))
+
+    area_fraction = readcells(ds_params, config.input.names.snow_band_area_fraction, 0.0)
+    vegetation_fraction = readcells(ds_params, config.input.names.vegetation_fraction, 0.0)
+    tiles = Tiles(area_fraction, vegetation_fraction)
+    # Read a gridded variable, and keep the active bands (tiles)
+    readbands(ds, name, fallback) = to_bands(tiles, readcells(ds, name, fallback))
+    readtiles(ds, name, fallback) = to_tiles(tiles, readcells(ds, name, fallback))
 
     grid_params = GridParameters(
         readfull(ds_params, config.input.names.latitude, 0.0),
@@ -156,30 +161,25 @@ function read_parameters(config::Cfg, domain::Domain)
         readcells(ds_params, config.input.names.elevation, 0.0),
         readcells(ds_params, config.input.names.average_temperature, 0.0),
         readcells(ds_params, config.input.names.annual_precipitation, 0.0),
-        readcells(ds_params, config.input.names.snow_band_area_fraction, 0.0),
-        readcells(ds_params, config.input.names.snow_band_elevation, 0.0),
-        readcells(ds_params, config.input.names.snow_band_precipitation_factor, 0.0),
+        to_bands(tiles, area_fraction),
+        readbands(ds_params, config.input.names.snow_band_elevation, 0.0),
+        readbands(ds_params, config.input.names.snow_band_precipitation_factor, 0.0),
     )
 
-    # Reshape some 2D inputs to 3D
-    vegetation_fraction = add_band_dim(readcells(ds_params, config.input.names.vegetation_fraction, 0.0))
-    minimum_resistance = add_band_dim(readcells(ds_params, config.input.names.minimum_resistance, 0.0))
-    architectural_resistance = add_band_dim(readcells(ds_params, config.input.names.architectural_resistance, 0.0))
-
     monthly_veg_params = MonthlyVegetationParameters(
-        readcells(ds_params, config.input.names.displacement_height, 0.0),
-        readcells(ds_params, config.input.names.roughness_length, 0.0),
-        readcells(ds_params, config.input.names.lai, 0.0),
-        readcells(ds_params, config.input.names.albedo, 0.0),
-        readcells(ds_params, config.input.names.canopy_coverage, 0.0),
+        readtiles(ds_params, config.input.names.displacement_height, 0.0),
+        readtiles(ds_params, config.input.names.roughness_length, 0.0),
+        readtiles(ds_params, config.input.names.lai, 0.0),
+        readtiles(ds_params, config.input.names.albedo, 0.0),
+        readtiles(ds_params, config.input.names.canopy_coverage, 0.0),
         0,  # no month loaded yet
     )
 
     veg_params = VegetationParameters(
-        readcells(ds_params, config.input.names.root_fraction, 0.0),
-        vegetation_fraction,
-        minimum_resistance,
-        architectural_resistance,
+        readtiles(ds_params, config.input.names.root_fraction, 0.0),
+        to_tiles(tiles, vegetation_fraction),
+        readtiles(ds_params, config.input.names.minimum_resistance, 0.0),
+        readtiles(ds_params, config.input.names.architectural_resistance, 0.0),
         current_month_buffer(monthly_veg_params.displacement_height),
         current_month_buffer(monthly_veg_params.roughness_length),
         current_month_buffer(monthly_veg_params.lai),
@@ -226,5 +226,5 @@ function read_parameters(config::Cfg, domain::Domain)
         readcells(ds_params, config.input.names.baseflow_curve_exp, 0.0)
     )
     close_param_source(ds_params)
-    return grid_params, veg_params, soil_params, monthly_veg_params
+    return grid_params, veg_params, soil_params, monthly_veg_params, tiles
 end

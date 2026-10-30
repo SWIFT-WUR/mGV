@@ -22,10 +22,14 @@ have no edges or faces. `get_grid_x` and `get_grid_y` give the longitude and lat
 each cell. The cells are in the order of the input grid, with
 longitude varying fastest.
 
-Per-layer and per-band variables (names ending in `_layer_N` or `_band_N`) have one value
-per cell as well. Variables per vegetation type hold the values of all cells for the first
-vegetation type, then for the second, and so on. Their grid has a node for each cell and
-vegetation type: `get_grid_z` gives the vegetation type (1 to `nveg`) of each node.
+Per-layer variables (names ending in `_layer_N`) have one value per cell as well.
+
+Variables per snow band and vegetation type are only stored for the combinations that cover
+part of a cell: the tiles. A cell has a tile for every snow band with an area fraction above
+zero, and every vegetation type in it with a vegetation fraction above zero. The grid of
+these variables has a node per tile. The tiles are ordered by cell (in the order above), then
+snow band, then vegetation type. `get_grid_x` and `get_grid_y` give the coordinates of the
+cell of each tile, and `get_grid_z` its vegetation type (the last one is bare soil).
 
 ### Units
 

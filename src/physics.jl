@@ -1,4 +1,5 @@
-struct SurfaceEnergyVariables{M <: AbstractVector, T <: AbstractArray}
+"""Surface energy variables per cell (`M`), and per tile (`T`, see `Tiles`)."""
+struct SurfaceEnergyVariables{M <: AbstractVector, T <: AbstractVector}
     # State
     surface_temperature::M
 
@@ -35,7 +36,8 @@ function SurfaceEnergyVariables(grid_dims, tile_dims)
     )
 end
 
-struct CanopyVariables{T <: AbstractArray}
+"""Canopy variables per tile (see `Tiles`)."""
+struct CanopyVariables{T <: AbstractVector, M <: AbstractMatrix}
     # State
     water_storage::T
 
@@ -43,7 +45,7 @@ struct CanopyVariables{T <: AbstractArray}
     throughfall::T
     canopy_evaporation::T
     transpiration::T
-    transpiration_layers::T
+    transpiration_layers::M  # (ntiles, 2): the top two soil layers, the bottom one has no roots
 
     # Derived/intermediate
     maximum_water_storage::T
@@ -58,7 +60,7 @@ function CanopyVariables(dims)
         zeros(Float32, dims),
         zeros(Float32, dims),
         zeros(Float32, dims),
-        zeros(Float32, dims),
+        zeros(Float32, (dims..., 2)),
         zeros(Float32, dims),
         zeros(Float32, dims)
     )

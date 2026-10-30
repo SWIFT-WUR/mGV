@@ -1,4 +1,4 @@
-# Checks the BMI getters and setters on the layer and band views (non-contiguous for 3D
+# Checks the BMI getters and setters on the layer views (views into the 2D model
 # arrays) on a locally available GPU backend. Not part of runtests.jl, as it requires a GPU.
 # Run it from an environment with mGV, BasicModelInterface and CUDA and/or AMDGPU:
 #   julia --project=<env> test/gpu_test.jl
@@ -22,7 +22,7 @@ include("bmi_views.jl")
 if mGV.backend_name(backend) == "CPU"
     @warn "No functional GPU backend (CUDA or AMDGPU) found, skipping the GPU tests"
 else
-    @testset "$(mGV.backend_name(backend)) BMI layer and band views" begin
+    @testset "$(mGV.backend_name(backend)) BMI layer views" begin
         model = mGV.Model(MEKONG_CFG; backend)
         @test !(model.grid_parameters.latitude isa Array)  # the model arrays are on the device
         test_layered_views(model)

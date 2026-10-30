@@ -102,12 +102,12 @@ end
 end
 
 @option "config" struct Cfg
-    nveg::Int = 14  # number of vegetation types
+    nveg::Int = 14  # unused: the vegetation types are read from the parameter file
     enable_routing::Bool = true
     lat_var::String = "lat"
     lon_var::String = "lon"
     enable_snow::Bool = true
-    nbands::Int = 5  # snow bands (alternatively, derive from input data)
+    nbands::Int = 5  # unused: the snow bands are read from the parameter file
     fillvalue_threshold::Float32 = 1.0f15
     start_year::Int
     end_year::Int
