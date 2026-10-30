@@ -11,7 +11,7 @@ const GRIDS = Dict{String, Int}(
     "2D_grid" => 0,
     "soil_grid" => 1,
     "inter_soil_grid" => 2,
-    "vegetation_snow_grid" => 3,
+    "tile_grid" => 3,
 )
 const GRIDS_2D = [GRIDS["2D_grid"], GRIDS["soil_grid"], GRIDS["inter_soil_grid"]]
 
@@ -26,37 +26,37 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         lens = @optic(_.surface_energy_variables.net_radiation),
         unit = Unit(; J = 1, s = -1, m = -2),
         description = "",
-        gridtype = GRIDS["vegetation_snow_grid"],
+        gridtype = GRIDS["tile_grid"],
         input = false,
         output = true,
-        tags = [:surface_energy_variables_band],
+        tags = [:surface_energy_variables_tile],
     ),
     "land_surface__evaporation~potential" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.potential_evaporation),
         unit = Unit(; mm = 1, d = -1),
         description = "",
-        gridtype = GRIDS["vegetation_snow_grid"],
+        gridtype = GRIDS["tile_grid"],
         input = false,
         output = true,
-        tags = [:surface_energy_variables_band],
+        tags = [:surface_energy_variables_tile],
     ),
     "land_surface__evaporation~potential~soil" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.soil_potential_evaporation),
         unit = Unit(; mm = 1, d = -1),
         description = "",
-        gridtype = GRIDS["vegetation_snow_grid"],
+        gridtype = GRIDS["tile_grid"],
         input = false,
         output = true,
-        tags = [:surface_energy_variables_band],
+        tags = [:surface_energy_variables_tile],
     ),
     "atmosphere_bottom_air__resistance~aerodynamic" => ParameterMetadata(;
         lens = @optic(_.surface_energy_variables.aerodynamic_resistance),
         unit = Unit(; s = 1, m = -1),
         description = "",
-        gridtype = GRIDS["vegetation_snow_grid"],
+        gridtype = GRIDS["tile_grid"],
         input = false,
         output = true,
-        tags = [:surface_energy_variables_band],
+        tags = [:surface_energy_variables_tile],
     ),
 
     # 2D
@@ -218,19 +218,19 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         lens = @optic(_.canopy_variables.canopy_evaporation),
         unit = Unit(; mm = 1, d = -1),
         description = "",
-        gridtype = GRIDS["vegetation_snow_grid"],
+        gridtype = GRIDS["tile_grid"],
         input = false,
         output = true,
-        tags = [:canopy_variables_band],
+        tags = [:canopy_variables_tile],
     ),
     "land_vegetation_canopy__water_storage" => ParameterMetadata(;
         lens = @optic(_.canopy_variables.water_storage),
         unit = Unit(),  # TODO: add unit
         description = "",
-        gridtype = GRIDS["vegetation_snow_grid"],
+        gridtype = GRIDS["tile_grid"],
         input = true,
         output = true,
-        tags = [:canopy_variables_band],
+        tags = [:canopy_variables_tile],
     )
 )
 
@@ -463,21 +463,21 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
         tags = [:grid_parameters],
     ),
     "snow_band_area_fraction" => ParameterMetadata(;
-        #(snow_band, cell)
+        # (active snow band), see `Tiles`
         lens = @optic(_.grid_parameters.snow_band_area_fraction),
         unit = Unit(),
         description = "Fraction of grid cell area in each snow band",
         tags = [:grid_parameters],
     ),
     "snow_band_elevation" => ParameterMetadata(;
-        #(snow_band, cell)
+        # (active snow band), see `Tiles`
         lens = @optic(_.grid_parameters.snow_band_elevation),
         unit = Unit(; m = 1),
         description = "Elevation of snow bands",
         tags = [:grid_parameters],
     ),
     "snow_band_precipitation_factor" => ParameterMetadata(;
-        #(snow_band, cell)
+        # (active snow band), see `Tiles`
         lens = @optic(_.grid_parameters.snow_band_precipitation_factor),
         unit = Unit(),
         description = "Fraction of cell precipitation that falls on each elevation band",
@@ -486,7 +486,7 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
 
     #Vegetation  (static)
     "vegetation__root_fraction" => ParameterMetadata(;
-        #(veg_class, root_zone, cell)
+        # (tile, root_zone), see `Tiles`
         lens = @optic(_.vegetation_parameters.root_fraction),
         unit = Unit(),
         description = "Root zone fraction",
@@ -495,21 +495,21 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
         tags = [:vegetation_parameters],
     ),
     "vegetation__fraction" => ParameterMetadata(;
-        #(veg_class, cell)
+        # (tile), see `Tiles`
         lens = @optic(_.vegetation_parameters.vegetation_fraction),
         unit = Unit(),
         description = "Vegetation fraction",
         tags = [:vegetation_parameters],
     ),
     "minimum_resistance" => ParameterMetadata(;
-        #(veg_class, cell)
+        # (tile), see `Tiles`
         lens = @optic(_.vegetation_parameters.minimum_resistance),
         unit = Unit(; s = 1, m = -1),
         description = "Minimum stomatal resistance",
         tags = [:vegetation_parameters],
     ),
     "architectural_resistance" => ParameterMetadata(;
-        #(veg_class, cell)
+        # (tile), see `Tiles`
         lens = @optic(_.vegetation_parameters.architectural_resistance),
         unit = Unit(; m = (2, 2)),
         description = "Architectural resistance",
@@ -517,35 +517,35 @@ const standard_param_map = OrderedDict{String, ParameterMetadata}(
     ),
     #active monthly val
     "displacement_height" => ParameterMetadata(;
-        #(veg_class, month, cell)
+        # (tile), the current month, see `Tiles`
         lens = @optic(_.vegetation_parameters.displacement_height),
         unit = Unit(; m = 1),
         description = "Vegetation displacement",
         tags = [:vegetation_parameters],
     ),
     "roughness_length" => ParameterMetadata(;
-        #(veg_class, month, cell)
+        # (tile), the current month, see `Tiles`
         lens = @optic(_.vegetation_parameters.roughness_length),
         unit = Unit(; m = 1),
         description = "vegetation roughness length",
         tags = [:vegetation_parameters],
     ),
     "vegetation_canopy__leaf_area_index" => ParameterMetadata(;
-        #(veg_class, month, cell)
+        # (tile), the current month, see `Tiles`
         lens = @optic(_.vegetation_parameters.lai),
         unit = Unit(; m = (2, 2)),
         description = "leaf area index",
         tags = [:vegetation_parameters],
     ),
     "albedo" => ParameterMetadata(;
-        #(veg_class, month, cell)
+        # (tile), the current month, see `Tiles`
         lens = @optic(_.vegetation_parameters.albedo),
         unit = Unit(),
         description = "albedo",
         tags = [:vegetation_parameters],
     ),
     "canopy_coverage" => ParameterMetadata(;
-        #(veg_class, month, cell)
+        # (tile), the current month, see `Tiles`
         lens = @optic(_.vegetation_parameters.canopy_coverage),
         unit = Unit(),
         description = "canopy coverage",

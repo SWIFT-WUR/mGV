@@ -6,7 +6,9 @@
         b_i_grid,
         throughfall,
         cv_grid,
-        AreaFract
+        AreaFract,
+        cell_tiles,
+        band
     )
     i = @index(Global, Linear)
 
@@ -48,18 +50,13 @@
         A_sat[i] = asat_val
 
         # --- 4. Inflow Summation (Reduction) ---
-        # Sum throughfall (ncells, nbands, n_veg) -> Scalar Inflow
-        # We loop over dim 3 manually to avoid allocating a reduction array
+        # Sum the throughfall of the tiles of the cell -> Scalar Inflow
+        # We loop over the tiles manually to avoid allocating a reduction array
         inflow_sum = zero
-        n_bands = size(AreaFract, 2)
-        n_veg = size(throughfall, 3)
-
-        for k in 1:n_veg
-            for b in 1:n_bands
-                val = throughfall[i, b, k] * cv_grid[i, 1, k] * AreaFract[i, b]
-                # Branchless NaN guard
-                inflow_sum += ifelse(isnan(val), zero, val)
-            end
+        for t in cell_tiles[i]:(cell_tiles[i + 1] - 1)
+            val = throughfall[t] * cv_grid[t] * AreaFract[band[t]]
+            # Branchless NaN guard
+            inflow_sum += ifelse(isnan(val), zero, val)
         end
 
         # --- 5. Runoff Calculation ---
@@ -118,7 +115,7 @@ function calculate_surface_runoff!(
         surface_runoff, A_sat,
         throughfall,
         soil_moisture, soil_moisture_max,
-        b_i, cv_grid, AreaFract
+        b_i, cv_grid, AreaFract, tiles::Tiles
     )
 
     kernel_launcher! = surface_runoff_kernel!(get_backend(surface_runoff))
@@ -126,7 +123,8 @@ function calculate_surface_runoff!(
     kernel_launcher!(
         surface_runoff, A_sat,
         soil_moisture, soil_moisture_max,
-        b_i, throughfall, cv_grid, AreaFract;
+        b_i, throughfall, cv_grid, AreaFract,
+        tiles.cell_tiles, tiles.band;
         ndrange = length(surface_runoff)
     )
 
@@ -367,7 +365,7 @@ function solve_runoff_and_drainage!(
 end
 
 @kernel function infiltration_kernel!(
-        infiltration, throughfall, surface_runoff, cv_grid, area_fraction
+        infiltration, throughfall, surface_runoff, cv_grid, area_fraction, cell_tiles, band
     )
     i = @index(Global, Linear)
 
@@ -376,18 +374,14 @@ end
         # 1. Initialize accumulator locally
         acc = -surface_runoff[i]
 
-        # 2. Integrate all vegetation tiles and snow bands.
-        n_bands = size(throughfall, 2)
-        n_tiles = size(throughfall, 3)
-        for k in 1:n_tiles
-            for b in 1:n_bands
-                val = (
-                    throughfall[i, b, k] *
-                        cv_grid[i, 1, k] *
-                        area_fraction[i, b]
-                )
-                acc += ifelse(isnan(val), 0.0f0, val)
-            end
+        # 2. Integrate all tiles (vegetation types and snow bands) of the cell.
+        for t in cell_tiles[i]:(cell_tiles[i + 1] - 1)
+            val = (
+                throughfall[t] *
+                    cv_grid[t] *
+                    area_fraction[band[t]]
+            )
+            acc += ifelse(isnan(val), 0.0f0, val)
         end
 
         # 3. Write result
@@ -396,14 +390,15 @@ end
 end
 
 function calculate_infiltration!(
-        infiltration, throughfall, surface_runoff, cv_grid, area_fraction
+        infiltration, throughfall, surface_runoff, cv_grid, area_fraction, tiles::Tiles
     )
 
     kernel! = infiltration_kernel!(get_backend(infiltration))
 
     # Launch kernel
     kernel!(
-        infiltration, throughfall, surface_runoff, cv_grid, area_fraction;
+        infiltration, throughfall, surface_runoff, cv_grid, area_fraction,
+        tiles.cell_tiles, tiles.band;
         ndrange = length(infiltration)
     )
 

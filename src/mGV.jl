@@ -80,6 +80,7 @@ require.
     const config::Cfg    # all configuration options
     const clock::Clock   # to keep track of simulation time
     const domain::Domain # the active cells of the input grid, which the model arrays hold
+    const tiles::Tiles   # the active snow bands and vegetation types of the cells
     const grid_parameters::GridParameters
     const vegetation_parameters::VegetationParameters
     const monthly_vegetation_parameters::MonthlyVegetationParameters
@@ -116,26 +117,25 @@ function Model(config_file::AbstractString; backend = "auto")
     clock = Clock(config)
     domain = Domain(config)
     forcing_readers, forcing_variables = initialize_forcing(config, domain)
-    grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters =
+    grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters, tiles =
         read_parameters(config, domain)
 
     n = ncells(domain)
-    nveg = config.nveg  # vegetation types
-    nbands = config.nbands  # snow bands
     nlayers = size(soil_parameters.depth, 2) # derive soil layers from input data
     grid_dims = (n,)
-    tile_dims = (n, nbands, nveg)
+    tile_dims = (ntiles(tiles),)
     soil_dims = (n, nlayers)
 
     surface_energy_variables = SurfaceEnergyVariables(grid_dims, tile_dims)
     canopy_variables = CanopyVariables(tile_dims)
     soil_variables = SoilVariables(grid_dims, soil_dims)
-    snow_variables = SnowVariables(n, nbands, nveg)
+    snow_variables = SnowVariables(ntiles(tiles), nbands(tiles))
     routing = config.enable_routing ?
         RoutingState(config, domain) : nothing
 
     # Move data to backend during model initialization
     if !(backend isa CPU)
+        tiles = adapt(backend, tiles)
         grid_parameters = adapt(backend, grid_parameters)
         vegetation_parameters = adapt(backend, vegetation_parameters)
         soil_parameters = adapt(backend, soil_parameters)
@@ -174,6 +174,7 @@ function Model(config_file::AbstractString; backend = "auto")
         config,
         clock,
         domain,
+        tiles,
         grid_parameters,
         vegetation_parameters,
         monthly_vegetation_parameters,

@@ -167,7 +167,8 @@ end
         soil_evap,
         @Const(soil_moisture), @Const(soil_moisture_max), @Const(residual_moisture),
         @Const(potential_evaporation), @Const(b_infilt),
-        @Const(cv), @Const(coverage), @Const(AreaFract)
+        @Const(cv), @Const(coverage), @Const(AreaFract),
+        @Const(cell_tiles), @Const(band)
     )
     i = @index(Global, Linear)
 
@@ -179,13 +180,13 @@ end
 
     # Accumulate over Veg Types and Bands
     acc = 0.0f0
-    for v in 1:size(potential_evaporation, 3), b in 1:size(potential_evaporation, 2)
+    for t in cell_tiles[i]:(cell_tiles[i + 1] - 1)
         # Esoil = Esoil_pot * beta(sm) * (1-fcanopy) * Cv per tile.
         # Apply the mathematically selected multiplier (beta_asp) directly
         # unless full saturation naturally demands maximum potential evaporation.
-        pe = potential_evaporation[i, b, v]
+        pe = potential_evaporation[t]
         esoil = is_saturated ? pe : pe * beta_asp
-        esoil = esoil * (1.0f0 - coverage[i, 1, v]) * (cv[i, 1, v] * AreaFract[i, b])
+        esoil = esoil * (1.0f0 - coverage[t]) * (cv[t] * AreaFract[band[t]])
 
         # Cap at Available Moisture
         acc += clamp(esoil, 0.0f0, avail)
@@ -196,14 +197,15 @@ end
 function calculate_soil_evaporation!(
         soil_evap,
         soil_moisture, soil_moisture_max, potential_evaporation,
-        b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu
+        b_infilt_gpu, cv_gpu, coverage_gpu, residual_moisture, AreaFract_gpu, tiles::Tiles
     )
     # pe passed in is Step 2 (snow-blended) PE which captures snow energy effects.
     soil_evaporation_kernel!(get_backend(soil_evap))(
         soil_evap,
         soil_moisture, soil_moisture_max, residual_moisture,
         potential_evaporation, b_infilt_gpu,
-        cv_gpu, coverage_gpu, AreaFract_gpu;
+        cv_gpu, coverage_gpu, AreaFract_gpu,
+        tiles.cell_tiles, tiles.band;
         ndrange = size(soil_evap)
     )
     return nothing
@@ -211,19 +213,20 @@ end
 
 
 """
-Sum the per-layer transpiration over vegetation tiles, weighted by canopy
-coverage. `transpiration_layers` holds the soil layers in its second
-(band-sized) dimension.
+Sum the per-layer transpiration over the tiles of each cell, weighted by canopy
+coverage. `transpiration_layers` only holds the top soil layers; the uptake
+from the layers below is zero.
 """
 @kernel function layer_transpiration_kernel!(
-        transpiration_uptake, @Const(transpiration_layers), @Const(canopy_coverage)
+        transpiration_uptake, @Const(transpiration_layers), @Const(canopy_coverage),
+        @Const(cell_tiles)
     )
     i, l = @index(Global, NTuple)
 
     acc = 0.0f0
     if l <= size(transpiration_layers, 2)
-        for v in 1:size(transpiration_layers, 3)
-            acc += transpiration_layers[i, l, v] * canopy_coverage[i, 1, v]
+        for t in cell_tiles[i]:(cell_tiles[i + 1] - 1)
+            acc += transpiration_layers[t, l] * canopy_coverage[t]
         end
     end
     transpiration_uptake[i, l] = acc
@@ -244,26 +247,29 @@ function update_soil!(model)
     (; vegetation_fraction, canopy_coverage) = model.vegetation_parameters
     (; snow_band_area_fraction) = model.grid_parameters
     (; throughfall, transpiration_layers) = model.canopy_variables
+    (; tiles) = model
 
     calculate_soil_evaporation!(
         evaporation, moisture, maximum_moisture, soil_potential_evaporation,  # Step 2 (snow-blended) PE
-        nijssen_infilt_b, vegetation_fraction, canopy_coverage, residual_moisture, snow_band_area_fraction
+        nijssen_infilt_b, vegetation_fraction, canopy_coverage, residual_moisture, snow_band_area_fraction,
+        tiles
     )
 
     calculate_surface_runoff!(
         surface_runoff, saturated_fraction,
         throughfall, moisture,
-        maximum_moisture, nijssen_infilt_b, vegetation_fraction, snow_band_area_fraction
+        maximum_moisture, nijssen_infilt_b, vegetation_fraction, snow_band_area_fraction,
+        tiles
     )
 
     calculate_infiltration!(
         infiltration, throughfall, surface_runoff,
-        vegetation_fraction, snow_band_area_fraction
+        vegetation_fraction, snow_band_area_fraction, tiles
     )
 
     # Soil moisture update
     layer_transpiration_kernel!(get_backend(transpiration_uptake))(
-        transpiration_uptake, transpiration_layers, canopy_coverage;
+        transpiration_uptake, transpiration_layers, canopy_coverage, tiles.cell_tiles;
         ndrange = size(transpiration_uptake)
     )
     solve_runoff_and_drainage!(

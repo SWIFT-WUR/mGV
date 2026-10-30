@@ -30,26 +30,8 @@ function soil_layer_standard_name(name::AbstractString)
 end
 
 """
-Return the standard name representing a snow-band variable 3D 
-and the corresponding index `band_index` based on a standard `name`.
-"""
-function snow_band_standard_name(name::AbstractString)
-    # Parse new naming format: snow_band_N where N is the layer number
-    parts = split(name, "_")
-    band_index = tryparse(Int, parts[end])
-    if !isnothing(band_index)
-        # Remove the layer number to get the base name
-        name_without_band = join(parts[1:(end - 2)], "_")
-        return name_without_band, band_index
-    end
-    # Fallback for unexpected format
-    @warn "Unable to parse layer standard name: $name"
-    return name, nothing
-end
-
-"""
 Expands the input/output variables name received through API section of the config file. 
-The variables are expandend attaching 'layer_N' or 'band_n' at the end of the name. 
+The variables are expandend attaching 'layer_N' at the end of the name. 
 The ParameterMetadata input/output flags are used to filter the variables accordingly. 
 """
 function io_var_checker(model::Model, is_input::Bool)
@@ -77,13 +59,6 @@ function io_var_checker(model::Model, is_input::Bool)
             for j in 1:(size(model.soil_parameters.depth, 2) - 1)
                 push!(keep_names, var * "_layer_$j")
             end
-        elseif (
-                :surface_energy_variables_band in metadata.tags ||
-                    :canopy_variables_band in metadata.tags
-            )
-            for j in 1:model.config.nbands
-                push!(keep_names, var * "_band_$j")
-            end
         else
             push!(keep_names, var)
         end
@@ -94,9 +69,6 @@ end
 function check_name(model::Model, name::String)
     if occursin(r"_layer_\d", name)
         name_2d, = soil_layer_standard_name(name)
-        name = name_2d
-    elseif occursin(r"_band_\d", name)
-        name_2d, = snow_band_standard_name(name)
         name = name_2d
     end
     return get_metadata(name, model)

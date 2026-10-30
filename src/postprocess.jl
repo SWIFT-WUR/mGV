@@ -7,10 +7,10 @@
 @inline want(::AbstractArray) = true
 @inline want(flag::Bool) = flag
 
-"""Add `w * x[i, b, k]` to `acc`, skipping NaN and values beyond `threshold`; no-op unless `want(out)`."""
-@inline function add_weighted(acc, out, x, i, b, k, w, threshold = Inf32)
+"""Add `w * x[t]` to `acc`, skipping NaN and values beyond `threshold`; no-op unless `want(out)`."""
+@inline function add_weighted(acc, out, x, t, w, threshold = Inf32)
     want(out) || return acc
-    val = x[i, b, k]
+    val = x[t]
     return acc + ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w * val)
 end
 
@@ -24,6 +24,7 @@ end
         @Const(salb_in), @Const(sts_in),    # Per-tile snow inputs
         @Const(tsurf_in),                   # Per-cell surface temperature
         @Const(coverage), @Const(cv), @Const(AreaFract), # Weights
+        @Const(cell_tiles), @Const(band),   # Tile layout
         threshold, fill_val,                # Scalars
     )
     i = @index(Global, Linear)
@@ -47,43 +48,36 @@ end
     acc_salb = 0.0f0  # weighted by the snow-covered tile weight only
     acc_sts = 0.0f0
     snow_w = 0.0f0    # sum of the snow-covered tile weights
-    cv_sum = 0.0f0    # land mask
 
-    n_bands = size(pe_in, 2)
-    n_tiles = size(pe_in, 3)
     total_w = 0.0f0
 
-    for k in 1:n_tiles
-        w_cv = nz(Float32(cv[i, 1, k]))
-        cv_sum += w_cv
-        w_cov = nz(Float32(coverage[i, 1, k]))
+    for t in cell_tiles[i]:(cell_tiles[i + 1] - 1)
+        w_cv = nz(Float32(cv[t]))
+        w_cov = nz(Float32(coverage[t]))
+        w_af = nz(Float32(AreaFract[band[t]]))
+        w_total = w_cv * w_af
+        w_total_cov = w_cv * w_cov * w_af
+        total_w += w_total # Accumulate total weight (should be close to 1)
 
-        for b in 1:n_bands
-            w_af = nz(Float32(AreaFract[i, b]))
-            w_total = w_cv * w_af
-            w_total_cov = w_cv * w_cov * w_af
-            total_w += w_total # Accumulate total weight (should be close to 1)
+        acc_pe = add_weighted(acc_pe, pe_out, pe_in, t, w_total, threshold)
+        acc_nr = add_weighted(acc_nr, nr_out, nr_in, t, w_total, threshold)
+        acc_tr = add_weighted(acc_tr, tr_out, tr_in, t, w_cov * w_af, threshold) # tr is weighted by coverage in physics
+        acc_ce = add_weighted(acc_ce, ce_out, ce_in, t, w_total_cov, threshold)
+        acc_ws = add_weighted(acc_ws, ws_out, ws_in, t, w_total_cov, threshold)
 
-            acc_pe = add_weighted(acc_pe, pe_out, pe_in, i, b, k, w_total, threshold)
-            acc_nr = add_weighted(acc_nr, nr_out, nr_in, i, b, k, w_total, threshold)
-            acc_tr = add_weighted(acc_tr, tr_out, tr_in, i, b, k, w_cov * w_af, threshold) # tr is weighted by coverage in physics
-            acc_ce = add_weighted(acc_ce, ce_out, ce_in, i, b, k, w_total_cov, threshold)
-            acc_ws = add_weighted(acc_ws, ws_out, ws_in, i, b, k, w_total_cov, threshold)
+        # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
+        if want_swe
+            swe = swe_in[t]
+            acc_swe += nz(swe) * w_total
 
-            # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
-            if want_swe
-                swe = swe_in[i, b, k]
-                acc_swe += nz(swe) * w_total
-
-                # Albedo/surf_temp: weighted only by the tiles where snow is present
-                w_snow = ifelse(swe > 0.0f0, w_total, 0.0f0)
-                snow_w += w_snow
-                acc_salb = add_weighted(acc_salb, salb_out, salb_in, i, b, k, w_snow)
-                acc_sts = add_weighted(acc_sts, want_sts, sts_in, i, b, k, w_snow)
-            end
-            acc_sc = add_weighted(acc_sc, want_sc, sc_in, i, b, k, w_total)
-            acc_sm = add_weighted(acc_sm, sm_out, sm_in, i, b, k, w_total)
+            # Albedo/surf_temp: weighted only by the tiles where snow is present
+            w_snow = ifelse(swe > 0.0f0, w_total, 0.0f0)
+            snow_w += w_snow
+            acc_salb = add_weighted(acc_salb, salb_out, salb_in, t, w_snow)
+            acc_sts = add_weighted(acc_sts, want_sts, sts_in, t, w_snow)
         end
+        acc_sc = add_weighted(acc_sc, want_sc, sc_in, t, w_total)
+        acc_sm = add_weighted(acc_sm, sm_out, sm_in, t, w_total)
     end
 
     active = !isnan(total_w) & (total_w >= 1.0f-6)
@@ -93,8 +87,8 @@ end
     maybe_store!(ce_out, i, ifelse(active, acc_ce, fill_val))
     maybe_store!(ws_out, i, ifelse(active, acc_ws, fill_val))
 
-    # Land mask: cells with no active bands/veg → NaN (ocean cells)
-    land = cv_sum > 1.0f-6
+    # Land mask: cells without tiles (no vegetation or snow band area) → NaN
+    land = cell_tiles[i + 1] > cell_tiles[i]
     swe_masked = ifelse(land, acc_swe, NaN32)
     coverage_masked = ifelse(land, acc_sc, NaN32)
     maybe_store!(swe_out, i, swe_masked)
@@ -210,6 +204,7 @@ function process_daily_outputs!(model)
             snow_water_equivalent, snow_coverage, melt, snow_albedo, snow_surface_temperature,
             surface_temperature,
             canopy_coverage, vegetation_fraction, snow_band_area_fraction,
+            model.tiles.cell_tiles, model.tiles.band,
             fillvalue_threshold, NaN32;
             ndrange = size(surface_temperature)
         )
