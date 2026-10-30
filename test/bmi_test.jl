@@ -56,10 +56,10 @@ end
 function get_cpu_copy_of_slice(m::mGV.Model, n::String)
     name_2d, index, factor = is_soil_or_band_variable(m, n)
     _, size, type = get_var_grid_size_type(m,name_2d)
-    #We need to correct the size for the number of soil layers or snow band
+    # We need to correct the size for the number of soil layers or snow bands
     dest = fill(MaxType[type], size*factor)
     BMI.get_value(m, name_2d, dest)
-    #Indeces for the flattened CPU array
+    # Indices for the flattened CPU array
     model_val, _ = mGV.get_field_in_model(m,name_2d)
 
     idx = vec(LinearIndices(model_val)[:, :, index, :])
@@ -76,7 +76,7 @@ function check_get_value(model::mGV.Model, name::String, cpu_copy::AbstractVecto
     return nothing
 end
 
-function check_get_value_at_indeces(model::mGV.Model, name::String, cpu_copy::AbstractVector)
+function check_get_value_at_indices(model::mGV.Model, name::String, cpu_copy::AbstractVector)
     _, size, type = get_var_grid_size_type(model, name)
     idx = unique(rand(1:size, 50))
     dest_slice = fill(MaxType[type], length(idx))
@@ -97,7 +97,7 @@ function check_set_value(model::mGV.Model, name::String)
     return nothing
 end
 
-function check_set_value_at_indeces(model::mGV.Model, name::String)
+function check_set_value_at_indices(model::mGV.Model, name::String)
     _, size, type = get_var_grid_size_type(model, name)
     idx = unique(rand(1:size, 50))
     dest_slice = fill(MaxType[type], length(idx))
@@ -146,7 +146,7 @@ end
     @test isnothing(model.writer)
 end
 
-@testset "BMI non-continuous views" begin
+@testset "BMI non-contiguous views" begin
     model = get_initialized_model(MEKONG_CFG)
 
     out_vars = BMI.get_output_var_names(model)
@@ -160,7 +160,7 @@ end
             BMI.update(model)
             cpu_copy = get_cpu_copy_of_slice(model, name)
             check_get_value(model, name, cpu_copy)
-            check_get_value_at_indeces(model, name, cpu_copy)
+            check_get_value_at_indices(model, name, cpu_copy)
         end
     end
 
@@ -176,8 +176,8 @@ end
             
             BMI.update(model)
             cpu_copy = get_cpu_copy_of_slice(model, name)
-            check_get_value_at_indeces(model, name, cpu_copy)
-            check_set_value_at_indeces(model, name)
+            check_get_value_at_indices(model, name, cpu_copy)
+            check_set_value_at_indices(model, name)
         end
     end
 
