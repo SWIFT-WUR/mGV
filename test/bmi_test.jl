@@ -90,7 +90,7 @@ end
     @test BMI.get_time_step(model) == Float64(86400)
     @test BMI.get_start_time(model) == Float64(2.839968e8)
     @test BMI.get_current_time(model) == Float64(2.839968e8)
-    @test BMI.get_end_time(model) == Float64(3.470688e8)
+    @test BMI.get_end_time(model) == Float64(3.471552e8)
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
@@ -114,7 +114,7 @@ end
     for i in 1:10
         BMI.update(model)
         if i == 1
-            @test BMI.get_current_time(model) == Float64(2.839968e8)
+            @test BMI.get_current_time(model) == Float64(2.840832e8)
         end
     end
 
