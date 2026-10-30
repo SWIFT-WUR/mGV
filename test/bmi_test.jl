@@ -7,17 +7,7 @@ using Dates
 
 MEKONG_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
 
-const TYPES = Dict(
-    "Float16" => Float16,
-    "Float32" => Float32,
-    "Float64" => Float64,
-    "UInt8" => UInt8,
-    "UInt16" => UInt16,
-    "UInt32" => UInt32,
-    "Int16" => Int16,
-    "Int32" => Int32,
-    "Int64" => Int64,
-)
+
 const MaxType = Dict(
     "Float16" => floatmax(Float16),
     "Float32" => floatmax(Float32),
@@ -30,13 +20,19 @@ const MaxType = Dict(
     "Int64" => typemax(Int64),
 )
 function _zeros(type::String, size::Int)
-    return zeros(TYPES[type], size)
+    return zeros(mGV.TYPES[type], size)
+end
+
+function get_var_grid_size_type(m::mGV.Model, name::String)
+    g = BMI.get_var_grid(m, name)
+    s = BMI.get_grid_size(m, g)
+    t = BMI.get_var_type(m, name)
+    return g, s, t
 end
 
 function get_value_mean(var_name::String, m::mGV.Model)
-    grid = BMI.get_var_grid(m, var_name)
-    var_type = BMI.get_var_type(m, var_name)
-    dest = _zeros(var_type, BMI.get_grid_size(m, grid))
+    _, size, var_type = get_var_grid_size_type(m, var_name)
+    dest = _zeros(var_type, size)
     BMI.get_value(m, var_name, dest)
     return mean(dest)
 end
@@ -58,9 +54,7 @@ end
     @test sml3 in BMI.get_input_var_names(model)
     @test sml3 in BMI.get_output_var_names(model)
 
-    sm_grid = BMI.get_var_grid(model, sml3)
-    sm_size = BMI.get_grid_size(model, sm_grid)
-    sm_type = BMI.get_var_type(model, sml3)
+    sm_grid, sm_size, sm_type = get_var_grid_size_type(model, sml3)
     dest = _zeros(sm_type, sm_size)
 
     # soil moisture should have values >=0
@@ -86,7 +80,6 @@ end
     BMI.finalize(model)
     @test isnothing(model.writer)
 end
-
 
 @testset "Full BMI tests" begin
 
@@ -126,18 +119,23 @@ end
     end
 
     for name in out_vars
-        grid = BMI.get_var_grid(model, name)
-        size = BMI.get_grid_size(model, grid)
-        type = BMI.get_var_type(model, name)
+        grid, size, type = get_var_grid_size_type(model, name)
         dest = fill(MaxType[type], size)
         BMI.get_value(model, name, dest)
+        @test all(dest .!= MaxType[type])
+
+        dest = fill(MaxType[type], 3)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
         @test all(dest .!= MaxType[type])
     end
 
     for name in in_vars
-        grid = BMI.get_var_grid(model, name)
-        size = BMI.get_grid_size(model, grid)
-        type = BMI.get_var_type(model, name)
+        grid, size, type = get_var_grid_size_type(model, name)
+        dest = fill(MaxType[type], 3)
+        BMI.set_value_at_indices(model, name, [1, 100, size], dest)
+        BMI.get_value_at_indices(model, name, dest, [1, 100, size])
+        @test all(dest .== MaxType[type])
+
         dest = fill(MaxType[type], size)
         BMI.set_value(model, name, dest)
         BMI.get_value(model, name, dest)

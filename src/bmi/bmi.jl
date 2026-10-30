@@ -180,7 +180,7 @@ end
 
 function BMI.get_grid_z(model::Model, grid::Int)
     if grid == GRIDS["vegetation_snow_grid"]
-        z = zeros(Int, BMI.get_grid_shape(model, grid)[begin])
+        z = zeros(Float64, BMI.get_grid_shape(model, grid)[begin])
         return BMI.get_grid_z(model, grid, z)
     else
         error("accessing z-coordinate in 2-rank grid")
@@ -188,7 +188,7 @@ function BMI.get_grid_z(model::Model, grid::Int)
 end
 
 
-function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Int})
+function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
     if grid == GRIDS["vegetation_snow_grid"]
         return copyto!(z, 1:BMI.get_grid_shape(model, grid)[1])
     else
@@ -351,7 +351,10 @@ end
 Set a model variable `name` to the values in `src`, at indices `inds`.
 """
 function BMI.set_value_at_indices(model::Model, name::String, inds::Vector{Int}, src)
+    if !check_if_settable(model, name)
+        error("Variable $name is not settable")
+    end
     dest = BMI.get_value_ptr(model, name)
     dest[inds] = src
-    return dest
+    return nothing
 end
