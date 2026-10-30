@@ -31,7 +31,7 @@ function get_var_grid_size_type(m::mGV.Model, name::String)
 end
 
 function get_value_mean(var_name::String, m::mGV.Model)
-    _, size, var_type = get_var_grid_size_type(m,var_name)
+    _, size, var_type = get_var_grid_size_type(m, var_name)
     dest = _zeros(var_type, size)
     BMI.get_value(m, var_name, dest)
     return mean(dest)
@@ -54,7 +54,7 @@ end
     @test sml3 in BMI.get_input_var_names(model)
     @test sml3 in BMI.get_output_var_names(model)
 
-    sm_grid, sm_size, sm_type = get_var_grid_size_type(model,sml3)
+    sm_grid, sm_size, sm_type = get_var_grid_size_type(model, sml3)
     dest = _zeros(sm_type, sm_size)
 
     # soil moisture should have values >=0
@@ -119,7 +119,7 @@ end
     end
 
     for name in out_vars
-        grid, size, type = get_var_grid_size_type(model,name)
+        grid, size, type = get_var_grid_size_type(model, name)
         dest = fill(MaxType[type], size)
         BMI.get_value(model, name, dest)
         @test all(dest .!= MaxType[type])
@@ -130,7 +130,7 @@ end
     end
 
     for name in in_vars
-        grid, size, type = get_var_grid_size_type(model,name)
+        grid, size, type = get_var_grid_size_type(model, name)
         dest = fill(MaxType[type], 3)
         BMI.set_value_at_indices(model, name, [1, 100, size], dest)
         BMI.get_value_at_indices(model, name, dest, [1, 100, size])
