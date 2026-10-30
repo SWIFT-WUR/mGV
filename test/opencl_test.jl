@@ -1,4 +1,5 @@
-# Runs the model on the OpenCL backend and compares the results against the CPU backend.
+# Runs the model on the OpenCL backend and compares the results against the CPU backend,
+# and checks the BMI getters and setters on (non-contiguous) device array views.
 # Not part of runtests.jl, as it requires OpenCL.jl and an OpenCL driver. In CI this is
 # run on the CPU through pocl (see .github/workflows/opencl.yml):
 #   julia --project=<env with mGV, OpenCL, pocl_jll> test/opencl_test.jl
@@ -71,4 +72,13 @@ end
             @test isapprox(gpu[valid], cpu[valid]; rtol = 1.0e-3)
         end
     end
+end
+
+include("bmi_views.jl")
+
+@testset "OpenCL BMI layer and band views" begin
+    model = mGV.Model(make_config("opencl"); backend = "opencl")
+    @test model.grid_parameters.latitude isa CLArray
+    test_layered_views(model)
+    BMI.finalize(model)
 end
