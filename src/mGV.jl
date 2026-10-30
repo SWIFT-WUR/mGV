@@ -12,10 +12,13 @@ using Printf
 using Statistics
 using KernelAbstractions
 using Adapt: adapt, @adapt_structure
-using Accessors: @set, @optic
+using Accessors: @optic
 using StaticArrays: SVector, pushfirst, setindex
 using OrderedCollections: OrderedDict
 
+include("bmi/units.jl")
+include("bmi/metadata.jl")
+include("bmi/standard_name.jl")
 include("config.jl")
 using .Config: load_config, Cfg
 include("backend_setup.jl")
@@ -31,7 +34,6 @@ include("routing.jl")
 include("temperature.jl")
 include("postprocess.jl")
 include("io.jl")
-include("bmi/units.jl")
 
 
 const to = TimerOutputs.TimerOutput()
@@ -74,31 +76,41 @@ mGV model state.
 The model state includes all information the model's update functions
 require.
 """
-@kwdef struct Model
-    config::Cfg    # all configuration options
-    clock::Clock   # to keep track of simulation time
-    grid_parameters::GridParameters
-    vegetation_parameters::VegetationParameters
-    monthly_vegetation_parameters::MonthlyVegetationParameters
-    soil_parameters::SoilParameters
-    surface_energy_variables::SurfaceEnergyVariables
-    canopy_variables::CanopyVariables
-    soil_variables::SoilVariables
-    snow_variables::SnowVariables
-    forcing_variables::ForcingVariables
-    forcing_readers::ForcingReaders
-    routing::Union{RoutingState,Nothing}  # nothing when routing is disabled
-    writer::Union{OutputWriter,Nothing} # writes model output
+@kwdef mutable struct Model
+    const config::Cfg    # all configuration options
+    const clock::Clock   # to keep track of simulation time
+    const grid_parameters::GridParameters
+    const vegetation_parameters::VegetationParameters
+    const monthly_vegetation_parameters::MonthlyVegetationParameters
+    const soil_parameters::SoilParameters
+    const surface_energy_variables::SurfaceEnergyVariables
+    const canopy_variables::CanopyVariables
+    const soil_variables::SoilVariables
+    const snow_variables::SnowVariables
+    const forcing_variables::ForcingVariables
+    const forcing_readers::ForcingReaders
+    const routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
+    writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
+    const selected_outputs::Vector{ParameterMetadata} # output variables to write
     # preallocated 2D daily output buffers
-    output_buffers::OutputBuffers =
-        OutputBuffers(surface_energy_variables.surface_temperature)
+    const output_buffers::OutputBuffers =
+        OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs, config)
 end
 
 include("energy_balance.jl")
 include("evaporation.jl")
 
-function Model(config_file::AbstractString)
+"""
+    Model(config_file; backend="auto")
+
+Initialize the model from `config_file`. `backend` is a backend name or a
+`KernelAbstractions.Backend`, see [`select_backend`](@ref).
+"""
+function Model(config_file::AbstractString; backend = "auto")
     config = load_config(config_file)
+    selected_outputs = select_outputs(config)
+    backend = select_backend(backend)
+    println("Active backend: $(backend_name(backend))")
 
     clock = Clock(config)
     forcing_readers, forcing_variables = initialize_forcing(config)
@@ -123,17 +135,17 @@ function Model(config_file::AbstractString)
         config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
 
     # Move data to backend during model initialization
-    if backend_name != "CPU"
-        grid_parameters = adapt(ArrayType, grid_parameters)
-        vegetation_parameters = adapt(ArrayType, vegetation_parameters)
-        soil_parameters = adapt(ArrayType, soil_parameters)
-        surface_energy_variables = adapt(ArrayType, surface_energy_variables)
-        canopy_variables = adapt(ArrayType, canopy_variables)
-        soil_variables = adapt(ArrayType, soil_variables)
-        snow_variables = adapt(ArrayType, snow_variables)
-        forcing_variables = adapt(ArrayType, forcing_variables)
+    if !(backend isa CPU)
+        grid_parameters = adapt(backend, grid_parameters)
+        vegetation_parameters = adapt(backend, vegetation_parameters)
+        soil_parameters = adapt(backend, soil_parameters)
+        surface_energy_variables = adapt(backend, surface_energy_variables)
+        canopy_variables = adapt(backend, canopy_variables)
+        soil_variables = adapt(backend, soil_variables)
+        snow_variables = adapt(backend, snow_variables)
+        forcing_variables = adapt(backend, forcing_variables)
         if !isnothing(routing)
-            routing = adapt(ArrayType, routing)
+            routing = adapt(backend, routing)
         end
     end
 
@@ -155,7 +167,8 @@ function Model(config_file::AbstractString)
             grid_parameters.average_temperature
     end
 
-    writer = start_io_service(config, grid_parameters, year(clock.time), clock.dt)
+    writer = isempty(selected_outputs) ? nothing :
+        start_io_service(config, grid_parameters, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
@@ -172,6 +185,7 @@ function Model(config_file::AbstractString)
         forcing_readers,
         routing,
         writer,
+        selected_outputs,
     )
 end
 
@@ -231,43 +245,31 @@ end
 
     update_net_radiation_post_closure!(model)
 
-    # post process
-    results = process_daily_outputs(model)
-
-    # write away results if data writer is available
+    # Compute the outputs that have a buffer, and write them to disk if selected in the config
+    process_daily_outputs!(model)
     if !isnothing(model.writer)
-        write_results(model.writer.io_service, model.clock, results)
+        write_results(model.writer.io_service, model.clock, model)
     end
 
     # next time step will be new year; close file output
-    if !isnothing(model.writer) &&
-       year(model.clock.time + model.clock.dt) > year(model.clock.time)
-        # close output
-        stop_async_service(model.writer.io_service)
-        close_output(model.writer.store)
+    if (
+            !isnothing(model.writer) &&
+                year(model.clock.time + model.clock.dt) > year(model.clock.time)
+        )
 
+        close_output_files!(model.writer)
         if year(model.clock.time) == model.config.end_year
-            # if model has reached end time step set writer to nothing
-            @set model.writer = nothing
-
+            clear_output_writer!(model)
         else
-            # otherwise set up new output file
             println("Starting new io service...")
-            new_writer = start_io_service(
-                model.config,
-                model.grid_parameters,
-                year(model.clock.time) + 1,
-                model.clock.dt,
-            )
-            model.writer.io_service = new_writer.io_service
-            model.writer.store = new_writer.store
+            open_new_file!(model)
         end
     end
     return nothing
 end
 
-function run(config_file::AbstractString)
-    m = Model(config_file)
+function run(config_file::AbstractString; backend = "auto")
+    m = Model(config_file; backend)
 
     end_time = DateTime(m.config.end_year + 1) - m.clock.dt
     while m.clock.time < end_time
@@ -290,9 +292,41 @@ function run()
     return run(cfg_path)
 end
 
+"""Finalize the model by closing output files and releasing the file handles."""
+function finalize!(model::Model)
+    if !isnothing(model.writer)
+        close_output_files!(model.writer)
+        clear_output_writer!(model)
+    end
+    return nothing
+end
+
+"""Close the output file and stop the asynchronous service."""
+function close_output_files!(writer::OutputWriter)
+    stop_async_service(writer.io_service)
+    close_output(writer.store)
+    return nothing
+end
+
+"""Clear the writer arguments."""
+function clear_output_writer!(model::Model)
+    model.writer = nothing
+    return nothing
+end
+
+"""Opens a new output file"""
+function open_new_file!(model::Model)
+    model.writer = start_io_service(
+        model.config,
+        model.grid_parameters,
+        year(model.clock.time) + 1,
+        model.clock.dt,
+        model.selected_outputs,
+    )
+    return nothing
+end
 
 include("bmi/standard_name_utils.jl")
-include("bmi/standard_name.jl")
 include("bmi/helpers.jl")
 include("bmi/bmi.jl")
 

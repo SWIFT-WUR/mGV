@@ -8,7 +8,7 @@ const FORCING_VARS = [
     "vapor_pressure",
     "shortwave_down",
     "longwave_down",
-    "surface_pressure"
+    "surface_pressure",
 ]
 
 # RAM for caching forcing timesteps (all 7 variables per step). 2 GiB measured
@@ -68,7 +68,7 @@ function open_forcing_netcdf(cfg::Cfg)
     var_paths = [getval(cfg.input.paths, "$(var)_file") for var in FORCING_VARS]
     datasets = Vector{Any}(undef, length(var_paths))
 
-    for i = eachindex(var_paths)
+    for i in eachindex(var_paths)
         files = unique(replace(var_paths[i], "{year}" => string(year)) for year in years)
         datasets[i] = NCDataset(files, aggdim = "time", deferopen = false)
     end
@@ -284,7 +284,7 @@ forcing data.
 """
 function initialize_forcing(cfg::Cfg)
     forcing_readers = open_forcing(cfg)
-    start_time = DateTime(cfg.start_year,1,1)
+    start_time = DateTime(cfg.start_year, 1, 1)
     forcing_vars = ForcingVariables(;
         ((Symbol(var) => read_var(start_time, forcing_readers, var)) for var in FORCING_VARS)...
     )

@@ -1,4 +1,16 @@
 # BMI helper functions.
+const TYPES = Dict(
+    "Float16" => Float16,
+    "Float32" => Float32,
+    "Float64" => Float64,
+    "UInt8" => UInt8,
+    "UInt16" => UInt16,
+    "UInt32" => UInt32,
+    "Int16" => Int16,
+    "Int32" => Int32,
+    "Int64" => Int64,
+)
+
 """
 Return the standard name representing a layered variable 3D 
 and the layer index `layer_index` based on a standard `name`.
@@ -9,7 +21,7 @@ function soil_layer_standard_name(name::AbstractString)
     layer_index = tryparse(Int, parts[end])
     if !isnothing(layer_index)
         # Remove the layer number to get the base name
-        name_layered = join(parts[1:(end-2)], "_")
+        name_layered = join(parts[1:(end - 2)], "_")
         return name_layered, layer_index
     end
     # Fallback for unexpected format
@@ -27,7 +39,7 @@ function snow_band_standard_name(name::AbstractString)
     band_index = tryparse(Int, parts[end])
     if !isnothing(band_index)
         # Remove the layer number to get the base name
-        name_without_band = join(parts[1:(end-2)], "_")
+        name_without_band = join(parts[1:(end - 2)], "_")
         return name_without_band, band_index
     end
     # Fallback for unexpected format
@@ -46,7 +58,6 @@ function io_var_checker(model::Model, is_input::Bool)
     keep_names = String[]
 
     filtered = filter(name -> haskey(standard_map, name), config_vars)
-    no_match = filter(name -> !haskey(standard_map, name), config_vars)
     if is_input
         filter!(name -> standard_map[name].input, filtered)
     else
@@ -59,19 +70,19 @@ function io_var_checker(model::Model, is_input::Bool)
     for var in filtered
         metadata = get_metadata(var, model)
         if :soil_variables_layer in metadata.tags
-            for j = 1:size(model.soil_parameters.depth, 3)
-                push!(keep_names, var*"_layer_$j")
+            for j in 1:size(model.soil_parameters.depth, 3)
+                push!(keep_names, var * "_layer_$j")
             end
         elseif :soil_variables_interlayer in metadata.tags
-            for j = 1:(size(model.soil_parameters.depth, 3)-1)
-                push!(keep_names, var*"_layer_$j")
+            for j in 1:(size(model.soil_parameters.depth, 3) - 1)
+                push!(keep_names, var * "_layer_$j")
             end
         elseif (
-            :surface_energy_variables_band in metadata.tags ||
-            :canopy_variables_band in metadata.tags
-        )
-            for j = 1:model.config.nbands
-                push!(keep_names, var*"_band_$j")
+                :surface_energy_variables_band in metadata.tags ||
+                    :canopy_variables_band in metadata.tags
+            )
+            for j in 1:model.config.nbands
+                push!(keep_names, var * "_band_$j")
             end
         else
             push!(keep_names, var)

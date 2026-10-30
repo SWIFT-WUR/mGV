@@ -6,57 +6,17 @@ MIT License, Copyright (c) 2020 Deltares and contributors
 
 # wrapper methods for standard name mapping
 function get_standard_name_map(model::Model)
-    if isnothing(model.routing)
-        return standard_name_map
-    else
-        name_map = merge(standard_name_map, standard_routing_map)
-        return name_map
-    end
-end
-
-"""
-Metadata associated with parameters and variables.
-
-# Arguments
-- `lens`: The path in the model data structure to the parameter/variable if it exists
-- `unit`: The unit of the parameter/variable in the Wflow input
-- `description`: The description of the parameter/variable provided in the Wflow docs
-- 'gridtype': The grid type of the paremeter/variable if it exists
-- 'input': flag needed to set a variable
-- 'output': flag needed to get a variable
-- `tags`: Identifiers to filter parameters/variables for specific tables in the docs
-"""
-@kwdef struct ParameterMetadata{L}
-    lens::L = nothing
-    unit::Unit = EMPTY_UNIT
-    description::String = ""
-    gridtype::Int = 0
-    input::Bool = false
-    output::Bool = false
-    tags::Vector{Symbol} = []
-    function ParameterMetadata(
-        lens::L,
-        unit,
-        description,
-        gridtype,
-        input,
-        output,
-        flags,
-    ) where {L}
-        return new{L}(lens, unit, description, gridtype, input, output, flags)
-    end
-end
-
-function Base.:(==)(a::ParameterMetadata, b::ParameterMetadata)
-    return all(getfield(a, f) == getfield(b, f) for f in fieldnames(ParameterMetadata))
+    return standard_name_maps(;
+        enable_snow = model.config.enable_snow, enable_routing = !isnothing(model.routing),
+    )
 end
 
 function metadata_from_lens_string(
-    lens_string::AbstractString,
-    standard_name_map::OrderedDict{String,ParameterMetadata},
-)::Union{ParameterMetadata,Nothing}
+        lens_string::AbstractString,
+        standard_name_map::OrderedDict{String, ParameterMetadata},
+    )::Union{ParameterMetadata, Nothing}
     for metadata_candidate in values(standard_name_map)
-        if string(metadata_candidate.lens)[7:(end-1)] == lens_string
+        if string(metadata_candidate.lens)[7:(end - 1)] == lens_string
             return metadata_candidate
         end
     end
@@ -64,10 +24,10 @@ function metadata_from_lens_string(
 end
 
 function get_metadata(
-    name::AbstractString,
-    types::Vararg{Type};
-    model::Model,
-)::Union{ParameterMetadata,Nothing}
+        name::AbstractString,
+        types::Vararg{Type};
+        model::Model,
+    )::Union{ParameterMetadata, Nothing}
     metadata = nothing
     for type in types
         standard_name_map = get_standard_name_map(model)
@@ -108,10 +68,10 @@ function get_metadata(
 end
 
 function get_metadata(
-    name::AbstractString;
-    model::Model,
-    kwargs...,
-)::Union{ParameterMetadata,Nothing}
+        name::AbstractString;
+        model::Model,
+        kwargs...,
+    )::Union{ParameterMetadata, Nothing}
     # Check whether it is a land variable first
     metadata = get(get_standard_name_map(model), name, nothing)
 
@@ -133,4 +93,3 @@ function get_field_in_model(model, name::AbstractString)
         error("Couldn't obtain a field from this model specified by '$name'.")
     end
 end
-

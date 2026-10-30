@@ -20,7 +20,7 @@ struct SnowVariables{T <: AbstractArray, I <: AbstractArray, V <: AbstractArray}
     stored_swe::T                # stored SWE for coverage (mm)
     stored_coverage::T           # stored coverage fraction
     max_snow_depth::T            # max depth for coverage (m)
- 
+
     #3D (aggregations across veg tiles, for soil input)
     # (nx, ny, nbands)
     aggregated_melt::V
@@ -67,37 +67,37 @@ end
 
 # Solve surface energy balance via Newton-Raphson to find snow surface temp (max 0°C).
 @inline function snow_surface_temp_nr(
-    tsurf_init,   # Initial temperature guess from previous timestep [°C] (OldTSurf)
-    Ta,           # Air temperature [°C]
-    sw_in,        # Incoming shortwave radiation [W/m²]
-    lw_in,        # Incoming longwave radiation [W/m²]
-    albedo,       # Albedo of the snow surface [-]
-    psurf,        # Surface atmospheric pressure [kPa]
-    ra,           # Aerodynamic resistance [s/m]
-    vp_air,       # Vapor pressure of the air [kPa]
-    swe_surf_m    # Surface layer SWE [m] (for deltaCC thermal inertia)
-)
+        tsurf_init,   # Initial temperature guess from previous timestep [°C] (OldTSurf)
+        Ta,           # Air temperature [°C]
+        sw_in,        # Incoming shortwave radiation [W/m²]
+        lw_in,        # Incoming longwave radiation [W/m²]
+        albedo,       # Albedo of the snow surface [-]
+        psurf,        # Surface atmospheric pressure [kPa]
+        ra,           # Aerodynamic resistance [s/m]
+        vp_air,       # Vapor pressure of the air [kPa]
+        swe_surf_m    # Surface layer SWE [m] (for deltaCC thermal inertia)
+    )
     # 1. Atmospheric Properties (Air Density & Specific Humidity)
     # Air density from ideal gas: ρ = P / (Rd * Tk)
-    Ta_K     = Ta + 273.15f0
-    psurf_Pa = psurf * 1f3   # kPa → Pa
-    rho_air  = psurf_Pa / (287f0 * Ta_K)
-    Cp_air   = 1004f0
-    ha       = rho_air * Cp_air / max(ra, 1f0)   # Heat transfer coefficient [W/(m²·K)]
+    Ta_K = Ta + 273.15f0
+    psurf_Pa = psurf * 1.0f3   # kPa → Pa
+    rho_air = psurf_Pa / (287.0f0 * Ta_K)
+    Cp_air = 1004.0f0
+    ha = rho_air * Cp_air / max(ra, 1.0f0)   # Heat transfer coefficient [W/(m²·K)]
 
     # 2. Radiative Forcing Variables
-    sw_net = sw_in * (1f0 - albedo)
-    ps_eff = max(psurf_Pa, 5f4)   # Capped surface pressure [Pa]
+    sw_net = sw_in * (1.0f0 - albedo)
+    ps_eff = max(psurf_Pa, 5.0f4)   # Capped surface pressure [Pa]
 
     # Vapour pressure: cap EactAir at es(Ta) to match VPD=0 condensation suppression
-    EactAir_raw = clamp(vp_air * 1f3, 0f0, 15f3)
-    es_Ta       = 611f0 * exp(17.27f0 * Ta / max(237.3f0 + Ta, 1f0))
-    EactAir     = min(EactAir_raw, es_Ta)  # [Pa]
+    EactAir_raw = clamp(vp_air * 1.0f3, 0.0f0, 15.0f3)
+    es_Ta = 611.0f0 * exp(17.27f0 * Ta / max(237.3f0 + Ta, 1.0f0))
+    EactAir = min(EactAir_raw, es_Ta)  # [Pa]
 
     # 3. Latent Heat Parameters
-    L_sub    = 2.845f6   # Latent heat of sublimation [J/kg]
-    Ls_Ra    = rho_air * L_sub / max(ra, 1f0) * 0.622f0 / ps_eff  # [W/m²/Pa]
-    es0      = 611f0     # Saturation vapor pressure at 0°C [Pa]
+    L_sub = 2.845f6   # Latent heat of sublimation [J/kg]
+    Ls_Ra = rho_air * L_sub / max(ra, 1.0f0) * 0.622f0 / ps_eff  # [W/m²/Pa]
+    es0 = 611.0f0     # Saturation vapor pressure at 0°C [Pa]
     LE_sub_0 = Ls_Ra * (es0 - EactAir)   # Latent energy at Ts=0°C (for melt energy)
 
     # 4. Energy Balance Formulation
@@ -105,8 +105,8 @@ end
     rhs_base = sw_net + lw_in + ha * Ta   # SW_net + LW_in + H_sens(Ta) [W/m²]
 
     # Melt energy is computed at Ts=0 using LE0 (standard convention)
-    rhs_melt = rhs_base - LE_sub_0 
-    
+    rhs_melt = rhs_base - LE_sub_0
+
     # Longwave emission coefficient: SIGMA * epsilon_snow
     sig_eps = SIGMA * 0.97f0   # param.EMISS_SNOW = 0.97
 
@@ -114,104 +114,106 @@ end
     # f(ts) = LW_out(ts) + h_sens(ts,Ta) - LE(min(ts,0)) - rhs_base = 0
     ts = tsurf_init
     for _ in 1:12
-        Ts_K   = ts + 273.15f0
-        lw_out = sig_eps * @fastmath(Ts_K ^ 4)
+        Ts_K = ts + 273.15f0
+        lw_out = sig_eps * @fastmath(Ts_K^4)
         h_sens = ha * ts
-        
+
         # Compute LE at capped surface temp (snow surface can't be > 0°C)
-        ts_cap = min(ts, 0f0)
-        es_ts_cap = es0 * exp(21.87f0 * ts_cap / max(265.5f0 + ts_cap, 1f0))
-        le_ts = Ls_Ra * max(es_ts_cap - EactAir, 0f0)
-        
+        ts_cap = min(ts, 0.0f0)
+        es_ts_cap = es0 * exp(21.87f0 * ts_cap / max(265.5f0 + ts_cap, 1.0f0))
+        le_ts = Ls_Ra * max(es_ts_cap - EactAir, 0.0f0)
+
         # Objective function and derivative
-        f_val  = lw_out + h_sens - le_ts - rhs_base
-        dles_dts = 21.87f0 * es_ts_cap / max(265.5f0 + ts_cap, 1f0)
-        dle_dts = ifelse(ts < 0f0, Ls_Ra * dles_dts, 0f0)
-        df_val = 4f0 * sig_eps * @fastmath(Ts_K ^ 3) + ha - dle_dts
-        
+        f_val = lw_out + h_sens - le_ts - rhs_base
+        dles_dts = 21.87f0 * es_ts_cap / max(265.5f0 + ts_cap, 1.0f0)
+        dle_dts = ifelse(ts < 0.0f0, Ls_Ra * dles_dts, 0.0f0)
+        df_val = 4.0f0 * sig_eps * @fastmath(Ts_K^3) + ha - dle_dts
+
         # Step update with clamping for stability
-        step   = f_val / max(abs(df_val), 1f-6)
-        step   = clamp(step, -10f0, 10f0)
-        ts     = ts - step
+        step = f_val / max(abs(df_val), 1.0f-6)
+        step = clamp(step, -10.0f0, 10.0f0)
+        ts = ts - step
     end
-    ts = clamp(ts, -60f0, 50f0)
+    ts = clamp(ts, -60.0f0, 50.0f0)
 
     # 6. Evaluate Melt Potential
     # Melt energy at Ts=0 (using LE at 0°C, per standard convention)
-    Ts0_K           = 273.15f0
-    lw_out0         = sig_eps * @fastmath(Ts0_K ^ 4)
+    Ts0_K = 273.15f0
+    lw_out0 = sig_eps * @fastmath(Ts0_K^4)
     melt_energy_net = rhs_melt - lw_out0   # Melt energy using LE_sub_0
-    ts_melt         = 0f0
-    melt_heat_out   = max(melt_energy_net, 0f0)
+    ts_melt = 0.0f0
+    melt_heat_out = max(melt_energy_net, 0.0f0)
 
     # 7. Sublimation Calculation (Non-melting state)
-    ts_no_melt = min(ts, 0f0)
-    is_melting = ts > 0f0
+    ts_no_melt = min(ts, 0.0f0)
+    is_melting = ts > 0.0f0
 
     # Sublimation mass is computed from the energy balance residual at ts_no_melt.
-    Ts0_no_melt_K    = ts_no_melt + 273.15f0
-    lw_out_no_melt   = sig_eps * @fastmath(Ts0_no_melt_K ^ 4)
-    le_eb_no_melt    = rhs_base - lw_out_no_melt - ha * ts_no_melt  # LE from energy balance
-    sub_flux_Wm2     = max(le_eb_no_melt, 0f0)             # Positive LE = sublimation
-    sub_mass_mm_cold = sub_flux_Wm2 / L_sub * 86400f0 * 1f3
+    Ts0_no_melt_K = ts_no_melt + 273.15f0
+    lw_out_no_melt = sig_eps * @fastmath(Ts0_no_melt_K^4)
+    le_eb_no_melt = rhs_base - lw_out_no_melt - ha * ts_no_melt  # LE from energy balance
+    sub_flux_Wm2 = max(le_eb_no_melt, 0.0f0)             # Positive LE = sublimation
+    sub_mass_mm_cold = sub_flux_Wm2 / L_sub * 86400.0f0 * 1.0f3
 
     # 8. Merge Execution Paths
-    final_ts          = ifelse(is_melting, ts_melt, ts_no_melt)
-    final_melt_energy = ifelse(is_melting, melt_heat_out, 0f0)
-    sub_mass_mm       = ifelse(is_melting, 0f0, sub_mass_mm_cold)
+    final_ts = ifelse(is_melting, ts_melt, ts_no_melt)
+    final_melt_energy = ifelse(is_melting, melt_heat_out, 0.0f0)
+    sub_mass_mm = ifelse(is_melting, 0.0f0, sub_mass_mm_cold)
 
     return final_ts, final_melt_energy, sub_mass_mm
 end
 
 # Computing the daily mass and energy balance of the 4D snowpack grid.
 @kernel function snow_dynamics_kernel!(
-    # 4D Snowpack State (in/out)
-    swe,                    # Snow water equivalent [mm]
-    surf_water,             # Surface layer liquid water [mm]
-    pack_water,             # Deep pack layer liquid water [mm]
-    snow_depth,             # Snow depth [mm]
-    snow_albedo,            # Surface albedo [-]
-    snow_surf_temp,         # Snow surface temperature [°C]
-    snow_coverage,          # Fractional snow coverage [-]
-    melt_out,               # Snowmelt only [mm/day]
-    soil_influx_out,        # Water reaching the soil: pack drainage + bare-ground rain [mm/day]
-    last_snow,              # Days since last significant snowfall [days]
-    cold_content,           # Surface layer cold content [J/m²]
-    pack_cold_content,      # Deep pack layer cold content (SWE > 125mm) [J/m²]
-    melting_flag,           # Binary flag indicating active melting [-]
-    store_snow,             # Sub-grid snow accumulation tracker
-    snow_distrib_slope,     # Sub-grid distribution slope tracker
-    store_swq,              # Tracked SWE for sub-grid distribution
-    store_coverage,         # Tracked coverage for sub-grid distribution
-    max_snow_depth,         # Maximum observed snow depth [m]
-    
-    # Atmospheric & Canopy Forcings
-    @Const(throughfall_4d), # Throughfall from vegetation canopy [mm/day]
-    @Const(tair_band),      # Air temperature at elevation band [°C]
-    @Const(swdown_2d),      # Downwelling shortwave radiation [W/m²]
-    @Const(lwdown_2d),      # Downwelling longwave radiation [W/m²]
-    @Const(psurf_2d),       # Surface atmospheric pressure [kPa]
-    @Const(vp_2d),          # Atmospheric vapor pressure [kPa]
-    @Const(wind_2d),        # Wind speed [m/s]
-    @Const(AreaFract),      # Elevation band area fractions [-]
-    @Const(cv_4d),          # Vegetation cover fractions [-]
-    @Const(annual_prec_2d), # Annual mean precipitation [mm/yr]
-    
-    # Temporal Context
-    day_of_year,            # Current day of the year [1-366]
-    lat_positive            # Hemisphere flag (1 = Northern, 0 = Southern)
-)
+        # 4D Snowpack State (in/out)
+        swe,                    # Snow water equivalent [mm]
+        surf_water,             # Surface layer liquid water [mm]
+        pack_water,             # Deep pack layer liquid water [mm]
+        snow_depth,             # Snow depth [mm]
+        snow_albedo,            # Surface albedo [-]
+        snow_surf_temp,         # Snow surface temperature [°C]
+        snow_coverage,          # Fractional snow coverage [-]
+        melt_out,               # Snowmelt only [mm/day]
+        soil_influx_out,        # Water reaching the soil: pack drainage + bare-ground rain [mm/day]
+        last_snow,              # Days since last significant snowfall [days]
+        cold_content,           # Surface layer cold content [J/m²]
+        pack_cold_content,      # Deep pack layer cold content (SWE > 125mm) [J/m²]
+        melting_flag,           # Binary flag indicating active melting [-]
+        store_snow,             # Sub-grid snow accumulation tracker
+        snow_distrib_slope,     # Sub-grid distribution slope tracker
+        store_swq,              # Tracked SWE for sub-grid distribution
+        store_coverage,         # Tracked coverage for sub-grid distribution
+        max_snow_depth,         # Maximum observed snow depth [m]
+
+        # Atmospheric & Canopy Forcings
+        @Const(throughfall_4d), # Throughfall from vegetation canopy [mm/day]
+        @Const(tair_band),      # Air temperature at elevation band [°C]
+        @Const(swdown_2d),      # Downwelling shortwave radiation [W/m²]
+        @Const(lwdown_2d),      # Downwelling longwave radiation [W/m²]
+        @Const(psurf_2d),       # Surface atmospheric pressure [kPa]
+        @Const(vp_2d),          # Atmospheric vapor pressure [kPa]
+        @Const(wind_2d),        # Wind speed [m/s]
+        @Const(AreaFract),      # Elevation band area fractions [-]
+        @Const(cv_4d),          # Vegetation cover fractions [-]
+        @Const(annual_prec_2d), # Annual mean precipitation [mm/yr]
+
+        # Temporal Context
+        day_of_year,            # Current day of the year [1-366]
+        lat_positive            # Hemisphere flag (1 = Northern, 0 = Southern)
+    )
     i, j, b, v = @index(Global, NTuple)
 
-    area   = AreaFract[i, j, b]
-    cv_wt  = cv_4d[i, j, 1, v]
+    area = AreaFract[i, j, b]
+    cv_wt = cv_4d[i, j, 1, v]
     t_band = tair_band[i, j, b]
     tf_val = throughfall_4d[i, j, b, v]
 
     # Active mask for branchless execution
-    active = (!isnan(area) & (area > 0f0) &
-              !isnan(cv_wt) & (cv_wt > 0f0) &
-              !isnan(t_band) & !isnan(tf_val))
+    active = (
+        !isnan(area) & (area > 0.0f0) &
+            !isnan(cv_wt) & (cv_wt > 0.0f0) &
+            !isnan(t_band) & !isnan(tf_val)
+    )
 
     # --------------------------------------------------------------------------
     # 0. Precipitation Partitioning
@@ -219,165 +221,171 @@ end
     t_avg = t_band
     MAX_SNOW_TEMP = 0.5f0
     MIN_RAIN_TEMP = -0.5f0
-    
-    rain_frac = clamp((t_avg - MIN_RAIN_TEMP) / max(MAX_SNOW_TEMP - MIN_RAIN_TEMP, 1f-6), 0f0, 1f0)
-    p_snow = tf_val * (1f0 - rain_frac)
+
+    rain_frac = clamp((t_avg - MIN_RAIN_TEMP) / max(MAX_SNOW_TEMP - MIN_RAIN_TEMP, 1.0f-6), 0.0f0, 1.0f0)
+    p_snow = tf_val * (1.0f0 - rain_frac)
     p_rain = tf_val * rain_frac
 
     # --------------------------------------------------------------------------
     # 1. State Loading & Initialization
     # --------------------------------------------------------------------------
-    current_swe  = swe[i, j, b, v]
+    current_swe = swe[i, j, b, v]
     c_surf_water = surf_water[i, j, b, v]
     c_pack_water = pack_water[i, j, b, v]
-    
+
     old_coverage = snow_coverage[i, j, b, v]
-    old_coverage = ifelse(isnan(old_coverage), 0f0, clamp(old_coverage, 0f0, 1f0))
-    
+    old_coverage = ifelse(isnan(old_coverage), 0.0f0, clamp(old_coverage, 0.0f0, 1.0f0))
+
     # Coverage instantly becomes 1.0 if it is snowing
-    is_p_snow = p_snow > 0f0
-    temp_coverage = ifelse(is_p_snow, 1f0, old_coverage)
+    is_p_snow = p_snow > 0.0f0
+    temp_coverage = ifelse(is_p_snow, 1.0f0, old_coverage)
 
     p_rain_snowpack = p_rain * temp_coverage
-    p_rain_bare     = p_rain * (1f0 - temp_coverage)
+    p_rain_bare = p_rain * (1.0f0 - temp_coverage)
 
-    old_depth_m  = snow_depth[i, j, b, v] / 1f3
+    old_depth_m = snow_depth[i, j, b, v] / 1.0f3
 
-    current_cc    = cold_content[i, j, b, v]
+    current_cc = cold_content[i, j, b, v]
     prior_cc_orig = current_cc
-    current_pcc   = pack_cold_content[i, j, b, v]
-    current_pcc   = ifelse(isnan(current_pcc), 0f0, current_pcc)
-    lsnow         = last_snow[i, j, b, v]
-    melt_flag     = melting_flag[i, j, b, v]
-    st_snow       = store_snow[i, j, b, v]
-    st_swq        = store_swq[i, j, b, v]
-    st_cov        = store_coverage[i, j, b, v]
-    dslope        = snow_distrib_slope[i, j, b, v]
-    mx_depth      = max_snow_depth[i, j, b, v]
+    current_pcc = pack_cold_content[i, j, b, v]
+    current_pcc = ifelse(isnan(current_pcc), 0.0f0, current_pcc)
+    lsnow = last_snow[i, j, b, v]
+    melt_flag = melting_flag[i, j, b, v]
+    st_snow = store_snow[i, j, b, v]
+    st_swq = store_swq[i, j, b, v]
+    st_cov = store_coverage[i, j, b, v]
+    dslope = snow_distrib_slope[i, j, b, v]
+    mx_depth = max_snow_depth[i, j, b, v]
 
-    sw_in  = swdown_2d[i, j]
-    lw_in  = lwdown_2d[i, j]
-    ps     = psurf_2d[i, j]
+    sw_in = swdown_2d[i, j]
+    lw_in = lwdown_2d[i, j]
+    ps = psurf_2d[i, j]
     vp_air = vp_2d[i, j]
-    wind   = wind_2d[i, j]
+    wind = wind_2d[i, j]
 
     # Aerodynamic resistance: Wind-based log-law
     z0_snow = 0.0005f0
-    ln_z_z0 = log((2f0 + z0_snow) / z0_snow)
-    u_2m    = max(wind, 0.1f0) * 0.8375f0  # Scale 10m → 2m
+    ln_z_z0 = log((2.0f0 + z0_snow) / z0_snow)
+    u_2m = max(wind, 0.1f0) * 0.8375f0  # Scale 10m → 2m
     ra = (ln_z_z0 * ln_z_z0) / (0.16f0 * u_2m)   # s/m, neutral stability
-    ra = clamp(ra, 50f0, 300f0)        # Clip at bounds
+    ra = clamp(ra, 50.0f0, 300.0f0)        # Clip at bounds
 
     ann_prec = annual_prec_2d[i, j]
-    max_distrib_slope = ifelse(isnan(ann_prec) | (ann_prec <= 0f0), 0.4, ann_prec / 5f2)
+    max_distrib_slope = ifelse(isnan(ann_prec) | (ann_prec <= 0.0f0), 0.4, ann_prec / 5.0f2)
 
     # --------------------------------------------------------------------------
     # 2. Accumulation & Cold Content Dynamics
     # --------------------------------------------------------------------------
     old_swq_pre = current_swe
     current_swe += p_snow + p_rain_snowpack
-    
+
     # Adjust effective snowfall temp for daily steps to retain nighttime cold
-    DTR_HALF = 4f0
-    sf_temp = min(t_avg - DTR_HALF, 0f0)
-    sf_cc = ifelse(p_snow > 0f0, VCPICE_WQ * p_snow * sf_temp, 0f0)
-    current_cc = min(current_cc + sf_cc, 0f0)
+    DTR_HALF = 4.0f0
+    sf_temp = min(t_avg - DTR_HALF, 0.0f0)
+    sf_cc = ifelse(p_snow > 0.0f0, VCPICE_WQ * p_snow * sf_temp, 0.0f0)
+    current_cc = min(current_cc + sf_cc, 0.0f0)
 
     # Add rain heat energy
-    rain_heat = ifelse((p_rain > 0f0) & (current_swe > 0f0) & (t_avg > 0f0), 
-                       4186f0 * (p_rain / 1000f0) * t_avg, 
-                       0f0)
-    current_cc = min(current_cc + rain_heat, 0f0)
+    rain_heat = ifelse(
+        (p_rain > 0.0f0) & (current_swe > 0.0f0) & (t_avg > 0.0f0),
+        4186.0f0 * (p_rain / 1000.0f0) * t_avg,
+        0.0f0
+    )
+    current_cc = min(current_cc + rain_heat, 0.0f0)
 
     # --------------------------------------------------------------------------
     # 3. Albedo Evolution
     # --------------------------------------------------------------------------
-    is_trace  = p_snow > NEW_SNOW_THRESH_MM
-    has_swe   = current_swe > 0f0
+    is_trace = p_snow > NEW_SNOW_THRESH_MM
+    has_swe = current_swe > 0.0f0
 
     # Counter reset on any meaningful snowfall
     lsnow = ifelse(is_trace, Int32(0), ifelse(has_swe, lsnow + Int32(1), Int32(0)))
-    ls_f  = Float32(lsnow)
+    ls_f = Float32(lsnow)
 
-    is_accum  = (current_cc < 0f0) & (melt_flag == Int32(0))
+    is_accum = (current_cc < 0.0f0) & (melt_flag == Int32(0))
     alb_a = ifelse(is_accum, ALB_ACCUM_A, ALB_THAW_A)
     alb_b = ifelse(is_accum, ALB_ACCUM_B, ALB_THAW_B)
-    alb_age = NEW_SNOW_ALB * (alb_a ^ (ls_f ^ alb_b))
+    alb_age = NEW_SNOW_ALB * (alb_a^(ls_f^alb_b))
 
     # Albedo resets to max ONLY when new snow falls on a cold pack
-    pack_is_cold = current_cc < 0f0
+    pack_is_cold = current_cc < 0.0f0
     is_new = is_trace & pack_is_cold
     alb = ifelse(is_new, NEW_SNOW_ALB, ifelse(has_swe, alb_age, NaN32))
 
     # --------------------------------------------------------------------------
     # 4. Seasonal Melting State Transition
     # --------------------------------------------------------------------------
-    in_melt_season = ifelse(lat_positive == Int32(1),
-                            (day_of_year > Int32(60)) & (day_of_year < Int32(273)),
-                            (day_of_year < Int32(60)) | (day_of_year > Int32(273)))
+    in_melt_season = ifelse(
+        lat_positive == Int32(1),
+        (day_of_year > Int32(60)) & (day_of_year < Int32(273)),
+        (day_of_year < Int32(60)) | (day_of_year > Int32(273))
+    )
 
-    MELT_RESET_THRESH_MM = 5f0
-    CC_MELT_DEADBAND = 0f0
+    MELT_RESET_THRESH_MM = 5.0f0
+    CC_MELT_DEADBAND = 0.0f0
     flag_cond1 = (current_cc >= CC_MELT_DEADBAND) & in_melt_season
-    
+
     # Snow_reset: THAW --> ACCUM only if snowfall AND pack is truly cold
-    pack_is_cold_for_reset = current_cc < 0f0
+    pack_is_cold_for_reset = current_cc < 0.0f0
     snow_reset = is_trace & (melt_flag == Int32(1)) & pack_is_cold_for_reset
-    
-    melt_flag = ifelse(has_swe,
+
+    melt_flag = ifelse(
+        has_swe,
         ifelse(snow_reset, Int32(0), ifelse(flag_cond1, Int32(1), melt_flag)),
-        Int32(0))
+        Int32(0)
+    )
 
     # --------------------------------------------------------------------------
     # 5. Energy Balance & Melt Generation
     # --------------------------------------------------------------------------
-    melt = 0f0
+    melt = 0.0f0
     prev_ts = snow_surf_temp[i, j, b, v]
-    prev_ts = ifelse(isnan(prev_ts), 0f0, prev_ts)
-    
+    prev_ts = ifelse(isnan(prev_ts), 0.0f0, prev_ts)
+
     # Initial guess for the NR solver
-    t_s = ifelse((prev_ts >= t_avg - 5f0) & (prev_ts <= 0f0), prev_ts, min(t_avg, 0f0))
+    t_s = ifelse((prev_ts >= t_avg - 5.0f0) & (prev_ts <= 0.0f0), prev_ts, min(t_avg, 0.0f0))
 
     eff_alb = ifelse(isnan(alb), NEW_SNOW_ALB, alb)
-    swe_surf_m_nr = min(current_swe / 1f3, MAX_SURFACE_SWE_MM / 1f3)
+    swe_surf_m_nr = min(current_swe / 1.0f3, MAX_SURFACE_SWE_MM / 1.0f3)
 
     ts_solved, melt_energy_at_zero, sub_mass_mm = snow_surface_temp_nr(t_s, t_avg, sw_in, lw_in, eff_alb, ps, ra, vp_air, swe_surf_m_nr)
     t_s = ifelse(has_swe, ts_solved, NaN32)
-    
-    melt_J = ifelse(has_swe & (melt_energy_at_zero > 0f0), melt_energy_at_zero * 86400f0, 0f0)
-    
+
+    melt_J = ifelse(has_swe & (melt_energy_at_zero > 0.0f0), melt_energy_at_zero * 86400.0f0, 0.0f0)
+
     # --------------------------------------------------------------------------
     # 5a. Satisfy Cold Content
     # --------------------------------------------------------------------------
-    energy_needed_sfc = max(-current_cc, 0f0)
+    energy_needed_sfc = max(-current_cc, 0.0f0)
     melt_apply_sfc = min(melt_J, energy_needed_sfc)
     melt_J -= melt_apply_sfc
-    current_cc = min(current_cc + melt_apply_sfc, 0f0)
+    current_cc = min(current_cc + melt_apply_sfc, 0.0f0)
 
-    energy_needed_pack = max(-current_pcc, 0f0)
+    energy_needed_pack = max(-current_pcc, 0.0f0)
     melt_apply_pack = min(melt_J, energy_needed_pack)
     melt_J -= melt_apply_pack
-    current_pcc = min(current_pcc + melt_apply_pack, 0f0)
+    current_pcc = min(current_pcc + melt_apply_pack, 0.0f0)
 
     # --------------------------------------------------------------------------
     # 5b. Phase Change and Liquid Generation
     # --------------------------------------------------------------------------
-    phase_melt = ifelse(has_swe & (melt_energy_at_zero > 0f0), melt_J / (LATICE * RHOFW) * 1f3, 0f0)
-    
+    phase_melt = ifelse(has_swe & (melt_energy_at_zero > 0.0f0), melt_J / (LATICE * RHOFW) * 1.0f3, 0.0f0)
+
     # Clamp phase melt to available solid ice
-    swe_ice = max(current_swe - c_surf_water - c_pack_water, 0f0)
+    swe_ice = max(current_swe - c_surf_water - c_pack_water, 0.0f0)
     phase_melt = min(phase_melt, swe_ice)
 
     # Refreeze liquid if cold content wasn't fully satisfied
-    refreeze_energy_sfc = min(-current_cc, c_surf_water * (LATICE * RHOFW) / 1f3)
-    refreeze_surf_val   = refreeze_energy_sfc / (LATICE * RHOFW) * 1f3
-    c_surf_water       -= refreeze_surf_val
-    current_cc         += refreeze_energy_sfc
-    
-    refreeze_energy_pack = min(-current_pcc, c_pack_water * (LATICE * RHOFW) / 1f3)
-    refreeze_pack_val    = refreeze_energy_pack / (LATICE * RHOFW) * 1f3
-    c_pack_water        -= refreeze_pack_val
-    current_pcc         += refreeze_energy_pack
+    refreeze_energy_sfc = min(-current_cc, c_surf_water * (LATICE * RHOFW) / 1.0f3)
+    refreeze_surf_val = refreeze_energy_sfc / (LATICE * RHOFW) * 1.0f3
+    c_surf_water -= refreeze_surf_val
+    current_cc += refreeze_energy_sfc
+
+    refreeze_energy_pack = min(-current_pcc, c_pack_water * (LATICE * RHOFW) / 1.0f3)
+    refreeze_pack_val = refreeze_energy_pack / (LATICE * RHOFW) * 1.0f3
+    c_pack_water -= refreeze_pack_val
+    current_pcc += refreeze_energy_pack
 
     # Add new melt and rain to surface liquid storage
     c_surf_water += p_rain_snowpack + phase_melt
@@ -385,137 +393,143 @@ end
     # --------------------------------------------------------------------------
     # 5c. Pack Drainage
     # --------------------------------------------------------------------------
-    swe_surf_m = min(current_swe / 1f3, MAX_SURFACE_SWE_MM / 1f3)
-    swe_pack_m = max(current_swe / 1f3 - MAX_SURFACE_SWE_MM / 1f3, 0f0)
-    
+    swe_surf_m = min(current_swe / 1.0f3, MAX_SURFACE_SWE_MM / 1.0f3)
+    swe_pack_m = max(current_swe / 1.0f3 - MAX_SURFACE_SWE_MM / 1.0f3, 0.0f0)
+
     LIQUID_WATER_CAPACITY = 0.03f0
-    
-    max_liq_surf = LIQUID_WATER_CAPACITY * (swe_surf_m * 1f3)
-    surf_drain = max(c_surf_water - max_liq_surf, 0f0)
+
+    max_liq_surf = LIQUID_WATER_CAPACITY * (swe_surf_m * 1.0f3)
+    surf_drain = max(c_surf_water - max_liq_surf, 0.0f0)
     c_surf_water -= surf_drain
-    
+
     # Surface drainage feeds the deep pack
     c_pack_water += surf_drain
-    
+
     # Pack layer refreeze
-    refreeze_pack2_val = min(c_pack_water, max(-current_pcc / (LATICE * RHOFW) * 1f3, 0f0))
+    refreeze_pack2_val = min(c_pack_water, max(-current_pcc / (LATICE * RHOFW) * 1.0f3, 0.0f0))
     c_pack_water -= refreeze_pack2_val
-    current_pcc  = min(current_pcc + refreeze_pack2_val * (LATICE * RHOFW) / 1f3, 0f0)
+    current_pcc = min(current_pcc + refreeze_pack2_val * (LATICE * RHOFW) / 1.0f3, 0.0f0)
 
     # Pack layer outflow (Melt Runoff)
-    max_liq_pack = LIQUID_WATER_CAPACITY * (swe_pack_m * 1f3)
-    pack_drain = max(c_pack_water - max_liq_pack, 0f0)
+    max_liq_pack = LIQUID_WATER_CAPACITY * (swe_pack_m * 1.0f3)
+    pack_drain = max(c_pack_water - max_liq_pack, 0.0f0)
     c_pack_water -= pack_drain
 
     # Update SWE accounting for sublimation mass loss
-    ice_remaining = max(swe_ice - phase_melt - sub_mass_mm, 0f0)
-    current_swe   = max(ice_remaining + c_surf_water + c_pack_water, 0f0)
-    melt          = pack_drain
-    melt_out_val  = pack_drain + p_rain_bare
+    ice_remaining = max(swe_ice - phase_melt - sub_mass_mm, 0.0f0)
+    current_swe = max(ice_remaining + c_surf_water + c_pack_water, 0.0f0)
+    melt = pack_drain
+    melt_out_val = pack_drain + p_rain_bare
 
     # --------------------------------------------------------------------------
     # 5d. Thermal Inertia State Updates
     # --------------------------------------------------------------------------
-    swe_surf_m = min(current_swe / 1f3, MAX_SURFACE_SWE_MM / 1f3)
-    swe_pack_m = max(current_swe / 1f3 - MAX_SURFACE_SWE_MM / 1f3, 0f0)
-    
-    cc_melt_branch = min(prior_cc_orig * 0.01f0, 0f0)
-    pcc_melt_branch = ifelse(swe_pack_m > 0f0, VCPICE_WQ * (swe_pack_m * 1f3) * (t_s * 0.5f0), current_pcc)
-    pcc_melt_branch = min(pcc_melt_branch, 0f0)
+    swe_surf_m = min(current_swe / 1.0f3, MAX_SURFACE_SWE_MM / 1.0f3)
+    swe_pack_m = max(current_swe / 1.0f3 - MAX_SURFACE_SWE_MM / 1.0f3, 0.0f0)
+
+    cc_melt_branch = min(prior_cc_orig * 0.01f0, 0.0f0)
+    pcc_melt_branch = ifelse(swe_pack_m > 0.0f0, VCPICE_WQ * (swe_pack_m * 1.0f3) * (t_s * 0.5f0), current_pcc)
+    pcc_melt_branch = min(pcc_melt_branch, 0.0f0)
     ts_for_cc = t_s
-    cc_nomelt_branch = min(VCPICE_WQ * (swe_surf_m * 1f3) * ts_for_cc, 0f0)
+    cc_nomelt_branch = min(VCPICE_WQ * (swe_surf_m * 1.0f3) * ts_for_cc, 0.0f0)
     pcc_nomelt_branch = current_pcc
 
-    is_melting_step = melt > 0f0
-    
-    DEEP_SWE_MM   = 100f0
-    DTR_HALF_CC   = 4f0
-    sf_temp_night     = min(t_avg - DTR_HALF_CC, 0f0)
-    CC_MIN_T      = -0.5f0
-    cc_min_thin       = VCPICE_WQ * (swe_surf_m * 1f3) * CC_MIN_T
-    cc_melt_night     = min(VCPICE_WQ * (swe_surf_m * 1f3) * sf_temp_night, cc_min_thin)
-    
-    f_deep = clamp(current_swe / DEEP_SWE_MM, 0f0, 1f0)
+    is_melting_step = melt > 0.0f0
+
+    DEEP_SWE_MM = 100.0f0
+    DTR_HALF_CC = 4.0f0
+    sf_temp_night = min(t_avg - DTR_HALF_CC, 0.0f0)
+    CC_MIN_T = -0.5f0
+    cc_min_thin = VCPICE_WQ * (swe_surf_m * 1.0f3) * CC_MIN_T
+    cc_melt_night = min(VCPICE_WQ * (swe_surf_m * 1.0f3) * sf_temp_night, cc_min_thin)
+
+    f_deep = clamp(current_swe / DEEP_SWE_MM, 0.0f0, 1.0f0)
     cc_melt_physical = current_cc
-    cc_melt_eff = f_deep * cc_melt_physical + (1f0 - f_deep) * cc_melt_night
-    
-    current_cc = ifelse(is_melting_step, cc_melt_eff, ifelse(t_s < 0f0, cc_nomelt_branch, current_cc))
-    current_pcc = ifelse(is_melting_step, pcc_melt_branch, ifelse(t_s < 0f0, pcc_nomelt_branch, current_pcc))
+    cc_melt_eff = f_deep * cc_melt_physical + (1.0f0 - f_deep) * cc_melt_night
+
+    current_cc = ifelse(is_melting_step, cc_melt_eff, ifelse(t_s < 0.0f0, cc_nomelt_branch, current_cc))
+    current_pcc = ifelse(is_melting_step, pcc_melt_branch, ifelse(t_s < 0.0f0, pcc_nomelt_branch, current_pcc))
 
     in_off_season = !in_melt_season
-    cc_reset_flag = in_off_season & (current_cc < 0f0)
-    melt_flag = ifelse(has_swe,
-        ifelse(cc_reset_flag,
+    cc_reset_flag = in_off_season & (current_cc < 0.0f0)
+    melt_flag = ifelse(
+        has_swe,
+        ifelse(
+            cc_reset_flag,
             Int32(0),
-            ifelse(is_melting_step & in_melt_season & !snow_reset, Int32(1), melt_flag)),
-        Int32(0))
+            ifelse(is_melting_step & in_melt_season & !snow_reset, Int32(1), melt_flag)
+        ),
+        Int32(0)
+    )
 
     # --------------------------------------------------------------------------
     # 6. Physical Dimensions & Trace Pruning
     # --------------------------------------------------------------------------
     above_trace = current_swe >= TRACESNOW_MM
-    current_swe  = ifelse(above_trace, current_swe, 0f0)
-    c_surf_water = ifelse(above_trace, c_surf_water, 0f0)
-    c_pack_water = ifelse(above_trace, c_pack_water, 0f0)
-    melt         = ifelse(above_trace, melt, 0f0)
+    current_swe = ifelse(above_trace, current_swe, 0.0f0)
+    c_surf_water = ifelse(above_trace, c_surf_water, 0.0f0)
+    c_pack_water = ifelse(above_trace, c_pack_water, 0.0f0)
+    melt = ifelse(above_trace, melt, 0.0f0)
 
-    current_cc  = ifelse(above_trace, current_cc,  0f0)
-    current_pcc = ifelse(above_trace, current_pcc, 0f0)
+    current_cc = ifelse(above_trace, current_cc, 0.0f0)
+    current_pcc = ifelse(above_trace, current_pcc, 0.0f0)
     t_s = ifelse(above_trace, t_s, NaN32)
 
-    current_depth_m = (current_swe / 1f3) * (RHOFW / DENSITY)
+    current_depth_m = (current_swe / 1.0f3) * (RHOFW / DENSITY)
 
     # Coverage: binary model (options.SPATIAL_SNOW = false)
-    new_coverage = ifelse(current_swe > TRACESNOW_MM, 1f0, 0f0)
+    new_coverage = ifelse(current_swe > TRACESNOW_MM, 1.0f0, 0.0f0)
 
     # --------------------------------------------------------------------------
     # 7. Write Result States
     # --------------------------------------------------------------------------
-    swe[i, j, b, v]                  = ifelse(active, current_swe, 0f0)
-    surf_water[i, j, b, v]           = ifelse(active, ifelse(current_swe > 0f0, c_surf_water, 0f0), 0f0)
-    pack_water[i, j, b, v]           = ifelse(active, ifelse(current_swe > 0f0, c_pack_water, 0f0), 0f0)
-    snow_depth[i, j, b, v]           = ifelse(active, ifelse(current_swe > 0f0, current_depth_m * 1f3, 0f0), 0f0)
-    snow_albedo[i, j, b, v]          = ifelse(active, ifelse((current_swe > 0f0) & !isnan(alb), alb, NaN32), NaN32)
-    
+    swe[i, j, b, v] = ifelse(active, current_swe, 0.0f0)
+    surf_water[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, c_surf_water, 0.0f0), 0.0f0)
+    pack_water[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, c_pack_water, 0.0f0), 0.0f0)
+    snow_depth[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, current_depth_m * 1.0f3, 0.0f0), 0.0f0)
+    snow_albedo[i, j, b, v] = ifelse(active, ifelse((current_swe > 0.0f0) & !isnan(alb), alb, NaN32), NaN32)
+
     swe_surf_mm_out = min(current_swe, MAX_SURFACE_SWE_MM)
-    t_s_out = ifelse(swe_surf_mm_out > 0f0,
-                     current_cc / (VCPICE_WQ * swe_surf_mm_out),
-                     0f0)
-    t_s_out = min(t_s_out, 0f0)
-    
-    snow_surf_temp[i, j, b, v]       = ifelse(active, ifelse(current_swe > 0f0, t_s_out, NaN32), NaN32)
-    snow_coverage[i, j, b, v]        = ifelse(active, new_coverage, 0f0)
-    melt_out[i, j, b, v]             = ifelse(active, melt, 0f0)
-    soil_influx_out[i, j, b, v]      = ifelse(active, melt_out_val, 0f0)
-    last_snow[i, j, b, v]            = ifelse(active, ifelse(current_swe > 0f0, lsnow, Int32(0)), Int32(0))
-    cold_content[i, j, b, v]         = ifelse(active, ifelse(current_swe > 0f0, current_cc, 0f0), 0f0)
-    pack_cold_content[i, j, b, v]    = ifelse(active, ifelse(current_swe > 0f0, current_pcc, 0f0), 0f0)
-    melting_flag[i, j, b, v]         = ifelse(active, ifelse(current_swe > 0f0, melt_flag, Int32(0)), Int32(0))
-    store_snow[i, j, b, v]           = ifelse(active, ifelse(current_swe > 0f0, st_snow, Int32(0)), Int32(0))
-    snow_distrib_slope[i, j, b, v]   = ifelse(active, ifelse(current_swe > 0f0, dslope, 0f0), 0f0)
-    store_swq[i, j, b, v]            = ifelse(active, ifelse(current_swe > 0f0, st_swq, 0f0), 0f0)
-    store_coverage[i, j, b, v]       = ifelse(active, ifelse(current_swe > 0f0, st_cov, 0f0), 0f0)
-    max_snow_depth[i, j, b, v]       = ifelse(active, ifelse(current_swe > 0f0, mx_depth, 0f0), 0f0)
+    t_s_out = ifelse(
+        swe_surf_mm_out > 0.0f0,
+        current_cc / (VCPICE_WQ * swe_surf_mm_out),
+        0.0f0
+    )
+    t_s_out = min(t_s_out, 0.0f0)
+
+    snow_surf_temp[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, t_s_out, NaN32), NaN32)
+    snow_coverage[i, j, b, v] = ifelse(active, new_coverage, 0.0f0)
+    melt_out[i, j, b, v] = ifelse(active, melt, 0.0f0)
+    soil_influx_out[i, j, b, v] = ifelse(active, melt_out_val, 0.0f0)
+    last_snow[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, lsnow, Int32(0)), Int32(0))
+    cold_content[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, current_cc, 0.0f0), 0.0f0)
+    pack_cold_content[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, current_pcc, 0.0f0), 0.0f0)
+    melting_flag[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, melt_flag, Int32(0)), Int32(0))
+    store_snow[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, st_snow, Int32(0)), Int32(0))
+    snow_distrib_slope[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, dslope, 0.0f0), 0.0f0)
+    store_swq[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, st_swq, 0.0f0), 0.0f0)
+    store_coverage[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, st_cov, 0.0f0), 0.0f0)
+    max_snow_depth[i, j, b, v] = ifelse(active, ifelse(current_swe > 0.0f0, mx_depth, 0.0f0), 0.0f0)
 
     nothing
 end
 
 # Wrapper to dispatch the `snow_dynamics_kernel!` across the GPU backend and sync.
 function calculate_snow_dynamics!(
-    swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
-    snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
-    last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
-    store_snow_gpu, snow_distrib_slope_gpu,
-    store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
-    throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
-    AreaFract_gpu, cv_gpu, annual_prec_gpu,
-    day_of_year::Int32, lat_mean::Float32
-)
+        swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
+        snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
+        last_snow_gpu, cold_content_gpu, pack_cc_gpu, melting_flag_gpu,
+        store_snow_gpu, snow_distrib_slope_gpu,
+        store_swq_gpu, store_coverage_gpu, max_snow_depth_gpu,
+        throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
+        AreaFract_gpu, cv_gpu, annual_prec_gpu,
+        day_of_year::Int32, lat_mean::Float32
+    )
     # Determine hemispheric context for seasonality checks
     lat_pos = Int32(lat_mean >= 0.0 ? 1 : 0)
 
     # Dispatch the compute kernel
-    kernel! = snow_dynamics_kernel!(device_backend)
+    kernel! = snow_dynamics_kernel!(get_backend(swe_gpu))
     kernel!(
         swe_gpu, surf_water_gpu, pack_water_gpu, snow_depth_gpu, snow_albedo_gpu, snow_surf_temp_gpu,
         snow_coverage_gpu, snow_melt_gpu, soil_influx_gpu,
@@ -525,7 +539,7 @@ function calculate_snow_dynamics!(
         throughfall_4d, tair_3d, swdown_gpu, lwdown_gpu, psurf_gpu, vp_gpu, wind_gpu,
         AreaFract_gpu, cv_gpu, annual_prec_gpu,
         day_of_year, lat_pos;
-        ndrange=size(swe_gpu)
+        ndrange = size(swe_gpu)
     )
     return nothing
 end
@@ -536,15 +550,15 @@ vegetation fraction) into the per-band melt and infiltration, and broadcast it
 back to every vegetation tile of the 4D throughfall.
 """
 @kernel function aggregate_soil_influx_kernel!(
-    aggregated_melt, infiltration, throughfall,
-    @Const(soil_influx), @Const(cv)
-)
+        aggregated_melt, infiltration, throughfall,
+        @Const(soil_influx), @Const(cv)
+    )
     i, j, b = @index(Global, NTuple)
 
-    acc = 0f0
+    acc = 0.0f0
     for v in 1:size(soil_influx, 4)
         influx = soil_influx[i, j, b, v] * cv[i, j, 1, v]
-        acc += ifelse(isnan(influx), 0f0, influx)
+        acc += ifelse(isnan(influx), 0.0f0, influx)
     end
 
     aggregated_melt[i, j, b] = acc
@@ -560,22 +574,22 @@ function update_snow!(model)
 
     if !model.config.enable_snow
         # no snow routine, update infiltration (ppt)
-        infiltration .= dropdims(sum(throughfall, dims=(3,4)), dims=(3,4))
+        infiltration .= dropdims(sum(throughfall, dims = (3, 4)), dims = (3, 4))
         return nothing
     end
 
     (; latitude) = model.grid_parameters
-    (; 
+    (;
         snow_water_equivalent, surface_water, snowpack_water,
         depth, albedo, surface_temperature,
         coverage, melt, soil_influx, last_snow, cold_content, pack_cold_content,
         melting_flag, store, depth_distribution_slope,
         stored_swe, stored_coverage, max_snow_depth,
-        band_air_temperature, aggregated_melt
+        band_air_temperature, aggregated_melt,
     ) = model.snow_variables
     (;
         shortwave_down, longwave_down, surface_pressure,
-        vapor_pressure, wind_speed
+        vapor_pressure, wind_speed,
     ) = model.forcing_variables
     (; snow_band_area_fraction, annual_precipitation) = model.grid_parameters
     (; vegetation_fraction) = model.vegetation_parameters
@@ -599,7 +613,7 @@ function update_snow!(model)
     # Total per-band soil influx: pack drainage + rain on bare ground.
     # Also broadcast back to 4D throughfall for downstream soil/runoff modules
     # (they expect throughfall[b,v] = same water input for all veg tiles)
-    aggregate_soil_influx_kernel!(device_backend)(
+    aggregate_soil_influx_kernel!(get_backend(infiltration))(
         aggregated_melt, infiltration, throughfall,
         soil_influx, vegetation_fraction;
         ndrange = size(infiltration)

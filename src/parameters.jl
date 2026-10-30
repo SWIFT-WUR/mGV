@@ -1,4 +1,4 @@
-struct GridParameters{V<:AbstractVector,M<:AbstractMatrix,T<:AbstractArray}
+struct GridParameters{V <: AbstractVector, M <: AbstractMatrix, T <: AbstractArray}
     # Static
     latitude::V
     longitude::V
@@ -12,7 +12,7 @@ end
 
 @adapt_structure GridParameters
 
-struct VegetationParameters{T<:AbstractArray}
+struct VegetationParameters{T <: AbstractArray}
     # Static
     root_fraction::T
     vegetation_fraction::T
@@ -28,7 +28,7 @@ end
 
 @adapt_structure VegetationParameters
 
-struct SoilParameters{M<:AbstractMatrix,T<:AbstractArray}
+struct SoilParameters{M <: AbstractMatrix, T <: AbstractArray}
     # Static soil and baseflow parameters
     hydraulic_conductivity::T
     depth::T
@@ -67,7 +67,7 @@ Due to storage constraints, storing all months of data on GPU uses too
 much VRAM. Instead, copy over the active monthly values at the start of
 each month.
 """
-mutable struct MonthlyVegetationParameters{T<:AbstractArray}
+mutable struct MonthlyVegetationParameters{T <: AbstractArray}
     displacement_height::T
     roughness_length::T
     lai::T
@@ -96,10 +96,10 @@ has not changed, so this costs one transfer per simulated month rather than
 one per timestep.
 """
 function load_monthly_parameters!(
-    veg_params::VegetationParameters,
-    monthly::MonthlyVegetationParameters,
-    current_month::Integer,
-)
+        veg_params::VegetationParameters,
+        monthly::MonthlyVegetationParameters,
+        current_month::Integer,
+    )
     current_month == monthly.loaded_month && return nothing
 
     copy_month!(veg_params.displacement_height, monthly.displacement_height, current_month)
@@ -127,7 +127,7 @@ function copy_month!(dest::AbstractArray, src::Array, month::Integer)
     # Loop through vegetation index as it's not contiguous in memory.
     # Reordering input data to (nx, ny, nveg, month) would simplify this, but does
     # not match input data.
-    for v = 1:nveg
+    for v in 1:nveg
         copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, 1, month, v], n)
     end
     return dest
@@ -231,57 +231,4 @@ function read_parameters(config::Cfg)
     )
     close_param_source(ds_params)
     return grid_params, veg_params, soil_params, monthly_veg_params
-end
-
-function read_and_allocate_parameter(varname::String)
-    println("Loading $varname parameter input...")
-
-    # 1) Open netCDF file 
-    dataset = NetCDF.open(input_param_file)
-
-    if !haskey(dataset.vars, varname)
-        println(
-            "  -> WARNING: Variable $varname not found in $input_param_file. Returning nothing.",
-        )
-        return nothing, nothing
-    end
-
-    var_dims = size(dataset[varname])
-
-    # 2) Read data sequentially into memory and format
-    slicing_indices = repeat([:], length(var_dims))
-    cpu_preload = dataset[varname][slicing_indices...]
-
-    # NetCDF.jl natively replaces _FillValue with Float NaN. This causes math corruption cascades. Re-cast to 0.0.
-    cpu_preload[isnan.(cpu_preload)] .= eltype(cpu_preload)(0.0)
-
-    # 3) Print array sizes for diagnostics
-    if length(var_dims) <= 4
-        println("Element type for $(length(var_dims))D: ", eltype(cpu_preload))
-    end
-    println("Full size of $varname: ", size(cpu_preload))
-
-    # 4) Optimizations for data transfer
-    # Locks memory pages if using NVIDIA/AMD; does nothing on CPU/Metal.
-    try
-        pin_memory!(cpu_preload)
-    catch e
-        println(
-            "  -> WARNING: Failed to pin CPU memory. Transfer will be slower. Error: $e",
-        )
-    end
-
-    # 5) Allocate device memory
-    # Handle 4D reshaping logic to only pre-allocate memory daily for monthly (vegetation) tiles 
-    adjusted_dims = if length(var_dims) == 4
-        (var_dims[1], var_dims[2], (var_dims[3] == 12 ? 1 : var_dims[3]), var_dims[4])
-    else
-        var_dims
-    end
-
-    # 6) Pre-allocating memory on the active device (VRAM/RAM)
-    device_arr = alloc(FloatType, adjusted_dims...)
-    println("Allocated $backend_name array of size: ", size(device_arr))
-
-    return cpu_preload, device_arr
 end

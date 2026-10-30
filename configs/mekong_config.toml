@@ -7,6 +7,7 @@ enable_snow = true
 dir         = "../output_data/mekong/"
 file_prefix = "outputfile_mekong_"
 format      = "netcdf"
+# variables = ["discharge", "total_runoff"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
 
 [input]
 [input.paths]
@@ -27,6 +28,9 @@ surface_pressure_file = "../input_data/mekong/forcing/psurf/psurf_WFDE5_v2.0_5ar
 
 
 [API]
+# set the following to `true` to manually solve subsurface routing via BMI
+#  with a groundwater model (e.g. MODFLOW).
+external_groundwater_routing = false
 variables = [
     "land_surface__radiation~net~upward_energy_flux",
     "land_surface__evaporation~potential",
@@ -46,6 +50,7 @@ variables = [
     "land_subsurface__runoff",
     "land__runoff~total",
     "land_vegetation_canopy__evaporation",
+    "land_vegetation_canopy__water_storage",
     "channel__length",
     "channel__cell_area",
     "channel_water__area~cross-sectional",

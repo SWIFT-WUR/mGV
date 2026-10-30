@@ -6,7 +6,7 @@ const MAX_RIVER_VELOCITY = 6.0f0  # Cap at 6.0 m/s so wave celerity (5/3 * v) is
 using Atomix: @atomic
 
 
-struct RoutingState{F<:AbstractVector,I<:AbstractVector}
+struct RoutingState{F <: AbstractVector, I <: AbstractVector}
     # --- Topography ---
     # Downstream index is integer
     downstream_idx::I
@@ -71,10 +71,10 @@ function RoutingState(config, elevation)
     # We must map ID -> Linear Index.
     println("  -> Building connectivity graph...")
 
-    id_to_index = Dict{Int32,Int32}()
+    id_to_index = Dict{Int32, Int32}()
 
     # A. Map every valid ID to its 1-based linear index
-    for i = 1:n_total
+    for i in 1:n_total
         id_val = raw_ids[i]
         if id_val != -1
             id_to_index[id_val] = Int32(i)
@@ -84,7 +84,7 @@ function RoutingState(config, elevation)
     # B. Build the downstream pointer array
     cpu_downstream = fill(Int32(-1), n_total)
 
-    for i = 1:n_total
+    for i in 1:n_total
         # Where does cell i want to go?
         target_val = raw_target[i]
 
@@ -100,7 +100,7 @@ function RoutingState(config, elevation)
         end
     end
 
-    # 3. Physics & geometry 
+    # 3. Physics & geometry
     flat_dist = vec(raw_dist)
     flat_area = vec(raw_area)
     flat_acc = vec(raw_acc)
@@ -117,7 +117,7 @@ function RoutingState(config, elevation)
     flat_elev = Float32.(vec(elevation))
     flat_slope = fill(MIN_SLOPE, n_total)
 
-    for i = 1:n_total
+    for i in 1:n_total
         dest_idx = cpu_downstream[i]
 
         if dest_idx != -1
@@ -125,9 +125,9 @@ function RoutingState(config, elevation)
 
             # Simple downstream slope calculation bounded by minimum slope and missing data
             if dist > 0.0f0 &&
-               !isnan(dist) &&
-               !isnan(flat_elev[i]) &&
-               !isnan(flat_elev[dest_idx])
+                    !isnan(dist) &&
+                    !isnan(flat_elev[i]) &&
+                    !isnan(flat_elev[dest_idx])
                 s = (flat_elev[i] - flat_elev[dest_idx]) / dist
                 flat_slope[i] = max(s, MIN_SLOPE)
             end
@@ -138,7 +138,7 @@ function RoutingState(config, elevation)
     # instead of in every routing sub-step
     flat_alpha = @. (sqrt(flat_slope) / MANNING_N) * (flat_width^-0.66666667f0) # -2/3
 
-    # 4. Allocate GPU state 
+    # 4. Allocate GPU state
     println("  -> Allocating Routing State on GPU...")
 
     r_state = RoutingState(
@@ -166,20 +166,20 @@ function RoutingState(config, elevation)
 end
 
 @kernel function kinematic_wave_kernel!(
-    area,
-    discharge,
-    inflow_next,
-    inflow_current,
-    cfl_buffer,
-    travel_time_buffer,
-    runoff_forcing_flat,
-    downstream_idx,
-    lengths,
-    alphas,
-    cell_areas,
-    dt,
-    n,
-)
+        area,
+        discharge,
+        inflow_next,
+        inflow_current,
+        cfl_buffer,
+        travel_time_buffer,
+        runoff_forcing_flat,
+        downstream_idx,
+        lengths,
+        alphas,
+        cell_areas,
+        dt,
+        n,
+    )
     # violation_counter)
 
     # Backend-agnostic indexing
@@ -192,7 +192,7 @@ end
         Q_in = inflow_current[i] # Inflow from upstream cell(s)
 
         # Lateral inflow from runoff
-        # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8 
+        # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8
         runoff_m3s = (runoff_forcing_flat[i] * cell_areas[i]) * 1.15740741f-8
         Q_total_in = Q_in + runoff_m3s
 
@@ -210,7 +210,7 @@ end
         if A_new > 1.0f-6
             v = Q_new / A_new
 
-            # Check against the limit             
+            # Check against the limit
             if v > MAX_RIVER_VELOCITY
                 v = MAX_RIVER_VELOCITY # Clamp velocity
                 Q_new = v * A_new # Recalculate Q to maintain mass consistency (Q = V * A)
@@ -219,7 +219,7 @@ end
             end
         end
 
-        # CFL and travel time     
+        # CFL and travel time
         current_cfl = 0.0f0
         t_time = NaN32
 
@@ -267,11 +267,11 @@ function update_routing!(model)
     dt_step = dt / Float32(n_substeps)
     runoff_flat = reshape(total_runoff, :)
 
-    kernel_launcher! = kinematic_wave_kernel!(device_backend)
+    kernel_launcher! = kinematic_wave_kernel!(get_backend(runoff_flat))
 
     # Swap inflow buffers instead of copy+clear
     inflow_current, inflow_next = routing.inflow_current, routing.inflow_next
-    for t = 1:n_substeps
+    for t in 1:n_substeps
 
         kernel_launcher!(
             routing.area,

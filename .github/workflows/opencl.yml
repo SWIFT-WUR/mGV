@@ -1,0 +1,40 @@
+name: Test GPU backend w/ OpenCL (pocl)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  test:
+    name: Run GPU code on pocl
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+      # OpenCL.jl 0.10 does not resolve on Julia 1.13 ("Unknown package: SPIRVIntrinsics")
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+      - uses: julia-actions/cache@v3
+
+      # Separate environment, so OpenCL and pocl stay out of the package's own dependencies.
+      - name: Set up environment with OpenCL and pocl
+        run: |
+          julia --project=${{ runner.temp }}/pocl -e '
+            using Pkg
+            Pkg.develop(path=".")
+            Pkg.add(["OpenCL", "pocl_jll", "BasicModelInterface", "TOML", "Test"])
+            Pkg.precompile()'
+
+      - name: Run model on OpenCL and compare with CPU
+        run: julia --project=${{ runner.temp }}/pocl test/opencl_test.jl

@@ -1,9 +1,10 @@
-TransferBuffer = Results{Matrix{Float32}, Array{Float32, 3}}
+const TransferBuffer = Dict{String, Array{Float32}}  # pinned host buffers, keyed by output name
 
 struct AsyncBufferService
     free_pool::Channel{TransferBuffer}             # Buffers ready for the GPU to fill
     job_queue::Channel{Tuple{Int, TransferBuffer}} # Buffers full of data, waiting for disk
     writer_task::Task                              # The background thread handle
+    selected_outputs::Vector{ParameterMetadata}    # Output variables to copy from the GPU and write to disk
 end
 
 """
@@ -11,7 +12,7 @@ Starts the Async service.
 - Allocates `n_buffers` (default 4) to absorb disk latency spikes.
 - Starts the background thread that handles the actual writing.
 """
-function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
+function start_async_service(nx, ny, nlayers, output_store, selected_outputs, backend::Backend, n_buffers = 4)
     # 1. Create Channels with fixed capacity
     free_pool = Channel{TransferBuffer}(n_buffers)
     job_queue = Channel{Tuple{Int, TransferBuffer}}(n_buffers)
@@ -19,7 +20,7 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
     # 2. Allocate (pinned) memory buffers
     println("  -> Allocating $n_buffers pinned buffers for Async Pool...")
     for _ in 1:n_buffers
-        buf = create_transfer_buffer(nx, ny, nlayers)
+        buf = create_transfer_buffer(nx, ny, nlayers, selected_outputs, backend)
         put!(free_pool, buf)
     end
 
@@ -30,11 +31,11 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
         try
             # Loop forever: wait for a job, write it, recycle the buffer
             for (time_index, buf) in job_queue
-                
+
                 # A. Write to disk
                 # This calls the function in io_writer.jl
                 write_slice!(time_index, buf, output_store)
-                
+
                 # B. Recycle buffer
                 # Send the buffer back to the free_pool so the GPU can use it again.
                 put!(free_pool, buf)
@@ -46,7 +47,7 @@ function start_async_service(nx, ny, nlayers, output_store, n_buffers=4)
         println("  -> Async writer FINISHED")
     end
 
-    return AsyncBufferService(free_pool, job_queue, task)
+    return AsyncBufferService(free_pool, job_queue, task, selected_outputs)
 end
 
 """
@@ -64,6 +65,7 @@ Hand off a full buffer to the background thread.
 """
 function submit_buffer(service::AsyncBufferService, time_index, buf)
     put!(service.job_queue, (time_index, buf))
+    return nothing
 end
 
 """
@@ -73,4 +75,5 @@ Stops the service.
 function stop_async_service(service::AsyncBufferService)
     close(service.job_queue) # Tells the loop to stop when empty
     wait(service.writer_task) # Wait for the thread to finish
+    return nothing
 end
