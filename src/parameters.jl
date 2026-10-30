@@ -1,10 +1,10 @@
-struct GridParameters{V <: AbstractVector, M <: AbstractMatrix, T <: AbstractArray}
+struct GridParameters{V <: AbstractVector, T <: AbstractArray}
     # Static
-    latitude::V
-    longitude::V
-    elevation::M
-    average_temperature::M
-    annual_precipitation::M
+    latitude::V   # of the input grid (ny)
+    longitude::V  # of the input grid (nx)
+    elevation::V
+    average_temperature::V
+    annual_precipitation::V
     snow_band_area_fraction::T
     snow_band_elevation::T
     snow_band_precipitation_factor::T
@@ -28,7 +28,7 @@ end
 
 @adapt_structure VegetationParameters
 
-struct SoilParameters{M <: AbstractMatrix, T <: AbstractArray}
+struct SoilParameters{M <: AbstractVector, T <: AbstractArray}
     # Static soil and baseflow parameters
     hydraulic_conductivity::T
     depth::T
@@ -76,15 +76,9 @@ mutable struct MonthlyVegetationParameters{T <: AbstractArray}
     loaded_month::Int
 end
 
-"""Allocate the single-month device buffer matching a (nx, ny, 12, nveg) field."""
+"""Allocate the single-month device buffer matching a (ncells, 12, nveg) field."""
 function current_month_buffer(monthly_field::AbstractArray)
-    return zeros(
-        eltype(monthly_field),
-        size(monthly_field, 1),
-        size(monthly_field, 2),
-        1,
-        size(monthly_field, 4),
-    )
+    return zeros(eltype(monthly_field), size(monthly_field, 1), 1, size(monthly_field, 3))
 end
 
 """
@@ -115,20 +109,19 @@ end
 """
     copy_month!(dest, src, month)
 
-Copy `src[:, :, month, :]` of a (nx, ny, 12, nveg) host array into the
-(nx, ny, 1, nveg) buffer `dest`. Each (nx, ny) block is contiguous in `src`, so
+Copy `src[:, month, :]` of a (ncells, 12, nveg) host array into the
+(ncells, 1, nveg) buffer `dest`. Each block of cells is contiguous in `src`, so
 it is copied directly with one `copyto!` per vegetation class. This avoids the
 host temporary of slicing and the device temporary + kernel of `dest[:] = ...`.
 """
 function copy_month!(dest::AbstractArray, src::Array, month::Integer)
-    nx, ny, _, nveg = size(src)
-    @assert size(dest) == (nx, ny, 1, nveg)
-    n = nx * ny
+    n, _, nveg = size(src)
+    @assert size(dest) == (n, 1, nveg)
     # Loop through vegetation index as it's not contiguous in memory.
-    # Reordering input data to (nx, ny, nveg, month) would simplify this, but does
+    # Reordering input data to (ncells, nveg, month) would simplify this, but does
     # not match input data.
     for v in 1:nveg
-        copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, 1, month, v], n)
+        copyto!(dest, (v - 1) * n + 1, src, LinearIndices(src)[1, month, v], n)
     end
     return dest
 end
@@ -149,38 +142,41 @@ readfull(ds, name::AbstractString, fallback) = Array(ds[name])
 close_param_source(ds::NCDataset) = close(ds)
 close_param_source(ds) = nothing
 
-function read_parameters(config::Cfg)
+"""Insert a singleton second dimension in a (ncells, nveg) array, to match (ncells, 1, nveg)."""
+add_band_dim(x::AbstractArray) = ndims(x) == 2 ? reshape(x, size(x, 1), 1, size(x, 2)) : x
+
+function read_parameters(config::Cfg, domain::Domain)
     ds_params = open_param_source(config.input.paths.input_param_file)
+    # Read a gridded variable, and keep the active cells
+    readcells(ds, name, fallback) = to_cells(domain, readfull(ds, name, fallback))
+
     grid_params = GridParameters(
         readfull(ds_params, config.input.names.latitude, 0.0),
         readfull(ds_params, config.input.names.longitude, 0.0),
-        readfull(ds_params, config.input.names.elevation, 0.0),
-        readfull(ds_params, config.input.names.average_temperature, 0.0),
-        readfull(ds_params, config.input.names.annual_precipitation, 0.0),
-        readfull(ds_params, config.input.names.snow_band_area_fraction, 0.0),
-        readfull(ds_params, config.input.names.snow_band_elevation, 0.0),
-        readfull(ds_params, config.input.names.snow_band_precipitation_factor, 0.0),
+        readcells(ds_params, config.input.names.elevation, 0.0),
+        readcells(ds_params, config.input.names.average_temperature, 0.0),
+        readcells(ds_params, config.input.names.annual_precipitation, 0.0),
+        readcells(ds_params, config.input.names.snow_band_area_fraction, 0.0),
+        readcells(ds_params, config.input.names.snow_band_elevation, 0.0),
+        readcells(ds_params, config.input.names.snow_band_precipitation_factor, 0.0),
     )
 
-    # Reshape some 3D inputs to 4D
-    cv = readfull(ds_params, config.input.names.vegetation_fraction, 0.0)
-    vegetation_fraction = ndims(cv) == 3 ? reshape(cv, size(cv, 1), size(cv, 2), 1, size(cv, 3)) : cv
-    rmin = readfull(ds_params, config.input.names.minimum_resistance, 0.0)
-    minimum_resistance = ndims(rmin) == 3 ? reshape(rmin, size(rmin, 1), size(rmin, 2), 1, size(rmin, 3)) : rmin
-    rarc = readfull(ds_params, config.input.names.architectural_resistance, 0.0)
-    architectural_resistance = ndims(rarc) == 3 ? reshape(rarc, size(rarc, 1), size(rarc, 2), 1, size(rarc, 3)) : rarc
+    # Reshape some 2D inputs to 3D
+    vegetation_fraction = add_band_dim(readcells(ds_params, config.input.names.vegetation_fraction, 0.0))
+    minimum_resistance = add_band_dim(readcells(ds_params, config.input.names.minimum_resistance, 0.0))
+    architectural_resistance = add_band_dim(readcells(ds_params, config.input.names.architectural_resistance, 0.0))
 
     monthly_veg_params = MonthlyVegetationParameters(
-        readfull(ds_params, config.input.names.displacement_height, 0.0),
-        readfull(ds_params, config.input.names.roughness_length, 0.0),
-        readfull(ds_params, config.input.names.lai, 0.0),
-        readfull(ds_params, config.input.names.albedo, 0.0),
-        readfull(ds_params, config.input.names.canopy_coverage, 0.0),
+        readcells(ds_params, config.input.names.displacement_height, 0.0),
+        readcells(ds_params, config.input.names.roughness_length, 0.0),
+        readcells(ds_params, config.input.names.lai, 0.0),
+        readcells(ds_params, config.input.names.albedo, 0.0),
+        readcells(ds_params, config.input.names.canopy_coverage, 0.0),
         0,  # no month loaded yet
     )
 
     veg_params = VegetationParameters(
-        readfull(ds_params, config.input.names.root_fraction, 0.0),
+        readcells(ds_params, config.input.names.root_fraction, 0.0),
         vegetation_fraction,
         minimum_resistance,
         architectural_resistance,
@@ -191,43 +187,43 @@ function read_parameters(config::Cfg)
         current_month_buffer(monthly_veg_params.canopy_coverage),
     )
 
-    bulk_density = readfull(ds_params, config.input.names.bulk_density, 0.0)
+    bulk_density = readcells(ds_params, config.input.names.bulk_density, 0.0)
 
-    # Quartz content can vary per dataset (e.g., 2D in global, 3D in mekong), so we dynamically check and expand to 3D if needed
-    quartz_full = readfull(ds_params, config.input.names.quartz_content, 0.0)
-    quartz_3d = if ndims(quartz_full) == 2
-        repeat(quartz_full, 1, 1, size(bulk_density, 3))
+    # Quartz content can vary per dataset (e.g., per cell in global, per cell and layer in mekong), so we dynamically check and expand to layers if needed
+    quartz_full = readcells(ds_params, config.input.names.quartz_content, 0.0)
+    quartz_3d = if ndims(quartz_full) == 1
+        repeat(quartz_full, 1, size(bulk_density, 2))
     else
         quartz_full
     end
 
     soil_params = SoilParameters(
-        readfull(ds_params, config.input.names.hydraulic_conductivity, 0.0),
-        readfull(ds_params, config.input.names.depth, 0.0),
-        readfull(ds_params, config.input.names.initial_moisture, 0.0),
+        readcells(ds_params, config.input.names.hydraulic_conductivity, 0.0),
+        readcells(ds_params, config.input.names.depth, 0.0),
+        readcells(ds_params, config.input.names.initial_moisture, 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),  # calculated later
-        readfull(ds_params, config.input.names.residual_moisture_fraction, 0.0),
+        readcells(ds_params, config.input.names.residual_moisture_fraction, 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
-        readfull(ds_params, config.input.names.critical_moisture_fraction, 0.0),
+        readcells(ds_params, config.input.names.critical_moisture_fraction, 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
-        readfull(ds_params, config.input.names.field_capacity_fraction, 0.0),
+        readcells(ds_params, config.input.names.field_capacity_fraction, 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
-        readfull(ds_params, config.input.names.wilting_point_fraction, 0.0),
+        readcells(ds_params, config.input.names.wilting_point_fraction, 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
         quartz_3d,
-        readfull(ds_params, config.input.names.bare_roughness, 0.0),
+        readcells(ds_params, config.input.names.bare_roughness, 0.0),
         bulk_density,
         zeros(eltype(bulk_density), size(bulk_density)),  # calculated later
-        readfull(ds_params, config.input.names.particle_density, 0.0),
+        readcells(ds_params, config.input.names.particle_density, 0.0),
         zeros(eltype(bulk_density), size(bulk_density)),
         zeros(eltype(bulk_density), size(bulk_density)),
-        readfull(ds_params, config.input.names.campbell_n, 0.0),
-        readfull(ds_params, config.input.names.nijssen_infilt_b, 0.0),
-        readfull(ds_params, config.input.names.nijssen_lin_reservoir, 0.0),
-        readfull(ds_params, config.input.names.nijssen_nonlin_reservoir, 0.0),
-        readfull(ds_params, config.input.names.moisture_depth_baseflow_transition, 0.0),
-        readfull(ds_params, config.input.names.column_depth, 0.0),
-        readfull(ds_params, config.input.names.baseflow_curve_exp, 0.0)
+        readcells(ds_params, config.input.names.campbell_n, 0.0),
+        readcells(ds_params, config.input.names.nijssen_infilt_b, 0.0),
+        readcells(ds_params, config.input.names.nijssen_lin_reservoir, 0.0),
+        readcells(ds_params, config.input.names.nijssen_nonlin_reservoir, 0.0),
+        readcells(ds_params, config.input.names.moisture_depth_baseflow_transition, 0.0),
+        readcells(ds_params, config.input.names.column_depth, 0.0),
+        readcells(ds_params, config.input.names.baseflow_curve_exp, 0.0)
     )
     close_param_source(ds_params)
     return grid_params, veg_params, soil_params, monthly_veg_params

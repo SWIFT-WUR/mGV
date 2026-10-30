@@ -99,20 +99,32 @@ function BMI.get_var_grid(model::Model, name::String)
     end
 end
 
+"""
+    BMI.get_grid_type(model::Model, grid::Int)
+
+All grids are unstructured: the model only holds the active (land) cells of the input grid,
+see [`Domain`](@ref). Their coordinates are given by `get_grid_x` and `get_grid_y`.
+"""
 function BMI.get_grid_type(model::Model, grid::Int)
     if grid == GRIDS["2D_grid"]
-        return "rectilinear" #2D variables (lat,long)
+        return "unstructured" # cells
     elseif grid == GRIDS["soil_grid"]
-        return "rectilinear" #2D variables (lat,long) x soil_layers
+        return "unstructured" # cells, per soil layer
     elseif grid == GRIDS["inter_soil_grid"]
-        return "rectilinear" #3D variables (lat,long) x (nbsoil_layers-1)
+        return "unstructured" # cells, per soil layer interface (nbsoil_layers-1)
     elseif grid == GRIDS["vegetation_snow_grid"]
-        return "rectilinear" #3D variables (lat,long,nveg) x nbands
+        return "unstructured" # (cells, nveg), per snow band
     else
         error("unknown grid type $grid")
     end
 end
 
+"""
+    BMI.get_grid_rank(model::Model, grid::Int)
+
+The number of coordinate dimensions: x and y (`get_grid_x`, `get_grid_y`), and for the
+vegetation grid also z, the vegetation type (`get_grid_z`).
+"""
 function BMI.get_grid_rank(model::Model, grid::Int)
     if grid in GRIDS_2D
         return 2
@@ -124,73 +136,103 @@ function BMI.get_grid_rank(model::Model, grid::Int)
 end
 
 """
+    BMI.get_grid_node_count(model::Model, grid::Int)
+
+The nodes of the unstructured grids are the centers of the active cells. On the vegetation
+grid, every cell has a node per vegetation type (the z coordinate). The grids have no edges
+or faces: the values of all variables are located on the nodes.
+"""
+function BMI.get_grid_node_count(model::Model, grid::Int)
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return prod(BMI.get_grid_shape(model, grid))
+end
+
+function BMI.get_grid_edge_count(model::Model, grid::Int)
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return 0
+end
+
+function BMI.get_grid_face_count(model::Model, grid::Int)
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    return 0
+end
+
+"""
     BMI.get_grid_shape(model::Model, grid::Int)
 
-Note that this function (as well as the other grid functions) returns information ordered with “ij”
-indexing (as opposed to “xy”). For example, consider a two-dimensional rectilinear grid with four 
-columns (nx = 4) and three rows (ny = 3). The get_grid_shape function would return a shape of [ny, nx],
-or [3,4]. If there were a third dimension, the length of the z-dimension, nz, would be listed first.
+The shape of a variable's values: the number of active cells, preceded by the number of
+vegetation types for the vegetation grid. Like the other grid functions, this lists the
+dimensions in the reverse of the (Julia) memory order: for the vegetation grid the values
+of all cells of the first vegetation type come first.
 """
 function BMI.get_grid_shape(model::Model, grid::Int)
-    shape = zeros(Int, BMI.get_grid_rank(model, grid))
+    # One dimension for the cells, and one for the vegetation types
+    shape = zeros(Int, grid == GRIDS["vegetation_snow_grid"] ? 2 : 1)
     return BMI.get_grid_shape(model, grid, shape)
 end
 
 function BMI.get_grid_shape(model::Model, grid::Int, shape::DenseVector{Int})
     if grid in GRIDS_2D
-        shape[1] = length(model.grid_parameters.latitude)
-        shape[2] = length(model.grid_parameters.longitude)
+        shape[1] = ncells(model.domain)
     elseif grid == GRIDS["vegetation_snow_grid"]
         shape[1] = model.config.nveg
-        shape[2] = length(model.grid_parameters.latitude)
-        shape[3] = length(model.grid_parameters.longitude)
+        shape[2] = ncells(model.domain)
     end
     return shape
 end
 
+"""
+Longitude and latitude of each node of `grid`: the active cells, repeated for every
+vegetation type on the vegetation grid.
+"""
+function node_coordinates(model::Model, grid::Int)
+    grid in values(GRIDS) || error("unknown grid type $grid")
+    (; domain) = model
+    cells = CartesianIndices(domain.grid_size)[domain.cells]
+    lon = Array(model.grid_parameters.longitude)
+    lat = Array(model.grid_parameters.latitude)
+    nz = BMI.get_grid_node_count(model, grid) ÷ length(cells)
+    return repeat([lon[I[1]] for I in cells], nz), repeat([lat[I[2]] for I in cells], nz)
+end
+
 # RemoteBMI uses outdated BasicModelInterface.jl definition;
 function BMI.get_grid_x(model::Model, grid::Int)
-    x = zeros(Float64, BMI.get_grid_shape(model, grid)[end])
+    x = zeros(Float64, BMI.get_grid_node_count(model, grid))
     return BMI.get_grid_x(model, grid, x)
 end
 
 function BMI.get_grid_x(model::Model, grid::Int, x::Vector{Float64})
-    if grid in values(GRIDS)
-        copyto!(x, model.grid_parameters.longitude)
-    else
-        error("unknown grid type $grid")
-    end
-    return x
+    return copyto!(x, first(node_coordinates(model, grid)))
 end
 
 # RemoteBMI uses outdated BasicModelInterface.jl definition;
 function BMI.get_grid_y(model::Model, grid::Int)
-    y = zeros(Float64, BMI.get_grid_shape(model, grid)[end - 1])
+    y = zeros(Float64, BMI.get_grid_node_count(model, grid))
     return BMI.get_grid_y(model, grid, y)
 end
 
 function BMI.get_grid_y(model::Model, grid::Int, y::Vector{Float64})
-    if grid in values(GRIDS)
-        copyto!(y, model.grid_parameters.latitude)
-    else
-        error("unknown grid type $grid")
-    end
-    return y
+    return copyto!(y, last(node_coordinates(model, grid)))
 end
 
 function BMI.get_grid_z(model::Model, grid::Int)
     if grid == GRIDS["vegetation_snow_grid"]
-        z = zeros(Float64, BMI.get_grid_shape(model, grid)[begin])
+        z = zeros(Float64, BMI.get_grid_node_count(model, grid))
         return BMI.get_grid_z(model, grid, z)
     else
         error("accessing z-coordinate in 2-rank grid")
     end
 end
 
+"""
+    BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
 
+The vegetation type of each node of the vegetation grid.
+"""
 function BMI.get_grid_z(model::Model, grid::Int, z::Vector{Float64})
     if grid == GRIDS["vegetation_snow_grid"]
-        return copyto!(z, 1:BMI.get_grid_shape(model, grid)[1])
+        nveg, n = BMI.get_grid_shape(model, grid)
+        return copyto!(z, repeat(1:nveg; inner = n))
     else
         error("No z-coordinate for grid value $grid")
     end
@@ -239,8 +281,14 @@ function BMI.get_var_nbytes(model::Model, name::String)
     return sizeof(BMI.get_value_ptr(model, name))
 end
 
+"""
+    BMI.get_var_location(model::Model, name::String)
+
+All values are located on the nodes of the grid: the active cells.
+"""
 function BMI.get_var_location(model::Model, name::String)
-    error("Get var location is not implemented for this model")
+    check_name(model, name)  # errors for unknown variables
+    return "node"
 end
 
 
@@ -283,17 +331,17 @@ function BMI.get_value_ptr(model::Model, name::String)
         name_2d, ind = soil_layer_standard_name(name)
         model_vals, (; gridtype) = get_field_in_model(model, name_2d)
         if gridtype != GRIDS["vegetation_snow_grid"]
-            return @view model_vals[:, :, ind]
+            return @view model_vals[:, ind]
         else
-            return @view model_vals[:, :, ind, :]
+            return @view model_vals[:, ind, :]
         end
     elseif occursin(r"_band_\d", name)
         name_2d, ind = snow_band_standard_name(name)
         model_vals, (; gridtype) = get_field_in_model(model, name_2d)
         if gridtype != GRIDS["vegetation_snow_grid"]
-            return @view model_vals[:, :, ind]
+            return @view model_vals[:, ind]
         else
-            return @view model_vals[:, :, ind, :]
+            return @view model_vals[:, ind, :]
         end
     end
     (; lens) = get_metadata(name; model)

@@ -1,5 +1,5 @@
 # Checks for the BMI getters and setters of the per-layer and per-band variables, which BMI
-# exposes as views into 3D or 4D model arrays. For 4D arrays these views are non-contiguous.
+# exposes as views into 2D or 3D model arrays. For 3D arrays these views are non-contiguous.
 # Shared between opencl_test.jl and gpu_test.jl, so the arrays live on a device: the expected
 # values are always computed from a host copy of the full model array.
 
@@ -17,7 +17,7 @@ function host_field(model::mGV.Model, name::String)
 end
 
 # Flattened (writable) slice of a host array, in the order BMI uses for the variable
-host_slice(field::Array, ind::Int) = vec(selectdim(field, 3, ind))
+host_slice(field::Array, ind::Int) = vec(selectdim(field, 2, ind))
 
 function var_size_type(model::mGV.Model, name::String)
     n = BMI.get_grid_size(model, BMI.get_var_grid(model, name))

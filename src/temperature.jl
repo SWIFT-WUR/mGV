@@ -88,18 +88,18 @@ the snow band area fraction and vegetation fraction of every tile.
         mean_albedo, ra_eff,
         @Const(AreaFract), @Const(cv), @Const(albedo), @Const(ra)
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
     acc_albedo = 0.0f0
     acc_ra_inv = 0.0f0
-    for v in 1:size(ra, 4), b in 1:size(ra, 3)
-        w = AreaFract[i, j, b] * cv[i, j, 1, v]
-        acc_albedo += w * albedo[i, j, 1, v]
-        acc_ra_inv += w / max(ra[i, j, b, v], 1.0f-9)
+    for v in 1:size(ra, 3), b in 1:size(ra, 2)
+        w = AreaFract[i, b] * cv[i, 1, v]
+        acc_albedo += w * albedo[i, 1, v]
+        acc_ra_inv += w / max(ra[i, b, v], 1.0f-9)
     end
 
-    mean_albedo[i, j] = acc_albedo
-    ra_eff[i, j] = 1.0f0 / max(acc_ra_inv, 1.0f-9)
+    mean_albedo[i] = acc_albedo
+    ra_eff[i] = 1.0f0 / max(acc_ra_inv, 1.0f-9)
 end
 
 """
@@ -134,17 +134,17 @@ function update_surface_temperature!(model)
 
     return @views kernel(
         surface_temperature,
-        soil_temperature[:, :, 2],
-        soil_temperature[:, :, 3],
+        soil_temperature[:, 2],
+        soil_temperature[:, 3],
         mean_albedo,
         shortwave_down,
         longwave_down,
         effective_aerodynamic_resistance,
-        thermal_conductivity[:, :, 1],
-        depth[:, :, 1],
-        depth[:, :, 2],
-        depth[:, :, 3],
-        heat_capacity[:, :, 1],
+        thermal_conductivity[:, 1],
+        depth[:, 1],
+        depth[:, 2],
+        depth[:, 3],
+        heat_capacity[:, 1],
         total_evapotranspiration,
         air_temperature,
         surface_pressure,

@@ -1,32 +1,32 @@
-"""Store `v` at `x[i, j]`, or do nothing when `x` is `nothing` (output not selected)."""
-@inline maybe_store!(::Nothing, i, j, v) = nothing
-@inline maybe_store!(x::AbstractArray, i, j, v) = (x[i, j] = v; nothing)
+"""Store `v` at `x[i]`, or do nothing when `x` is `nothing` (output not selected)."""
+@inline maybe_store!(::Nothing, i, v) = nothing
+@inline maybe_store!(x::AbstractArray, i, v) = (x[i] = v; nothing)
 
 """Whether a sum is needed: an output array, `nothing` (not selected), or a precomputed flag."""
 @inline want(::Nothing) = false
 @inline want(::AbstractArray) = true
 @inline want(flag::Bool) = flag
 
-"""Add `w * x[i, j, b, k]` to `acc`, skipping NaN and values beyond `threshold`; no-op unless `want(out)`."""
-@inline function add_weighted(acc, out, x, i, j, b, k, w, threshold = Inf32)
+"""Add `w * x[i, b, k]` to `acc`, skipping NaN and values beyond `threshold`; no-op unless `want(out)`."""
+@inline function add_weighted(acc, out, x, i, b, k, w, threshold = Inf32)
     want(out) || return acc
-    val = x[i, j, b, k]
+    val = x[i, b, k]
     return acc + ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w * val)
 end
 
 @kernel function fused_postprocess_kernel!(
-        pe_out, nr_out, tr_out, ce_out, ws_out, # 2D Outputs
-        swe_out, sc_out, sm_out,                # 2D Snow outputs
-        salb_out, sts_out, tsurf_out,           # 2D Snow-weighted outputs
-        @Const(pe_in), @Const(nr_in),       # 4D Inputs
-        @Const(tr_in), @Const(ce_in), @Const(ws_in), # 4D Inputs
-        @Const(swe_in), @Const(sc_in), @Const(sm_in), # 4D Snow inputs
-        @Const(salb_in), @Const(sts_in),    # 4D Snow inputs
-        @Const(tsurf_in),                   # 2D Surface temperature
+        pe_out, nr_out, tr_out, ce_out, ws_out, # Per-cell outputs
+        swe_out, sc_out, sm_out,                # Per-cell snow outputs
+        salb_out, sts_out, tsurf_out,           # Per-cell snow-weighted outputs
+        @Const(pe_in), @Const(nr_in),       # Per-tile inputs
+        @Const(tr_in), @Const(ce_in), @Const(ws_in), # Per-tile inputs
+        @Const(swe_in), @Const(sc_in), @Const(sm_in), # Per-tile snow inputs
+        @Const(salb_in), @Const(sts_in),    # Per-tile snow inputs
+        @Const(tsurf_in),                   # Per-cell surface temperature
         @Const(coverage), @Const(cv), @Const(AreaFract), # Weights
         threshold, fill_val,                # Scalars
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
     nz(x) = ifelse(isnan(x), 0.0f0, x)
 
     # Sums needed by the selected outputs, directly or via another output
@@ -49,65 +49,65 @@ end
     snow_w = 0.0f0    # sum of the snow-covered tile weights
     cv_sum = 0.0f0    # land mask
 
-    n_bands = size(pe_in, 3)
-    n_tiles = size(pe_in, 4)
+    n_bands = size(pe_in, 2)
+    n_tiles = size(pe_in, 3)
     total_w = 0.0f0
 
     for k in 1:n_tiles
-        w_cv = nz(Float32(cv[i, j, 1, k]))
+        w_cv = nz(Float32(cv[i, 1, k]))
         cv_sum += w_cv
-        w_cov = nz(Float32(coverage[i, j, 1, k]))
+        w_cov = nz(Float32(coverage[i, 1, k]))
 
         for b in 1:n_bands
-            w_af = nz(Float32(AreaFract[i, j, b]))
+            w_af = nz(Float32(AreaFract[i, b]))
             w_total = w_cv * w_af
             w_total_cov = w_cv * w_cov * w_af
             total_w += w_total # Accumulate total weight (should be close to 1)
 
-            acc_pe = add_weighted(acc_pe, pe_out, pe_in, i, j, b, k, w_total, threshold)
-            acc_nr = add_weighted(acc_nr, nr_out, nr_in, i, j, b, k, w_total, threshold)
-            acc_tr = add_weighted(acc_tr, tr_out, tr_in, i, j, b, k, w_cov * w_af, threshold) # tr is weighted by coverage in physics
-            acc_ce = add_weighted(acc_ce, ce_out, ce_in, i, j, b, k, w_total_cov, threshold)
-            acc_ws = add_weighted(acc_ws, ws_out, ws_in, i, j, b, k, w_total_cov, threshold)
+            acc_pe = add_weighted(acc_pe, pe_out, pe_in, i, b, k, w_total, threshold)
+            acc_nr = add_weighted(acc_nr, nr_out, nr_in, i, b, k, w_total, threshold)
+            acc_tr = add_weighted(acc_tr, tr_out, tr_in, i, b, k, w_cov * w_af, threshold) # tr is weighted by coverage in physics
+            acc_ce = add_weighted(acc_ce, ce_out, ce_in, i, b, k, w_total_cov, threshold)
+            acc_ws = add_weighted(acc_ws, ws_out, ws_in, i, b, k, w_total_cov, threshold)
 
             # Snow: sum_{b,v}(state[b,v] * Cv[v] * AreaFract[b])
             if want_swe
-                swe = swe_in[i, j, b, k]
+                swe = swe_in[i, b, k]
                 acc_swe += nz(swe) * w_total
 
                 # Albedo/surf_temp: weighted only by the tiles where snow is present
                 w_snow = ifelse(swe > 0.0f0, w_total, 0.0f0)
                 snow_w += w_snow
-                acc_salb = add_weighted(acc_salb, salb_out, salb_in, i, j, b, k, w_snow)
-                acc_sts = add_weighted(acc_sts, want_sts, sts_in, i, j, b, k, w_snow)
+                acc_salb = add_weighted(acc_salb, salb_out, salb_in, i, b, k, w_snow)
+                acc_sts = add_weighted(acc_sts, want_sts, sts_in, i, b, k, w_snow)
             end
-            acc_sc = add_weighted(acc_sc, want_sc, sc_in, i, j, b, k, w_total)
-            acc_sm = add_weighted(acc_sm, sm_out, sm_in, i, j, b, k, w_total)
+            acc_sc = add_weighted(acc_sc, want_sc, sc_in, i, b, k, w_total)
+            acc_sm = add_weighted(acc_sm, sm_out, sm_in, i, b, k, w_total)
         end
     end
 
     active = !isnan(total_w) & (total_w >= 1.0f-6)
-    maybe_store!(pe_out, i, j, ifelse(active, acc_pe, fill_val))
-    maybe_store!(nr_out, i, j, ifelse(active, acc_nr, fill_val))
-    maybe_store!(tr_out, i, j, ifelse(active, acc_tr, fill_val))
-    maybe_store!(ce_out, i, j, ifelse(active, acc_ce, fill_val))
-    maybe_store!(ws_out, i, j, ifelse(active, acc_ws, fill_val))
+    maybe_store!(pe_out, i, ifelse(active, acc_pe, fill_val))
+    maybe_store!(nr_out, i, ifelse(active, acc_nr, fill_val))
+    maybe_store!(tr_out, i, ifelse(active, acc_tr, fill_val))
+    maybe_store!(ce_out, i, ifelse(active, acc_ce, fill_val))
+    maybe_store!(ws_out, i, ifelse(active, acc_ws, fill_val))
 
     # Land mask: cells with no active bands/veg → NaN (ocean cells)
     land = cv_sum > 1.0f-6
     swe_masked = ifelse(land, acc_swe, NaN32)
     coverage_masked = ifelse(land, acc_sc, NaN32)
-    maybe_store!(swe_out, i, j, swe_masked)
-    maybe_store!(sc_out, i, j, coverage_masked)
-    maybe_store!(sm_out, i, j, ifelse(land, acc_sm, NaN32))
+    maybe_store!(swe_out, i, swe_masked)
+    maybe_store!(sc_out, i, coverage_masked)
+    maybe_store!(sm_out, i, ifelse(land, acc_sm, NaN32))
 
     # Snow-presence mask: cells with meaningful snow coverage (NaN compares false)
     present = swe_masked > 0.0f0
     snow_w = max(snow_w, 1.0f-6)
     snow_albedo = ifelse(present, acc_salb / snow_w, NaN32)
     snow_surf_temp = ifelse(present, acc_sts / snow_w, NaN32)
-    maybe_store!(salb_out, i, j, snow_albedo)
-    maybe_store!(sts_out, i, j, snow_surf_temp)
+    maybe_store!(salb_out, i, snow_albedo)
+    maybe_store!(sts_out, i, snow_surf_temp)
 
     # -----------------------------------------------------------------------
     # Blend tsurf with snow surface temperature (matches VIC's OUT_SURF_TEMP)
@@ -117,10 +117,10 @@ end
     # warm even when the cell is snow-covered. We correct this by blending:
     #   tsurf_out = snow_cov * snow_surf_temp + (1 - snow_cov) * bare_tsurf. TODO: is this reasonable?
     # -----------------------------------------------------------------------
-    tsurf = tsurf_in[i, j]
+    tsurf = tsurf_in[i]
     snow_cov_safe = ifelse(present, coverage_masked, 0.0f0)
     snow_t_safe = ifelse(present, snow_surf_temp, tsurf)
-    maybe_store!(tsurf_out, i, j, snow_cov_safe * snow_t_safe + (1.0f0 - snow_cov_safe) * tsurf)
+    maybe_store!(tsurf_out, i, snow_cov_safe * snow_t_safe + (1.0f0 - snow_cov_safe) * tsurf)
 end
 
 """
@@ -134,7 +134,7 @@ function select_outputs(config::Cfg)
 end
 
 """
-Preallocated device buffers for the 2D daily outputs that are not model state.
+Preallocated device buffers for the per-cell daily outputs that are not model state.
 Buffers for outputs that are not selected are `nothing`.
 """
 struct OutputBuffers{M}
@@ -153,9 +153,9 @@ end
 
 """
 Allocate buffers for the outputs written to file (`selected_outputs`) or exposed through BMI
-(`[API].variables` in the config), with the same type and size as the 2D `template`.
+(`[API].variables` in the config), with the same type and size as the per-cell `template`.
 """
-function OutputBuffers(template::AbstractMatrix, selected_outputs, config::Cfg)
+function OutputBuffers(template::AbstractVector, selected_outputs, config::Cfg)
     available = output_variables(; config.enable_snow, config.enable_routing)
     api_outputs = [available[name] for name in config.API.variables if haskey(available, name)]
     lenses = [meta.lens for meta in [selected_outputs; api_outputs]]
@@ -177,7 +177,7 @@ end
 
 
 """
-Compute the 2D grid cell averages in `model.output_buffers` that are allocated (selected for
+Compute the grid cell averages in `model.output_buffers` that are allocated (selected for
 output or BMI).
 """
 function process_daily_outputs!(model)
@@ -195,7 +195,7 @@ function process_daily_outputs!(model)
     (; fillvalue_threshold) = model.config
     out = model.output_buffers
 
-    # Launch the Fused Kernel, writing the 2D aggregates in one pass
+    # Launch the Fused Kernel, writing the per-cell aggregates in one pass
     outputs = (
         out.potential_evaporation, out.net_radiation, out.transpiration,
         out.canopy_evaporation, out.water_storage,

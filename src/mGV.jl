@@ -25,8 +25,9 @@ include("backend_setup.jl")
 include("constants.jl")
 using .Constants: PhysConsts, SimConsts, SnowConsts
 
-include("reader.jl")
+include("domain.jl")
 include("parameters.jl")
+include("reader.jl")
 include("physics.jl")
 include("snow.jl")
 include("soil.jl")
@@ -78,6 +79,7 @@ require.
 @kwdef mutable struct Model
     const config::Cfg    # all configuration options
     const clock::Clock   # to keep track of simulation time
+    const domain::Domain # the active cells of the input grid, which the model arrays hold
     const grid_parameters::GridParameters
     const vegetation_parameters::VegetationParameters
     const monthly_vegetation_parameters::MonthlyVegetationParameters
@@ -91,7 +93,7 @@ require.
     const routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
     const selected_outputs::Vector{ParameterMetadata} # output variables to write
-    # preallocated 2D daily output buffers
+    # preallocated per-cell daily output buffers
     const output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs, config)
 end
@@ -112,26 +114,25 @@ function Model(config_file::AbstractString; backend = "auto")
     println("Active backend: $(backend_name(backend))")
 
     clock = Clock(config)
-    forcing_readers, forcing_variables = initialize_forcing(config)
+    domain = Domain(config)
+    forcing_readers, forcing_variables = initialize_forcing(config, domain)
     grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters =
-        read_parameters(config)
+        read_parameters(config, domain)
 
-    # Check dim order!
-    nx = length(grid_parameters.longitude)
-    ny = length(grid_parameters.latitude)
+    n = ncells(domain)
     nveg = config.nveg  # vegetation types
     nbands = config.nbands  # snow bands
-    nlayers = size(soil_parameters.depth, 3) # derive soil layers from input data
-    grid_dims = (nx, ny)
-    tile_dims = (nx, ny, nbands, nveg)
-    soil_dims = (nx, ny, nlayers)
+    nlayers = size(soil_parameters.depth, 2) # derive soil layers from input data
+    grid_dims = (n,)
+    tile_dims = (n, nbands, nveg)
+    soil_dims = (n, nlayers)
 
     surface_energy_variables = SurfaceEnergyVariables(grid_dims, tile_dims)
     canopy_variables = CanopyVariables(tile_dims)
     soil_variables = SoilVariables(grid_dims, soil_dims)
-    snow_variables = SnowVariables(nx, ny, nbands, nveg)
-    routing =
-        config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
+    snow_variables = SnowVariables(n, nbands, nveg)
+    routing = config.enable_routing ?
+        RoutingState(config, domain) : nothing
 
     # Move data to backend during model initialization
     if !(backend isa CPU)
@@ -161,17 +162,18 @@ function Model(config_file::AbstractString; backend = "auto")
         clamp(soil_parameters.initial_moisture, 0.0f0, soil_parameters.maximum_moisture)
 
     # Initialize soil column temperature using annual mean
-    for layer in axes(soil_variables.temperature, 3)
-        @views soil_variables.temperature[:, :, layer] .=
+    for layer in axes(soil_variables.temperature, 2)
+        @views soil_variables.temperature[:, layer] .=
             grid_parameters.average_temperature
     end
 
     writer = isempty(selected_outputs) ? nothing :
-        start_io_service(config, grid_parameters, year(clock.time), clock.dt, selected_outputs)
+        start_io_service(config, grid_parameters, domain, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
         clock,
+        domain,
         grid_parameters,
         vegetation_parameters,
         monthly_vegetation_parameters,
@@ -319,6 +321,7 @@ function open_new_file!(model::Model)
     model.writer = start_io_service(
         model.config,
         model.grid_parameters,
+        model.domain,
         year(model.clock.time) + 1,
         model.clock.dt,
         model.selected_outputs,

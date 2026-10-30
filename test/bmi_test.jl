@@ -94,20 +94,39 @@ end
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
+    # 894 active (land) cells of the 36 x 36 grid
     @test BMI.get_grid_shape(
         model,
         BMI.get_var_grid(model, "land_vegetation_canopy__evaporation"),
-    ) == [14, 36, 36]
+    ) == [14, 894]
+    grid = BMI.get_var_grid(model, "land_surface__temperature")
+    @test BMI.get_grid_type(model, grid) == "unstructured"
+    @test BMI.get_grid_shape(model, grid) == [894]
+    @test BMI.get_grid_rank(model, grid) == 2  # x and y
+    @test BMI.get_grid_node_count(model, grid) == 894
+    @test BMI.get_grid_edge_count(model, grid) == 0
+    @test BMI.get_grid_face_count(model, grid) == 0
+    @test BMI.get_var_location(model, "land_surface__temperature") == "node"
+    @test BMI.get_var_location(model, "soil__moisture_layer_1") == "node"
+    x = BMI.get_grid_x(model, grid)
+    y = BMI.get_grid_y(model, grid)
+    @test length(x) == length(y) == 894
+    # Coordinates of the active cells, in grid order (longitude varies fastest)
+    lon, lat = model.grid_parameters.longitude, model.grid_parameters.latitude
+    @test all(in(lon), x) && all(in(lat), y)
+    @test issorted(collect(zip(y, x)))
     n_inputs = count(meta -> meta.input, values(mGV.standard_name_map))
     n_outputs = count(meta -> meta.output, values(mGV.standard_name_map))
     @test BMI.get_input_item_count(model) >= n_inputs
     @test BMI.get_output_item_count(model) >= n_outputs
-    @test length(
-        BMI.get_grid_z(
-            model,
-            BMI.get_var_grid(model, "land_vegetation_canopy__evaporation"),
-        ),
-    ) == model.config.nveg
+    # Vegetation grid: a node per cell and vegetation type (z), all cells of a type together
+    veg_grid = BMI.get_var_grid(model, "land_vegetation_canopy__evaporation")
+    nveg = model.config.nveg
+    @test BMI.get_grid_rank(model, veg_grid) == 3
+    @test BMI.get_grid_node_count(model, veg_grid) == nveg * 894
+    @test BMI.get_grid_z(model, veg_grid) == repeat(1:nveg; inner = 894)
+    @test BMI.get_grid_x(model, veg_grid) == repeat(x, nveg)
+    @test BMI.get_grid_y(model, veg_grid) == repeat(y, nveg)
 
     out_vars = BMI.get_output_var_names(model)
     in_vars = BMI.get_input_var_names(model)

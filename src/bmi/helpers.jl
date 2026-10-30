@@ -70,11 +70,11 @@ function io_var_checker(model::Model, is_input::Bool)
     for var in filtered
         metadata = get_metadata(var, model)
         if :soil_variables_layer in metadata.tags
-            for j in 1:size(model.soil_parameters.depth, 3)
+            for j in 1:size(model.soil_parameters.depth, 2)
                 push!(keep_names, var * "_layer_$j")
             end
         elseif :soil_variables_interlayer in metadata.tags
-            for j in 1:(size(model.soil_parameters.depth, 3) - 1)
+            for j in 1:(size(model.soil_parameters.depth, 2) - 1)
                 push!(keep_names, var * "_layer_$j")
             end
         elseif (

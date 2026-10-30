@@ -3,22 +3,13 @@ const MANNING_N = 3.5f-2
 const ROUTING_DT = 600.0f0  # timestep in seconds
 const MAX_RIVER_VELOCITY = 6.0f0  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
 
-
-# D8 neighbour numbering for `upstream_mask`, by the offset (dx, dy) of the upstream
-# cell from the cell it flows into:
-#   dy = -1:  0 1 2
-#   dy =  0:  3 . 4
-#   dy =  1:  5 6 7
-d8_bit(dx, dy) = dy == -1 ? dx + 1 : dy == 0 ? (dx == -1 ? 3 : 4) : dx + 6
-# Linear index offset of D8 neighbour `b` on a grid with `nx` cells along x
-@inline d8_offset(b, nx) = b < 3 ? -nx + b - 1 : b == 3 ? -1 : b == 4 ? 1 : nx + b - 6
-
-struct RoutingState{F <: AbstractVector, I <: AbstractVector, U <: AbstractVector}
+struct RoutingState{F <: AbstractVector, I <: AbstractVector}
     # --- Topography ---
     # Downstream index is integer
     downstream_idx::I
-    # Bit b is set if D8 neighbour b flows into this cell
-    upstream_mask::U
+    # Upstream cells of cell i, in CSR format: upstream_idx[upstream_ptr[i]:(upstream_ptr[i + 1] - 1)]
+    upstream_ptr::I
+    upstream_idx::I
 
     # Static parameters (geometry)
     length::F
@@ -46,7 +37,12 @@ end
 
 @adapt_structure RoutingState
 
-function RoutingState(config, elevation)
+"""
+Initialize the routing for the active cells of `domain`. The connectivity and slopes are
+built on the full grid, so a cell that flows into an inactive cell (e.g. the ocean) gets
+its slope from that cell's elevation, and then becomes an outlet.
+"""
+function RoutingState(config, domain::Domain)
     param_file = config.input.paths.routing_param_file
     println("Initializing Kinematic Wave Routing...")
     println("  -> Source: $param_file")
@@ -72,9 +68,16 @@ function RoutingState(config, elevation)
 
     close_param_source(ds)
 
+    # Elevation of all grid cells, including the inactive ones
+    ds_params = open_param_source(config.input.paths.input_param_file)
+    elevation = readfull(ds_params, config.input.names.elevation, 0.0)
+    close_param_source(ds_params)
+
     nx, ny = size(raw_ids)
+    (nx, ny) == domain.grid_size ||
+        error("Routing grid of size $((nx, ny)) does not match the parameter grid $(domain.grid_size)")
     n_total = nx * ny
-    println("  -> Grid: $nx x $ny ($n_total pixels)")
+    println("  -> Grid: $nx x $ny ($n_total pixels), $(ncells(domain)) active")
 
     # 2. Build Topology (with lookup table)
     # We must map ID -> Linear Index.
@@ -107,20 +110,6 @@ function RoutingState(config, elevation)
                 cpu_downstream[i] = dest_idx
             end
         end
-    end
-
-    # C. Upstream bitmask, so each cell can gather its inflow without atomics.
-    # This requires every cell to flow into one of its D8 neighbours.
-    cart = CartesianIndices((nx, ny))
-    upstream_mask = zeros(UInt8, n_total)
-    for i in 1:n_total
-        dest_idx = cpu_downstream[i]
-        dest_idx == -1 && continue
-        dx, dy = Tuple(cart[i]) .- Tuple(cart[dest_idx])
-        if max(abs(dx), abs(dy)) != 1
-            error("Routing requires D8 connectivity, but cell $(Tuple(cart[i])) flows into $(Tuple(cart[dest_idx]))")
-        end
-        upstream_mask[dest_idx] |= UInt8(1) << d8_bit(dx, dy)
     end
 
     # 3. Physics & geometry
@@ -161,32 +150,67 @@ function RoutingState(config, elevation)
     # instead of in every routing sub-step
     flat_alpha = @. (sqrt(flat_slope) / MANNING_N) * (flat_width^-0.66666667f0) # -2/3
 
-    # 4. Allocate GPU state
+    # 4. Keep the active cells. Cells flowing into an inactive cell become outlets.
+    (; cells) = domain
+    cell_index = zeros(Int32, n_total)  # index of each grid cell among the active cells, 0 if inactive
+    cell_index[cells] .= 1:length(cells)
+    downstream = [
+        d == -1 || cell_index[d] == 0 ? Int32(-1) : cell_index[d] for d in cpu_downstream[cells]
+    ]
+
+    # Upstream list, so each cell can gather its inflow without atomics.
+    # Upstream cells are in increasing index order, which fixes the summation order.
+    upstream_ptr, upstream_idx = upstream_csr(downstream)
+    n_cells = length(cells)
+
+    # 5. Allocate GPU state
     println("  -> Allocating Routing State on GPU...")
 
     r_state = RoutingState(
-        cpu_downstream,
-        upstream_mask,
-        Float32.(flat_dist),
-        Float32.(flat_slope),
-        Float32.(flat_width),
-        Float32.(flat_area),
-        Float32.(flat_acc),
-        Float32.(flat_alpha),
+        downstream,
+        upstream_ptr,
+        upstream_idx,
+        Float32.(flat_dist[cells]),
+        Float32.(flat_slope[cells]),
+        Float32.(flat_width[cells]),
+        Float32.(flat_area[cells]),
+        Float32.(flat_acc[cells]),
+        Float32.(flat_alpha[cells]),
         # State vectors initialized to zero
-        # alloc(n_total) defaults to FloatType
-        zeros(Float32, n_total), # area
-        zeros(Float32, n_total), # discharge
-        zeros(Float32, n_total), # travel_time
-        zeros(Float32, n_total), # cfl
-        zeros(Float32, n_total), # discharge_next
-        zeros(Float32, n_total), # lateral_inflow
+        zeros(Float32, n_cells), # area
+        zeros(Float32, n_cells), # discharge
+        zeros(Float32, n_cells), # travel_time
+        zeros(Float32, n_cells), # cfl
+        zeros(Float32, n_cells), # discharge_next
+        zeros(Float32, n_cells), # lateral_inflow
         # Violation (of max speed) counter (1-element Int32 array)
         zeros(Int32, 1),
     )
 
     println("  -> Routing Initialized Successfully.")
     return r_state
+end
+
+"""
+Upstream cells of every cell, from the `downstream` index of each cell (-1 for outlets),
+in CSR format: the upstream cells of cell `i` are `idx[ptr[i]:(ptr[i + 1] - 1)]`, in
+increasing order.
+"""
+function upstream_csr(downstream::Vector{Int32})
+    n = length(downstream)
+    counts = zeros(Int32, n)
+    for d in downstream
+        d == -1 || (counts[d] += 1)
+    end
+    ptr = Int32.(cumsum([1; counts]))
+    idx = zeros(Int32, ptr[end] - 1)
+    next = ptr[1:n]
+    for (i, d) in enumerate(downstream)
+        d == -1 && continue
+        idx[next[d]] = i
+        next[d] += 1
+    end
+    return ptr, idx
 end
 
 @kernel function lateral_inflow_kernel!(lateral_inflow, runoff_forcing_flat, cell_areas, n)
@@ -203,11 +227,11 @@ end
         discharge_next,
         @Const(discharge),
         lateral_inflow,
-        upstream_mask,
+        upstream_ptr,
+        upstream_idx,
         lengths,
         alphas,
         dt,
-        nx,
         n,
     )
     # violation_counter)
@@ -222,13 +246,10 @@ end
 
         # Gather inflow from upstream cell(s), from the previous sub-step.
         # No atomics, and a fixed summation order, so results are reproducible.
-        mask = upstream_mask[i]
         Q_in = 0.0f0
-        for b in 0:7
-            if (mask >> b) & 0x01 != 0x00
-                # In bounds: the mask only has bits for neighbours that exist
-                Q_in += @inbounds discharge[i + d8_offset(b, nx)]
-            end
+        for k in upstream_ptr[i]:(upstream_ptr[i + 1] - Int32(1))
+            # In bounds: upstream_csr only stores indices of existing cells
+            Q_in += @inbounds discharge[upstream_idx[k]]
         end
 
         # Lateral inflow from runoff
@@ -302,15 +323,13 @@ function update_routing!(model)
 
     routing.violation_counter .= 0
     n_pixels = Int32(length(routing.downstream_idx))
-    nx = Int32(size(total_runoff, 1))
     n_substeps = Int(ceil(dt / ROUTING_DT))
     dt_step = dt / Float32(n_substeps)
-    runoff_flat = reshape(total_runoff, :)
-    backend = get_backend(runoff_flat)
+    backend = get_backend(total_runoff)
 
     # Runoff is constant over the sub-steps, so convert it to channel inflow once
     lateral_inflow_kernel!(backend)(
-        routing.lateral_inflow, runoff_flat, routing.cell_area, n_pixels; ndrange = n_pixels
+        routing.lateral_inflow, total_runoff, routing.cell_area, n_pixels; ndrange = n_pixels
     )
 
     kernel_launcher! = kinematic_wave_kernel!(backend)
@@ -324,11 +343,11 @@ function update_routing!(model)
             discharge_next,
             discharge,
             routing.lateral_inflow,
-            routing.upstream_mask,
+            routing.upstream_ptr,
+            routing.upstream_idx,
             routing.length,
             routing.alpha,
             dt_step,
-            nx,
             n_pixels,
             # routing.violation_counter;
             ndrange = n_pixels, # Define the total number of items to process

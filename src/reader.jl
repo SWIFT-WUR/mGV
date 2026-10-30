@@ -20,7 +20,7 @@ function getval(data::Any, name::String)
     return getfield(data, Symbol(name))
 end
 
-@kwdef struct ForcingVariables{T <: AbstractMatrix}
+@kwdef struct ForcingVariables{T <: AbstractVector}
     precipitation::T
     air_temperature::T
     wind_speed::T
@@ -50,12 +50,15 @@ mutable struct ForcingReaders{S}
     sources::Dict{String, S}
     # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
-    cache::Dict{String, Array{Float32, 3}}  # (nx, ny, capacity) per variable
+    cache::Dict{String, Matrix{Float32}}  # (ncells, capacity) per variable, active cells only
+    # Gridded (nx, ny, time_chunk) buffer per variable that Zarr chunks are read into,
+    # before the active cells are copied to the cache. Empty for NetCDF.
+    staging::Dict{String, Array{Float32, 3}}
+    cells::Vector{Int}  # linear grid index of each active cell, see `Domain`
     cache_start::Int   # index of the first cached timestep, 0 when empty
     cache_len::Int     # number of valid timesteps currently cached
     capacity::Int      # how many timesteps the cache can hold
     time_chunk::Int    # timesteps per chunk in the forcing (1 for NetCDF)
-    slice_size::Tuple{Int, Int}  # (nx, ny) of one timestep's grid
 end
 
 """
@@ -193,34 +196,43 @@ end
 Open the forcing files, as NetCDF or Zarr depending on their file extension,
 and set up the cache that the model reads its daily forcing from.
 """
-function open_forcing(cfg::Cfg)
+function open_forcing(cfg::Cfg, domain::Domain)
     # Paths ending in ".zarr" are Zarr stores, anything else is NetCDF
     is_zarr = [endswith(getval(cfg.input.paths, "$(var)_file"), ".zarr") for var in FORCING_VARS]
     if !(all(is_zarr) || !any(is_zarr))
         error("Forcing paths must either all be Zarr stores (.zarr) or all NetCDF files")
     end
-    sources, times, (nx, ny) = all(is_zarr) ? open_forcing_zarr(cfg) : open_forcing_netcdf(cfg)
+    sources, times, grid_size = all(is_zarr) ? open_forcing_zarr(cfg) : open_forcing_netcdf(cfg)
+    grid_size == domain.grid_size ||
+        error("Forcing grid of size $grid_size does not match the parameter grid $(domain.grid_size)")
+    nx, ny = grid_size
+    n = ncells(domain)
 
-    bytes_per_step = nx * ny * sizeof(Float32) * length(FORCING_VARS)
+    bytes_per_step = n * sizeof(Float32) * length(FORCING_VARS)
     capacity = clamp(FORCING_CACHE_BUDGET_BYTES ÷ max(bytes_per_step, 1), 1, length(times))
 
     # Round the cache to whole Zarr chunks, at least one even if over budget
     time_chunk = time_chunk_length(sources)
     capacity = min(max(capacity ÷ time_chunk, 1) * time_chunk, length(times))
 
-    cache = Dict{String, Array{Float32, 3}}(
-        var => Array{Float32, 3}(undef, nx, ny, capacity) for var in FORCING_VARS
+    cache = Dict{String, Matrix{Float32}}(
+        var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS
+    )
+    staging = Dict{String, Array{Float32, 3}}(
+        var => Array{Float32, 3}(undef, nx, ny, all(is_zarr) ? time_chunk : 0)
+            for var in FORCING_VARS
     )
 
     return ForcingReaders(
         sources,
         times,
         cache,
+        staging,
+        domain.cells,
         0,
         0,
         capacity,
         time_chunk,
-        (nx, ny),
     )
 end
 
@@ -257,24 +269,37 @@ function nearest_time_index(times::Vector{DateTime}, time::DateTime)
 end
 
 """
+Copy the active `cells` of the gridded (nx, ny, n) `block` to the cache, from timestep
+`t0` of the cache on.
+"""
+function gather_cells!(cache::Matrix{Float32}, block::AbstractArray{<:Any, 3}, cells, t0::Int)
+    nx, ny, n = size(block)
+    flat = reshape(block, nx * ny, n)
+    for t in 1:n, (c, cell) in enumerate(cells)
+        @inbounds cache[c, t0 + t - 1] = flat[cell, t]
+    end
+    return nothing
+end
+
+"""
 Read `len` timesteps, starting at `start`, from a NetCDF variable into the cache.
 """
-function load_block!(cache::Array{Float32, 3}, src::ForcingVar, start::Int, len::Int)
+function load_block!(cache::Matrix{Float32}, staging, cells, src::ForcingVar, start::Int, len::Int)
     raw = src[:, :, start:(start + len - 1)]
     # Missing values in the forcing file (its _FillValue) are read as `missing`: replace
-    # them with NaN and convert to a plain Float32 array.
-    block = raw isa Array{Float32, 3} ? raw : Array{Float32, 3}(coalesce.(raw, NaN32))
-    copyto!(view(cache, :, :, 1:len), block)
+    # them with NaN.
+    block = raw isa Array{Float32, 3} ? raw : coalesce.(raw, NaN32)
+    gather_cells!(cache, block, cells, 1)
     return nothing
 end
 
 """
 Read `len` timesteps, starting at `start`, from a Zarr variable into the cache,
-one chunk per read. Handles crossing year boundaries. Time is the third axis
-(checked by `check_zarr_dims`).
+one chunk per read, via the gridded `staging` buffer. Handles crossing year
+boundaries. Time is the third axis (checked by `check_zarr_dims`).
 """
-function load_block!(cache::Array{Float32, 3}, src::ZarrForcingVar, start::Int, len::Int)
-    nx, ny, _ = size(cache)
+function load_block!(cache::Matrix{Float32}, staging::Array{Float32, 3}, cells, src::ZarrForcingVar, start::Int, len::Int)
+    nx, ny, _ = size(staging)
     stop = start + len - 1
     step = start  # next timestep to read
     for (array, offset) in zip(src.arrays, src.offsets)
@@ -284,13 +309,14 @@ function load_block!(cache::Array{Float32, 3}, src::ZarrForcingVar, start::Int, 
             # Read up to the end of the chunk that holds `step`
             chunk_stop = offset + ((step - offset) ÷ time_chunk + 1) * time_chunk - 1
             n = min(chunk_stop, stop, store_stop) - step + 1
-            # Plain Array, not a view: Zarr then unpacks straight into the cache (2-3x faster)
-            GC.@preserve cache begin
-                dest = unsafe_wrap(Array, pointer(cache, (step - start) * nx * ny + 1), (nx, ny, n))
+            # Plain Array, not a view: Zarr then unpacks straight into the buffer (2-3x faster)
+            GC.@preserve staging begin
+                dest = unsafe_wrap(Array, pointer(staging), (nx, ny, n))
                 Zarr.readblock!(
                     dest, array,
                     CartesianIndices((1:nx, 1:ny, (step - offset + 1):(step - offset + n)))
                 )
+                gather_cells!(cache, dest, cells, step - start + 1)
             end
             step += n
         end
@@ -313,7 +339,7 @@ end
 """For NetCDF, read `len` timesteps of all forcing variables into the cache, one by one."""
 function load_all_vars!(readers::ForcingReaders, start::Int, len::Int)
     for var in FORCING_VARS
-        load_block!(readers.cache[var], readers.sources[var], start, len)
+        load_block!(readers.cache[var], readers.staging[var], readers.cells, readers.sources[var], start, len)
     end
     return nothing
 end
@@ -321,7 +347,7 @@ end
 """For Zarr, read all variables at the same time, one task each (needs `julia -t` threads)."""
 function load_all_vars!(readers::ForcingReaders{ZarrForcingVar}, start::Int, len::Int)
     @sync for var in FORCING_VARS
-        Threads.@spawn load_block!(readers.cache[var], readers.sources[var], start, len)
+        Threads.@spawn load_block!(readers.cache[var], readers.staging[var], readers.cells, readers.sources[var], start, len)
     end
     return nothing
 end
@@ -345,7 +371,7 @@ end
 Read in forcing data at a certain point in time.
 """
 function read_var(time, readers::ForcingReaders, var::String)
-    dest = Matrix{Float32}(undef, readers.slice_size)
+    dest = Vector{Float32}(undef, size(readers.cache[var], 1))
     read_var!(dest, time, readers, var)
     return dest
 end
@@ -354,8 +380,8 @@ end
 Initialize forcing reader and read the first timestep of
 forcing data.
 """
-function initialize_forcing(cfg::Cfg)
-    forcing_readers = open_forcing(cfg)
+function initialize_forcing(cfg::Cfg, domain::Domain)
+    forcing_readers = open_forcing(cfg, domain)
     start_time = DateTime(cfg.start_year, 1, 1)
     forcing_vars = ForcingVariables(;
         ((Symbol(var) => read_var(start_time, forcing_readers, var)) for var in FORCING_VARS)...

@@ -8,10 +8,10 @@
         cv_grid,
         AreaFract
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
     # Boundary check
-    if i <= size(surface_runoff, 1) && j <= size(surface_runoff, 2)
+    if i <= length(surface_runoff)
 
         # Constants
         eps = 1.0f-9
@@ -20,17 +20,17 @@
 
         # --- 1. Topsoil Moisture (Sum Layers 1 + 2) ---
         # Load directly from global memory to register
-        sm1 = soil_moisture[i, j, 1]
-        sm2 = soil_moisture[i, j, 2]
+        sm1 = soil_moisture[i, 1]
+        sm2 = soil_moisture[i, 2]
 
-        max1 = soil_moisture_max[i, j, 1]
-        max2 = soil_moisture_max[i, j, 2]
+        max1 = soil_moisture_max[i, 1]
+        max2 = soil_moisture_max[i, 2]
 
         top_max = max1 + max2
         top_sm = min(sm1 + sm2, top_max) # Clamp inplace logic
 
         # --- 2. Infiltration Shape Parameter ---
-        b = b_i_grid[i, j]
+        b = b_i_grid[i]
 
         # --- 3. A_sat (Saturated Area Fraction) ---
         # VIC/ARNO curve logic
@@ -45,18 +45,18 @@
         asat_val = one - (term_ratio^ex_param)
 
         # Store A_sat
-        A_sat[i, j] = asat_val
+        A_sat[i] = asat_val
 
         # --- 4. Inflow Summation (Reduction) ---
-        # Sum 4D throughfall (nx, ny, nbands, n_veg) -> Scalar Inflow
-        # We loop over dim 4 manually to avoid allocating a reduction array
+        # Sum throughfall (ncells, nbands, n_veg) -> Scalar Inflow
+        # We loop over dim 3 manually to avoid allocating a reduction array
         inflow_sum = zero
-        n_bands = size(AreaFract, 3)
-        n_veg = size(throughfall, 4)
+        n_bands = size(AreaFract, 2)
+        n_veg = size(throughfall, 3)
 
         for k in 1:n_veg
             for b in 1:n_bands
-                val = throughfall[i, j, b, k] * cv_grid[i, j, 1, k] * AreaFract[i, j, b]
+                val = throughfall[i, b, k] * cv_grid[i, 1, k] * AreaFract[i, b]
                 # Branchless NaN guard
                 inflow_sum += ifelse(isnan(val), zero, val)
             end
@@ -110,7 +110,7 @@
         runoff = clamp(runoff, zero, inflow_sum)
 
         # Store Result
-        surface_runoff[i, j] = runoff
+        surface_runoff[i] = runoff
     end
 end
 
@@ -122,13 +122,12 @@ function calculate_surface_runoff!(
     )
 
     kernel_launcher! = surface_runoff_kernel!(get_backend(surface_runoff))
-    nx, ny = size(surface_runoff)
 
     kernel_launcher!(
         surface_runoff, A_sat,
         soil_moisture, soil_moisture_max,
         b_i, throughfall, cv_grid, AreaFract;
-        ndrange = (nx, ny)
+        ndrange = length(surface_runoff)
     )
 
     return nothing
@@ -191,53 +190,53 @@ function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
 end
 
 @kernel function runoff_drainage_kernel!(
-        soil_moisture,          # (nx, ny, 3)
-        subsurface_runoff,      # (nx, ny)
-        surface_runoff,         # (nx, ny)
-        interlayer_drainage,    # (nx, ny, 2)
-        surface_inflow,         # (nx, ny)
-        soil_evap,              # (nx, ny)
-        transpiration,          # (nx, ny, nlayer)
-        moisture_max,           # (nx, ny, 3)
-        ksat,                   # (nx, ny, 3)
-        resid_moisture,         # (nx, ny, 3)
-        expt,                   # (nx, ny, 3)
-        Dsmax, Ds, Ws, c_expt   # (nx, ny) Arrays
+        soil_moisture,          # (ncells, 3)
+        subsurface_runoff,      # (ncells)
+        surface_runoff,         # (ncells)
+        interlayer_drainage,    # (ncells, 2)
+        surface_inflow,         # (ncells)
+        soil_evap,              # (ncells)
+        transpiration,          # (ncells, nlayer)
+        moisture_max,           # (ncells, 3)
+        ksat,                   # (ncells, 3)
+        resid_moisture,         # (ncells, 3)
+        expt,                   # (ncells, 3)
+        Dsmax, Ds, Ws, c_expt   # (ncells) Arrays
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
     # Boundary check
-    if i <= size(soil_moisture, 1) && j <= size(soil_moisture, 2)
+    if i <= size(soil_moisture, 1)
 
         tiny = 1.0f-9
         zero = 0.0f0
         one = 1.0f0
 
-        # Load values for this  pixel (i,j)
-        max1, max2, max3 = moisture_max[i, j, 1], moisture_max[i, j, 2], moisture_max[i, j, 3]
-        res1, res2, res3 = resid_moisture[i, j, 1], resid_moisture[i, j, 2], resid_moisture[i, j, 3]
-        exp1, exp2 = expt[i, j, 1], expt[i, j, 2]
-        k1, k2 = ksat[i, j, 1], ksat[i, j, 2]
+        # Load values for this cell (i)
+        max1, max2, max3 = moisture_max[i, 1], moisture_max[i, 2], moisture_max[i, 3]
+        res1, res2, res3 = resid_moisture[i, 1], resid_moisture[i, 2], resid_moisture[i, 3]
+        exp1, exp2 = expt[i, 1], expt[i, 2]
+        k1, k2 = ksat[i, 1], ksat[i, 2]
 
         # Baseflow params
-        _Dsmax = Dsmax[i, j]
-        _Ds = Ds[i, j]
-        _Ws = Ws[i, j]
-        _c_expt = c_expt[i, j]
+        _Dsmax = Dsmax[i]
+        _Ds = Ds[i]
+        _Ws = Ws[i]
+        _c_expt = c_expt[i]
 
         # Load state
-        sm1 = soil_moisture[i, j, 1]
-        sm2 = soil_moisture[i, j, 2]
-        sm3 = soil_moisture[i, j, 3]
+        sm1 = soil_moisture[i, 1]
+        sm2 = soil_moisture[i, 2]
+        sm3 = soil_moisture[i, 3]
 
         # Transpiration handling
-        n_trans_layers = size(transpiration, 3)
-        t1 = transpiration[i, j, 1]
-        t2 = (n_trans_layers >= 2) ? transpiration[i, j, 2] : zero
-        t3 = (n_trans_layers >= 3) ? transpiration[i, j, 3] : zero
+        n_trans_layers = size(transpiration, 2)
+        t1 = transpiration[i, 1]
+        t2 = (n_trans_layers >= 2) ? transpiration[i, 2] : zero
+        t3 = (n_trans_layers >= 3) ? transpiration[i, 3] : zero
 
-        inflow = surface_inflow[i, j]
-        evap = soil_evap[i, j]
+        inflow = surface_inflow[i]
+        evap = soil_evap[i]
 
         # ==========================================================
         # Fractional Sub-Daily State Discretization
@@ -319,7 +318,7 @@ end
             tot_baseflow += b
         end
 
-        surface_runoff[i, j] += tot_spill_1
+        surface_runoff[i] += tot_spill_1
 
         sm1_new = sm1
         sm2_new = sm2
@@ -337,14 +336,14 @@ end
         runoff_val = max(runoff_val, zero)
 
         # ==================== WRITE BACK ====================
-        soil_moisture[i, j, 1] = sm1_new
-        soil_moisture[i, j, 2] = sm2_new
-        soil_moisture[i, j, 3] = sm3_new
+        soil_moisture[i, 1] = sm1_new
+        soil_moisture[i, 2] = sm2_new
+        soil_moisture[i, 3] = sm3_new
 
-        interlayer_drainage[i, j, 1] = drain_1
-        interlayer_drainage[i, j, 2] = drain_2
+        interlayer_drainage[i, 1] = drain_1
+        interlayer_drainage[i, 2] = drain_2
 
-        subsurface_runoff[i, j] = runoff_val
+        subsurface_runoff[i] = runoff_val
     end
 end
 
@@ -355,14 +354,13 @@ function solve_runoff_and_drainage!(
         Dsmax, Ds, Ws, c_expt
     )
     kernel_launcher! = runoff_drainage_kernel!(get_backend(soil_moisture))
-    nx, ny = size(surface_inflow)
 
     kernel_launcher!(
         soil_moisture, subsurface_runoff, surface_runoff, interlayer_drainage,
         surface_inflow, soil_evaporation, transpiration,
         soil_moisture_max, ksat, residual_moisture, expt,
         Dsmax, Ds, Ws, c_expt;
-        ndrange = (nx, ny)
+        ndrange = length(surface_inflow)
     )
 
     return nothing
@@ -371,29 +369,29 @@ end
 @kernel function infiltration_kernel!(
         infiltration, throughfall, surface_runoff, cv_grid, area_fraction
     )
-    i, j = @index(Global, NTuple)
+    i = @index(Global, Linear)
 
-    if i <= size(infiltration, 1) && j <= size(infiltration, 2)
+    if i <= length(infiltration)
 
         # 1. Initialize accumulator locally
-        acc = -surface_runoff[i, j]
+        acc = -surface_runoff[i]
 
         # 2. Integrate all vegetation tiles and snow bands.
-        n_bands = size(throughfall, 3)
-        n_tiles = size(throughfall, 4)
+        n_bands = size(throughfall, 2)
+        n_tiles = size(throughfall, 3)
         for k in 1:n_tiles
             for b in 1:n_bands
                 val = (
-                    throughfall[i, j, b, k] *
-                        cv_grid[i, j, 1, k] *
-                        area_fraction[i, j, b]
+                    throughfall[i, b, k] *
+                        cv_grid[i, 1, k] *
+                        area_fraction[i, b]
                 )
                 acc += ifelse(isnan(val), 0.0f0, val)
             end
         end
 
         # 3. Write result
-        infiltration[i, j] = acc
+        infiltration[i] = acc
     end
 end
 
@@ -402,12 +400,11 @@ function calculate_infiltration!(
     )
 
     kernel! = infiltration_kernel!(get_backend(infiltration))
-    nx, ny = size(infiltration)
 
     # Launch kernel
     kernel!(
         infiltration, throughfall, surface_runoff, cv_grid, area_fraction;
-        ndrange = (nx, ny)
+        ndrange = length(infiltration)
     )
 
     return nothing
