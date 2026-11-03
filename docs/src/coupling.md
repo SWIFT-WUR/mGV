@@ -1,23 +1,5 @@
 # Model coupling
 
-mGV implements the [Basic Model Interface](https://bmi.csdms.org/) (BMI), allowing it to
-be coupled to other models. The variables exposed through the BMI are set in the `[API]`
-section of the configuration file:
-
-```toml
-[API]
-variables = [
-    "land_subsurface__runoff",
-    "channel_water__volume_flow_rate",
-]
-```
-
-### Units
-
-Values are exchanged in mGV's native units, as reported by `get_var_units`. These are not
-necessarily SI units: for example, runoff is in mm day⁻¹ and temperatures are in °C. The
-coupling framework is responsible for converting them to the units of the other model.
-
 ## Coupling with a groundwater model (MODFLOW)
 
 The VIC-WUR coupling with MODFLOW exchanges three variables. Their mGV counterparts are:
