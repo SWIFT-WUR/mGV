@@ -4,14 +4,16 @@ import BasicModelInterface as BMI
 using mGV
 using TOML
 using Zarr: zopen
+using NCDatasets: NCDataset
 
 const COORDS = ["lat", "lon", "time"]
 
 """
 Write a copy of the Mekong config to `dir` with Zarr output in `dir`, and `variables` in the
-`[output]` section (left out when `nothing`). Other settings can be overridden with `kwargs`.
+`[output]` section (left out when `nothing`). Other settings can be overridden with `kwargs`,
+and settings of the `[output]` section with `output`.
 """
-function write_test_config(dir, variables; kwargs...)
+function write_test_config(dir, variables; output = Dict(), kwargs...)
     configs_dir = joinpath(@__DIR__, "../configs")
     cfg = TOML.parsefile(joinpath(configs_dir, "mekong_config.toml"))
     for (key, path) in cfg["input"]["paths"]
@@ -20,6 +22,7 @@ function write_test_config(dir, variables; kwargs...)
     cfg["output"]["dir"] = dir
     cfg["output"]["format"] = "zarr"
     isnothing(variables) || (cfg["output"]["variables"] = variables)
+    merge!(cfg["output"], output)
     for (key, value) in kwargs
         cfg[string(key)] = value
     end
@@ -86,6 +89,83 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         layers = store["soil_moisture"][:, :, 1, :]
         @test mGV.to_cells(domain, layers) == moisture
         @test all(isnan, reshape(layers, :, size(layers, 3))[vec(.!active), :])
+    end
+
+    @testset "Output is written in blocks of timesteps ($format)" for format in ["zarr", "zarr_landonly", "netcdf"]
+        # 7 timesteps in blocks of 3: two full blocks, and a partial one written by finalize
+        dir = mktempdir()
+        variables = ["soil_moisture", "total_runoff"]
+        config_file = write_test_config(dir, variables; output = Dict("format" => format, "write_interval" => 3))
+        model = BMI.initialize(mGV.Model, config_file)
+        lenses = Dict(meta.output_name => meta.lens for meta in model.selected_outputs)
+        expected = Dict(name => [] for name in variables)
+        for _ in 1:7
+            BMI.update(model)
+            for name in variables
+                push!(expected[name], Array(lenses[name](model)))
+            end
+        end
+        (; domain) = model
+        BMI.finalize(model)
+
+        path = joinpath(dir, only(filter(startswith("outputfile"), readdir(dir))))
+        if format == "netcdf"
+            ds = NCDataset(path)
+            moisture = [mGV.to_cells(domain, ds["soil_moisture"].var[:, :, t, :]) for t in 1:7]
+            runoff = [mGV.to_cells(domain, ds["total_runoff"].var[:, :, t]) for t in 1:7]
+            close(ds)
+        else
+            store = zopen(path)
+            if format == "zarr"
+                @test store["total_runoff"].metadata.chunks == (36, 36, 3)
+                moisture = [mGV.to_cells(domain, store["soil_moisture"][:, :, t, :]) for t in 1:7]
+                runoff = [mGV.to_cells(domain, store["total_runoff"][:, :, t]) for t in 1:7]
+                @test all(isnan, store["total_runoff"][:, :, 8:end])  # not simulated
+            else
+                # Land-only: (cell, time) arrays, with the grid indices of each cell
+                @test size(store["total_runoff"]) == (mGV.ncells(domain), 365)
+                nx = domain.grid_size[1]
+                @test store["lon_index"][:] .+ 1 .+ store["lat_index"][:] .* nx == domain.cells
+                moisture = [store["soil_moisture"][:, t, :] for t in 1:7]
+                runoff = [store["total_runoff"][:, t] for t in 1:7]
+                @test all(isnan, store["total_runoff"][:, 8:end])
+            end
+        end
+        @test moisture == expected["soil_moisture"]
+        @test runoff == expected["total_runoff"]
+    end
+
+    @testset "The writer continues in the store of the next year ($format)" for format in ["zarr", "netcdf"]
+        dir = mktempdir()
+        config_file = write_test_config(dir, ["total_runoff"]; output = Dict("format" => format, "write_interval" => 7))
+        model = BMI.initialize(mGV.Model, config_file)
+        lens = only(model.selected_outputs).lens
+        runoff = []
+        for _ in 1:367  # 1979 has 365 days, which is not a multiple of 7
+            BMI.update(model)
+            push!(runoff, Array(lens(model)))
+        end
+        (; domain) = model
+        BMI.finalize(model)
+        @test isnothing(model.writer)
+
+        extension = format == "netcdf" ? "nc" : "zarr"
+        paths = [joinpath(dir, "outputfile_mekong_$year.$extension") for year in (1979, 1980)]
+        datasets = format == "netcdf" ? [NCDataset(p) for p in paths] : [zopen(p) for p in paths]
+        read_step(ds, t) = mGV.to_cells(domain, format == "netcdf" ? ds["total_runoff"].var[:, :, t] : ds["total_runoff"][:, :, t])
+        @test size(datasets[1]["total_runoff"], 3) == 365
+        @test size(datasets[2]["total_runoff"], 3) == 366
+        @test read_step(datasets[1], 365) == runoff[365]
+        @test read_step(datasets[2], 1) == runoff[366]
+        @test read_step(datasets[2], 2) == runoff[367]
+        format == "netcdf" && foreach(close, datasets)
+    end
+
+    @testset "Invalid output settings are rejected when loading the config" begin
+        config_file = write_test_config(mktempdir(), nothing; output = Dict("format" => "grib"))
+        @test_throws r"Unknown output format 'grib'" mGV.Config.load_config(config_file)
+        config_file = write_test_config(mktempdir(), nothing; output = Dict("write_interval" => 0))
+        @test_throws r"write_interval must be at least 1" mGV.Config.load_config(config_file)
     end
 
     @testset "Unknown variable names are rejected when loading the config" begin

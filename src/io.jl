@@ -1,21 +1,13 @@
 include("async_writer.jl")
 
-"""
-Create a `TransferBuffer` with pinned host memory for the `selected_outputs`, keyed by their
-name in the output file.
-"""
-function create_transfer_buffer(ncells, nlayers, selected_outputs, backend::Backend = CPU())
-    function make_pinned(dims...)
-        A = zeros(Float32, dims...)
-        pin_memory!(backend, A)
-        return A
-    end
+const OUTPUT_COMPRESSOR = Zarr.BloscCompressor(cname = "lz4", clevel = 1, shuffle = 1)
 
-    return TransferBuffer(
-        meta.output_name => is_layered(meta) ? make_pinned(ncells, nlayers) : make_pinned(ncells)
-            for meta in selected_outputs
-    )
-end
+# Target size of an (uncompressed) output chunk. Chunks are compressed in parallel, so
+# they should be small enough to give every thread work, and large enough to keep the
+# number of files manageable.
+const OUTPUT_CHUNK_BYTES = 16 * 1024^2
+
+const OUTPUT_FORMATS = Config.OUTPUT_FORMATS
 
 """Whether an output variable has an additional soil layer dimension."""
 is_layered(meta::ParameterMetadata) = meta.gridtype == GRIDS["soil_grid"]
@@ -24,228 +16,295 @@ is_layered(meta::ParameterMetadata) = meta.gridtype == GRIDS["soil_grid"]
 output_attributes(meta::ParameterMetadata) =
     Dict{String, Any}("units" => to_string(meta.unit), "long_name" => meta.description)
 
-const OutputArrays = Vector{Pair{String, Any}}
+"""
+An output file or store for one year. Outputs are written one block of timesteps at a
+time by [`write_block!`](@ref), on the writer task.
+"""
+abstract type OutputStore end
+
+close_output(::OutputStore) = nothing
 
 """
-Gridded host arrays per output variable, (nx, ny) or (nx, ny, nlayers), that the active
-cells are scattered into before writing. The inactive cells stay NaN.
+Gridded chunks of `rows` latitude rows (and every longitude). `cells[b]` are the active
+cells (indices into `domain.cells`) in band `b` of rows.
 """
-struct OutputGrids
+struct GridBands
     domain::Domain
-    arrays::Dict{String, Array{Float32}}
+    rows::Int
+    cells::Vector{UnitRange{Int}}
 end
 
-function OutputGrids(domain::Domain, nlayers, selected_outputs)
+function GridBands(domain::Domain, time_chunk)
     nx, ny = domain.grid_size
-    return OutputGrids(
-        domain,
-        Dict{String, Array{Float32}}(
-            meta.output_name => fill(NaN32, is_layered(meta) ? (nx, ny, nlayers) : (nx, ny))
-                for meta in selected_outputs
-        ),
-    )
+    rows = clamp(OUTPUT_CHUNK_BYTES ÷ (nx * time_chunk * sizeof(Float32)), 1, ny)
+    # The cells are in grid order, so the cells of a band are contiguous
+    cells = [
+        searchsortedfirst(domain.cells, (b - 1) * rows * nx + 1):searchsortedlast(domain.cells, min(b * rows, ny) * nx)
+            for b in 1:cld(ny, rows)
+    ]
+    return GridBands(domain, rows, cells)
 end
 
-struct ZarrOutputStore
-    data::OutputArrays
-    grids::OutputGrids
+"""Gridded Zarr store: (lon, lat, time) arrays, or (lon, lat, time, layer)."""
+struct GriddedZarrStore <: OutputStore
+    arrays::Vector{ZArray}  # one per output, in the order of the selected outputs
+    bands::GridBands
+    time_chunk::Int
 end
 
-struct NetCDFOutputStore
+"""
+Land-only Zarr store: (cell, time) arrays, or (cell, time, layer), with only the active
+cells. The same layout as the land-only forcing, see `scripts/convert_forcing_landonly.jl`.
+"""
+struct LandZarrStore <: OutputStore
+    arrays::Vector{ZArray}
+    cell_chunk::Int
+    time_chunk::Int
+end
+
+"""Gridded NetCDF file, (lon, lat, time) or (lon, lat, time, layer). Written serially."""
+struct NetCDFStore <: OutputStore
     ds::NCDataset
-    data::OutputArrays
-    grids::OutputGrids
+    arrays::Vector{Any}
+    bands::GridBands
+    time_chunk::Int
+    grid::Array{Float32, 4}  # buffer for a band of rows: (nx, rows, time_chunk, nlayers)
 end
 
-close_output(store::ZarrOutputStore) = nothing # No action needed for Zarr
-close_output(store::NetCDFOutputStore) = close(store.ds)
+close_output(store::NetCDFStore) = close(store.ds)
 
+"""
+Open a new output store for `year` at `path` (removing an existing one), in `format` (one
+of $(join(repr.(OUTPUT_FORMATS), ", "))). Timesteps are chunked by `time_chunk`.
+"""
+function create_output_store(format, path, year, domain, nt, time_chunk, nlayers, lat, lon, outputs)
+    time_chunk = min(time_chunk, nt)
+    if format == "netcdf"
+        return create_output_netcdf(path, domain, nt, time_chunk, nlayers, lat, lon, outputs)
+    end
 
-function create_output_zarr(output_path::String, year, domain, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
-    nx, ny = domain.grid_size
-    println("Initializing Zarr store at: $output_path")
-    isdir(output_path) && rm(output_path, recursive = true)
-    mkdir(output_path)
+    println("Initializing Zarr store at: $path")
+    isdir(path) && rm(path, recursive = true)
+    group = zgroup(path)
 
-    # Initialize the group
-    group = zgroup(output_path)
-
-    # Shuffle options: shuffle = 0 = none, 1 = byte shuffle, 2 = bitshuffle, -1 = auto
-    compressor = Zarr.BloscCompressor(cname = "lz4", clevel = 1, shuffle = 1)
-
-    chunk_2d = (nx, ny, 1)
-    chunk_3d_layer = (nx, ny, 1, nlayers)
-
-    function make_zarr(name, dims, chunks, dim_names; attrs = Dict())
-        # Convert input dict to Dict{String, Any}
-        # This allows it to hold both Strings ("degrees_north") and Vectors (["lat", "lon"])
+    function make_zarr(name, T, dims, chunks, dim_names; attrs = Dict{String, Any}(), compress = false)
         full_attrs = Dict{String, Any}(attrs)
         full_attrs["_ARRAY_DIMENSIONS"] = dim_names
-
-        # Pass the attributes dict into zcreate
-        arr = zcreate(
-            Float32, group, name, dims...;
-            chunks = chunks,
-            compressor = compressor,
-            fill_value = NaN32,
-            attrs = full_attrs
+        return zcreate(
+            T, group, name, dims...;
+            chunks, fill_value = T <: AbstractFloat ? T(NaN) : nothing, attrs = full_attrs,
+            compressor = compress ? OUTPUT_COMPRESSOR : Zarr.NoCompressor(),
         )
-
-        return arr
+    end
+    function write_coord(name, values, dim_names; attrs = Dict{String, Any}())
+        make_zarr(name, eltype(values), (length(values),), (length(values),), dim_names; attrs)[:] = values
+        return nothing
     end
 
-    # Coords and time
-    time_values = collect(0:(nt - 1))
-    z_time = make_zarr(
-        "time", (nt,), (nt,), ["time"];
-        attrs = Dict("units" => "days since $year-01-01", "calendar" => "proleptic_gregorian")
+    write_coord(
+        "time", Float32.(0:(nt - 1)), ["time"];
+        attrs = Dict("units" => "days since $year-01-01", "calendar" => "proleptic_gregorian"),
     )
-    z_time[:] = time_values
-    z_lat = make_zarr("lat", (length(lat_cpu),), (length(lat_cpu),), ["lat"]; attrs = Dict("units" => "degrees_north", "axis" => "Y"))
-    z_lat[:] = lat_cpu
-    z_lon = make_zarr("lon", (length(lon_cpu),), (length(lon_cpu),), ["lon"]; attrs = Dict("units" => "degrees_east", "axis" => "X"))
-    z_lon[:] = lon_cpu
+    write_coord("lat", lat, ["lat"]; attrs = Dict("units" => "degrees_north", "axis" => "Y"))
+    write_coord("lon", lon, ["lon"]; attrs = Dict("units" => "degrees_east", "axis" => "X"))
 
-    # Reversed names to match Python's Row-Major read order
-    dim_2d = ["time", "lat", "lon"]
-    dim_3d_layer = ["layer", "time", "lat", "lon"]
-
-    store = ZarrOutputStore(
-        OutputArrays(
-            [
-                meta.output_name => if is_layered(meta)
-                    make_zarr(meta.output_name, (nx, ny, nt, nlayers), chunk_3d_layer, dim_3d_layer; attrs = output_attributes(meta))
-                else
-                    make_zarr(meta.output_name, (nx, ny, nt), chunk_2d, dim_2d; attrs = output_attributes(meta))
-                end
-                    for meta in selected_outputs
-            ]
-        ),
-        OutputGrids(domain, nlayers, selected_outputs),
-    )
-
-    return store
+    # Dimension names are reversed, to match Python's row-major order
+    if format == "zarr"
+        nx, ny = domain.grid_size
+        bands = GridBands(domain, time_chunk)
+        arrays = map(outputs, nlayers) do meta, n
+            is_layered(meta) ?
+                make_zarr(
+                    meta.output_name, Float32, (nx, ny, nt, n), (nx, bands.rows, time_chunk, n),
+                    ["layer", "time", "lat", "lon"]; attrs = output_attributes(meta), compress = true,
+                ) :
+                make_zarr(
+                    meta.output_name, Float32, (nx, ny, nt), (nx, bands.rows, time_chunk),
+                    ["time", "lat", "lon"]; attrs = output_attributes(meta), compress = true,
+                )
+        end
+        return GriddedZarrStore(arrays, bands, time_chunk)
+    elseif format == "zarr_landonly"
+        n = ncells(domain)
+        nx = domain.grid_size[1]
+        write_coord("lon_index", Int32.((domain.cells .- 1) .% nx), ["cell"])
+        write_coord("lat_index", Int32.((domain.cells .- 1) .÷ nx), ["cell"])
+        cell_chunk = clamp(OUTPUT_CHUNK_BYTES ÷ (time_chunk * sizeof(Float32)), 1, n)
+        arrays = map(outputs, nlayers) do meta, nl
+            is_layered(meta) ?
+                make_zarr(
+                    meta.output_name, Float32, (n, nt, nl), (cell_chunk, time_chunk, nl),
+                    ["layer", "time", "cell"]; attrs = output_attributes(meta), compress = true,
+                ) :
+                make_zarr(
+                    meta.output_name, Float32, (n, nt), (cell_chunk, time_chunk),
+                    ["time", "cell"]; attrs = output_attributes(meta), compress = true,
+                )
+        end
+        return LandZarrStore(arrays, cell_chunk, time_chunk)
+    else
+        error("Unknown output format '$format', valid formats are: $(join(OUTPUT_FORMATS, ", "))")
+    end
 end
 
-function create_output_netcdf(output_file::String, domain, nt, nlayers, lat_cpu, lon_cpu, selected_outputs)
+function create_output_netcdf(path, domain, nt, time_chunk, nlayers, lat, lon, outputs)
     nx, ny = domain.grid_size
-    println("Creating NetCDF output file at: $output_file")
-    out_ds = NCDataset(output_file, "c")
+    println("Creating NetCDF output file at: $path")
+    ds = NCDataset(path, "c")
 
-    # Dimensions
-    defDim(out_ds, "lon", nx); defDim(out_ds, "lat", ny); defDim(out_ds, "time", nt)
-    defDim(out_ds, "qlayers", 2); defDim(out_ds, "layer", nlayers); defDim(out_ds, "top_layer", 1)
+    defDim(ds, "lon", nx); defDim(ds, "lat", ny); defDim(ds, "time", nt)
+    defDim(ds, "layer", maximum(nlayers))
 
-    # Chunks
-    chunk_2d = (nx, ny, 1)
-    chunk_3d_layer = (nx, ny, 1, nlayers)
+    v = defVar(ds, "lat", Float32, ("lat",)); v[:] = lat; v.attrib["axis"] = "Y"
+    v = defVar(ds, "lon", Float32, ("lon",)); v[:] = lon; v.attrib["axis"] = "X"
 
-    function def_fast_var(name, dims; chunks = nothing, attrib = Dict())
-        return defVar(out_ds, name, Float32, dims; chunksizes = chunks, deflatelevel = 0, shuffle = false, attrib)
+    bands = GridBands(domain, time_chunk)
+    arrays = map(outputs, nlayers) do meta, n
+        dims, chunks = is_layered(meta) ?
+            (("lon", "lat", "time", "layer"), (nx, bands.rows, time_chunk, n)) :
+            (("lon", "lat", "time"), (nx, bands.rows, time_chunk))
+        defVar(
+            ds, meta.output_name, Float32, dims;
+            chunksizes = chunks, deflatelevel = 0, shuffle = false, attrib = output_attributes(meta),
+        )
     end
-
-    # Coords
-    lat = defVar(out_ds, "lat", Float32, ("lat",)); lat[:] = lat_cpu; lat.attrib["axis"] = "Y"
-    lon = defVar(out_ds, "lon", Float32, ("lon",)); lon[:] = lon_cpu; lon.attrib["axis"] = "X"
-
-    # Store
-    store = NetCDFOutputStore(
-        out_ds, OutputArrays(
-            [
-                meta.output_name => if is_layered(meta)
-                    def_fast_var(meta.output_name, ("lon", "lat", "time", "layer"); chunks = chunk_3d_layer, attrib = output_attributes(meta))
-                else
-                    def_fast_var(meta.output_name, ("lon", "lat", "time"); chunks = chunk_2d, attrib = output_attributes(meta))
-                end
-                    for meta in selected_outputs
-            ]
-        ),
-        OutputGrids(domain, nlayers, selected_outputs),
-    )
-
-    return store
+    grid = Array{Float32}(undef, nx, bands.rows, time_chunk, maximum(nlayers))
+    return NetCDFStore(ds, arrays, bands, time_chunk, grid)
 end
 
 """
-Copy the selected outputs from the `model` (on the GPU) to the CPU buffer `buf`.
+Scatter the timesteps of `block` in band `b` into `buf`, as an (nx, rows, time_chunk,
+nlayers) gridded chunk. Inactive cells, and timesteps after the block, are NaN.
 """
-function async_transfer!(model, buf::TransferBuffer, selected_outputs)
-    for meta in selected_outputs
-        copyto!(buf[meta.output_name], meta.lens(model))
+function fill_grid_chunk!(buf::AbstractArray{Float32}, data::Array{Float32, 3}, len, bands::GridBands, b, time_chunk)
+    nx = bands.domain.grid_size[1]
+    plane = nx * bands.rows
+    nlayers = size(data, 3)
+    fill!(view(buf, 1:(plane * time_chunk * nlayers)), NaN32)
+    offset = (b - 1) * plane  # linear grid index of the band start, minus one
+    cells = bands.domain.cells
+    @inbounds for l in 1:nlayers, t in 1:len
+        base = ((l - 1) * time_chunk + t - 1) * plane - offset
+        for k in bands.cells[b]
+            buf[base + cells[k]] = data[k, t, l]
+        end
+    end
+    return buf
+end
+
+"""
+Copy the timesteps of `block` for the cells `rows` into `buf`, as a (cell_chunk,
+time_chunk, nlayers) land-only chunk. Missing cells and timesteps are NaN.
+"""
+function fill_cell_chunk!(buf::Vector{Float32}, data::Array{Float32, 3}, len, rows, cell_chunk, time_chunk)
+    n, block_length, nlayers = size(data)
+    fill!(buf, NaN32)
+    for l in 1:nlayers, t in 1:len
+        copyto!(
+            buf, ((l - 1) * time_chunk + t - 1) * cell_chunk + 1,
+            data, ((l - 1) * block_length + t - 1) * n + first(rows), length(rows),
+        )
+    end
+    return buf
+end
+
+"""
+Compress the chunk `buf` and write it as chunk `index` of the Zarr `array`, from any
+thread. All-NaN chunks are not written: they read as the fill value (NaN).
+"""
+function write_chunk!(array::ZArray, buf::Vector{Float32}, index::CartesianIndex, buffers::ChunkBuffers)
+    all(isnan, buf) && return nothing
+    bytes = acquire!(buffers.bytes)
+    resize!(bytes, sizeof(buf) + Blosc.MAX_OVERHEAD)
+    n = Blosc.compress!(bytes, buf; level = OUTPUT_COMPRESSOR.clevel, shuffle = OUTPUT_COMPRESSOR.shuffle)
+    Zarr.store_writechunk(array.storage, resize!(bytes, n), array.path, index, array.metadata.chunk_key_encoding)
+    release!(buffers.bytes, bytes)
+    return nothing
+end
+
+"""Index of the time chunk that starts at time index `first`."""
+function time_chunk_index(first, time_chunk)
+    (first - 1) % time_chunk == 0 || error("Output block at timestep $first is not aligned with the time chunks")
+    return (first - 1) ÷ time_chunk + 1
+end
+
+"""
+Write a block of timesteps to a gridded Zarr store: every band of every output is a chunk,
+which is compressed and written in its own task (needs `julia -t` threads).
+"""
+function write_block!(store::GriddedZarrStore, block::OutputBlock, buffers::ChunkBuffers)
+    tc = time_chunk_index(block.first, store.time_chunk)
+    @sync for (array, data) in zip(store.arrays, block.data), b in eachindex(store.bands.cells)
+        isempty(store.bands.cells[b]) && continue  # no land: the chunk stays NaN
+        Threads.@spawn begin
+            buf = acquire!(buffers.values)
+            chunk = prod(array.metadata.chunks)
+            fill_grid_chunk!(resize!(buf, chunk), data, block.len, store.bands, b, store.time_chunk)
+            index = ndims(array) == 4 ? CartesianIndex(1, b, tc, 1) : CartesianIndex(1, b, tc)
+            write_chunk!(array, buf, index, buffers)
+            release!(buffers.values, buf)
+        end
     end
     return nothing
 end
 
-function write_field!(array, buf::TransferBuffer, grids::OutputGrids, name, time_index)
-    data = to_grid!(grids.arrays[name], grids.domain, buf[name])
-    if ndims(data) == 3  # Variables with an additional layer dimension
-        array[:, :, time_index, :] = data
-    else
-        array[:, :, time_index] = data
+"""
+Write a block of timesteps to a land-only Zarr store: every chunk of cells of every output
+is compressed and written in its own task (needs `julia -t` threads).
+"""
+function write_block!(store::LandZarrStore, block::OutputBlock, buffers::ChunkBuffers)
+    tc = time_chunk_index(block.first, store.time_chunk)
+    n = size(first(block.data), 1)
+    @sync for (array, data) in zip(store.arrays, block.data), c in 1:cld(n, store.cell_chunk)
+        Threads.@spawn begin
+            buf = acquire!(buffers.values)
+            rows = ((c - 1) * store.cell_chunk + 1):min(c * store.cell_chunk, n)
+            resize!(buf, prod(array.metadata.chunks))
+            fill_cell_chunk!(buf, data, block.len, rows, store.cell_chunk, store.time_chunk)
+            index = ndims(array) == 3 ? CartesianIndex(c, tc, 1) : CartesianIndex(c, tc)
+            write_chunk!(array, buf, index, buffers)
+            release!(buffers.values, buf)
+        end
     end
     return nothing
 end
 
-function write_slice!(time_index, buf::TransferBuffer, store::ZarrOutputStore)
-    Threads.@sync for (name, array) in store.data
-        Threads.@spawn write_field!(array, buf, store.grids, name, time_index)
+"""Write a block of timesteps to a NetCDF file, one band of rows at a time (serially)."""
+function write_block!(store::NetCDFStore, block::OutputBlock, ::ChunkBuffers)
+    ny = store.bands.domain.grid_size[2]
+    (; rows) = store.bands
+    ts = block.first:(block.first + block.len - 1)
+    for (array, data) in zip(store.arrays, block.data), b in eachindex(store.bands.cells)
+        fill_grid_chunk!(store.grid, data, block.len, store.bands, b, store.time_chunk)
+        r = ((b - 1) * rows + 1):min(b * rows, ny)
+        # The chunk fills the first layers of the buffer; the last band can have fewer rows
+        if ndims(array) == 4
+            array[:, r, ts, :] = view(store.grid, :, 1:length(r), 1:block.len, 1:size(data, 3))
+        else
+            array[:, r, ts] = view(store.grid, :, 1:length(r), 1:block.len, 1)
+        end
     end
     return nothing
 end
 
-function write_slice!(time_index, buf::TransferBuffer, store::NetCDFOutputStore)
-    for (name, array) in store.data
-        write_field!(array, buf, store.grids, name, time_index)
+"""
+Start the output writer for the `selected_outputs`, writing to the store of `year`. Each
+year gets its own file or store in `config.output.dir`.
+"""
+function start_output_writer(config::Cfg, domain::Domain, grid_parameters, soil_layers, year, dt, selected_outputs)
+    format = lowercase(config.output.format)
+    lat, lon = domain.latitude, domain.longitude  # coordinates of the grid
+    block_length = config.output.write_interval
+    nlayers = [is_layered(meta) ? soil_layers : 1 for meta in selected_outputs]
+
+    function open_store(year)
+        nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
+        extension = format == "netcdf" ? "nc" : "zarr"
+        path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).$extension")
+        return create_output_store(format, path, year, domain, nt, block_length, nlayers, lat, lon, selected_outputs)
     end
-    return nothing
-end
 
-struct OutputWriter
-    io_service
-    store
-end
-
-function start_io_service(
-        config::Cfg,
-        grid_parameters::GridParameters,
-        domain::Domain,
-        year,
-        dt,
-        selected_outputs
-    )
-    nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
-
+    println("Starting output writer...")
     backend = get_backend(grid_parameters.elevation)
-
-    nlayers = 3  # hardcoded 3 soil layers
-
-    if lowercase(config.output.format) == "netcdf"
-        output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).nc")
-        # Create a buffer pool
-        output_store = create_output_netcdf(output_path, domain, nt, nlayers, domain.latitude, domain.longitude, selected_outputs)
-    else
-        output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).zarr")
-        output_store = create_output_zarr(output_path, year, domain, nt, nlayers, domain.latitude, domain.longitude, selected_outputs)
-    end
-
-    # Start the async pool
-    println("Starting Async I/O Service...")
-    io_service = start_async_service(ncells(domain), nlayers, output_store, selected_outputs, backend, 6)
-    return OutputWriter(io_service, output_store)
-end
-
-
-function write_results(io_service::AsyncBufferService, clock, model)
-    time_index = (clock.time - DateTime(year(clock.time))) ÷ clock.dt + 1
-    # Get a free buffer from the pool
-    # (Instant unless disk is >4 days behind)
-    local current_buf
-    current_buf = get_free_buffer(io_service)
-
-    # Transfer GPU -> CPU (RAM copy)
-    async_transfer!(model, current_buf, io_service.selected_outputs)
-
-    # Hand off to background thread and continue simulation immediately.
-    submit_buffer(io_service, time_index, current_buf)
-    return nothing
+    return OutputWriter(open_store, year, selected_outputs, ncells(domain), nlayers, block_length, backend)
 end

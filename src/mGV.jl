@@ -170,7 +170,7 @@ function Model(config_file::AbstractString; backend = "auto")
     end
 
     writer = isempty(selected_outputs) ? nothing :
-        start_io_service(config, grid_parameters, domain, year(clock.time), clock.dt, selected_outputs)
+        start_output_writer(config, domain, grid_parameters, nlayers, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
@@ -242,21 +242,16 @@ end
     # Compute the outputs that have a buffer, and write them to disk if selected in the config
     process_daily_outputs!(model)
     if !isnothing(model.writer)
-        write_results(model.writer.io_service, model.clock, model)
-    end
+        record_output!(model.writer, model)
 
-    # next time step will be new year; close file output
-    if (
-            !isnothing(model.writer) &&
-                year(model.clock.time + model.clock.dt) > year(model.clock.time)
-        )
-
-        close_output_files!(model.writer)
-        if year(model.clock.time) == model.config.end_year
-            clear_output_writer!(model)
-        else
-            println("Starting new io service...")
-            open_new_file!(model)
+        # The next timestep is in a new year, which gets its own output file
+        next_year = year(model.clock.time + model.clock.dt)
+        if next_year > year(model.clock.time)
+            if next_year > model.config.end_year
+                finalize!(model)
+            else
+                next_store!(model.writer, next_year)
+            end
         end
     end
 
@@ -297,38 +292,12 @@ function run()
     return run(cfg_path)
 end
 
-"""Finalize the model by closing output files and releasing the file handles."""
+"""Finalize the model: write the remaining output, close the output file and stop the writer."""
 function finalize!(model::Model)
     if !isnothing(model.writer)
-        close_output_files!(model.writer)
-        clear_output_writer!(model)
+        close(model.writer)
+        model.writer = nothing
     end
-    return nothing
-end
-
-"""Close the output file and stop the asynchronous service."""
-function close_output_files!(writer::OutputWriter)
-    stop_async_service(writer.io_service)
-    close_output(writer.store)
-    return nothing
-end
-
-"""Clear the writer arguments."""
-function clear_output_writer!(model::Model)
-    model.writer = nothing
-    return nothing
-end
-
-"""Opens a new output file"""
-function open_new_file!(model::Model)
-    model.writer = start_io_service(
-        model.config,
-        model.grid_parameters,
-        model.domain,
-        year(model.clock.time) + 1,
-        model.clock.dt,
-        model.selected_outputs,
-    )
     return nothing
 end
 

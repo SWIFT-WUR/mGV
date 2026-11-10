@@ -5,6 +5,48 @@ section of the config file: one `.nc` file for NetCDF, or one `.zarr` folder for
 Output variables are written for each simulated time step (daily by default) and grid cell. Soil
 moisture is also output separately for each soil layer.
 
+## Output formats
+
+Set the format with `format` in the `[output]` section:
+
+| `format` | Layout | Notes |
+|----------|--------|-------|
+| `"zarr"` (default) | Gridded: `(time, lat, lon)`, or `(layer, time, lat, lon)` | Cells outside the model domain are NaN |
+| `"zarr_landonly"` | Only the model's (land) cells: `(time, cell)`, or `(layer, time, cell)` | Fastest to write, and smallest on disk |
+| `"netcdf"` | Gridded, like `"zarr"` | Slowest: written by a single thread |
+
+The land-only format is the same as the [land-only forcing](performance.md#Optimize-the-forcing-input).
+Besides the `lat` and `lon` coordinates of the grid, the store holds the 0-based grid indices of
+every cell, `lat_index` and `lon_index`, so the output can be put back on the grid. For example, in Python:
+
+```python
+import numpy as np
+import xarray as xr
+
+ds = xr.open_zarr("outputfile_1979.zarr")
+grid = np.full((ds.sizes["lat"], ds.sizes["lon"]), np.nan, dtype="float32")
+grid[ds.lat_index.values, ds.lon_index.values] = ds.total_runoff.isel(time=0).values
+```
+
+## Writing in blocks of time steps
+
+The model keeps the output of several time steps in memory, and writes them to disk together while it
+computes the next time steps. `write_interval` (default 8) sets the number of time steps in a block:
+
+```toml
+[output]
+write_interval = 8
+```
+
+This is also the size of the time chunks of the output. Larger blocks are written more efficiently,
+but take more memory: the model keeps two blocks, of
+`write_interval × number of cells × number of output fields × 4 bytes` each. For example, all
+variables of a global 5′ run (about 2.2 million land cells, 22 fields including the soil layers) take
+about 1.5 GB per block of 8 time steps.
+
+Output appears on disk one block at a time; the last, partial, block of a run is written when the
+model is finalized. When the model finishes, it prints the time the writer spent writing.
+
 ## Choosing output variables
 
 By default all variables listed below are written. To write only some of them, list them in the config, for example:
