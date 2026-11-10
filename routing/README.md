@@ -8,7 +8,7 @@ It is a separate package and is not used by mGV yet.
 
 ![Sub-basin routing: the network split into sub-basins by level, and one kernel launch per level with one workgroup per sub-basin](subbasin-routing.svg)
 
-The D8 network is split into sub-basins of at most `S` cells (default 2048).
+The river network is split into sub-basins of at most `S` cells (default 2048).
 
 1. **One workgroup per unit.** A unit (one or more sub-basins) runs all sub-steps of a
    time step in one GPU workgroup.
@@ -32,20 +32,22 @@ The cell update and the order of summing upstream inflow are the same as in mGV'
 using SubbasinRouting
 
 # Once, on the host: decomposition and renumbering
-layout = SubbasinLayout(routing.downstream_idx, routing.upstream_mask, nx, active;
+layout = SubbasinLayout(routing.downstream_idx, routing.upstream_ptr, routing.upstream_idx;
     S = 2048, concurrency = 60)
 
-# Once: device arrays (length, alpha, cell_area per grid cell)
+# Once: device arrays (length, alpha, cell_area per cell)
 router = SubbasinRouter(backend, layout, routing.length, routing.alpha, routing.cell_area;
     cells_per_thread = 2, max_substeps = 144)
 
-# Every model time step: reads and writes the model's grid vectors
+# Every model time step: reads and writes the model's cell vectors
 route!(router, routing.area, routing.discharge, total_runoff, n_substeps, dt_step)
 ```
 
 - **Inputs:**
-  - `active`: the cells that take part in routing, e.g. `isfinite.(routing.cell_area)`.
-  - `routing.upstream_mask`: mGV's D8 bitmask of upstream neighbours.
+  - `routing.upstream_ptr`, `routing.upstream_idx`: mGV's upstream cells of each cell
+    (CSR format, in increasing index order). Inflow is summed in that order.
+  - `active` (keyword, all cells by default): the cells that take part in routing. mGV
+    only stores its active (land) cells, so there all cells take part.
 - **State and output:**
   - `route!` reads the state from `area`/`discharge` first, so changes made through BMI
     are respected. Pass `load_state = false` to skip that gather.
@@ -76,9 +78,9 @@ for day in 1:ndays
 end
 ```
 
-- **Network:** built once with mGV's own preprocessing (`mGV.RoutingState`) of the
-  routing parameter file. Elevation isn't available through BMI, so it's read from the
-  parameter file the same way mGV reads it.
+- **Network:** built once with mGV's own preprocessing of the routing parameter file,
+  `mGV.RoutingState(config, mGV.Domain(config))`, over the same land cells as the BMI
+  variables.
 - **Device:** the router runs on the model's backend (taken from the BMI array), so the
   runoff stays on the device.
 - **Check:** a second mGV instance, with its built-in routing on, provides
@@ -105,14 +107,15 @@ gather and scatter, and mGV's diagnostics kernel:
 | Global 5′, S=4096, 4 cells per thread | 59.0 ms | 7.04 ms |
 | Indus (204×180) | 1.18 ms | 0.96 ms |
 
-`update_routing!` runs over every grid cell, ocean included. Against a per-sub-step gather
-over land cells only (21.2 ms globally), the gain is about 2.7×. See
+These were measured before mGV switched to land cells only: `update_routing!` then ran
+over every grid cell, ocean included. Against a per-sub-step gather over land cells only,
+as `update_routing!` does now (21.2 ms globally), the gain is about 2.7×. See
 `docs/subbasin-routing-results.md` for the measurements and the variants that were tried.
 
 ## Tests and scripts
 
 ```sh
-# Unit tests on the CPU backend (Pkg.test runs with bounds checking): synthetic D8
+# Unit tests on the CPU backend (Pkg.test runs with bounds checking): synthetic
 # networks, compared bitwise with a plain per-sub-step gather
 julia --project=routing -e 'using Pkg; Pkg.test()'
 
@@ -128,6 +131,11 @@ The DEM is at
 `https://data.hydrosheds.org/file/hydrosheds-v1-dem/hyd_glo_dem_30s.zip`. `PRE=2`
 aggregates it to 1′ before deriving flow directions; the full 30″ run needs more than
 36 GB of RAM.
+
+**OpenCL:** bitwise identical to `mGV.update_routing!` on an Intel Iris Xe (OpenCL.jl,
+native driver; `validate_mgv.jl opencl`, and the BMI example with `MGV_BACKEND=opencl`).
+The Iris Xe allows at most 512 work items per workgroup, so use `S = 1024,
+cells_per_thread = 2` or `S = 2048, cells_per_thread = 4` there.
 
 **Untested so far:** CUDA, Metal and oneAPI. The kernels use only portable
 KernelAbstractions features (`@localmem`, `@private`, `@synchronize`).

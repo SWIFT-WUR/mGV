@@ -80,7 +80,7 @@ for CAP in KERNEL_SIZES, CPT in CELLS_PER_THREAD
             @unroll for c in 1:$CPT
                 j = tid + (c - 1) * $TT
                 if j <= nc
-                    # Inflow from upstream cells in D8 order: local cells from the previous
+                    # Inflow from upstream cells in upstream list order: local cells from the previous
                     # sub-step, upstream units from their outlet record of sub-step t - 1
                     Q_in = 0.0f0
                     for q in Int32(1):nup[c]

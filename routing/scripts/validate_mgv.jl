@@ -1,16 +1,18 @@
 # Validate SubbasinRouting against mGV.update_routing! (bitwise) and time both.
 #
 # usage: julia --project=routing/scripts routing/scripts/validate_mgv.jl <backend> <network> [S] [cells_per_thread] [ndays]
-#   backend: cpu | rocm
+#   backend: cpu | rocm | opencl (needs OpenCL.jl in the environment and an OpenCL driver)
 #   network: mekong | indus | path to a routing file with an `elevation` variable
 #            (e.g. the global network from make_routing.py)
 # On the CPU use S = 64: large workgroups compile very slowly on KernelAbstractions' CPU backend.
+# The workgroup size S ÷ cells_per_thread must fit the device (e.g. 512 on Intel Iris Xe).
 const BACKEND = ARGS[1]
 BACKEND == "rocm" && using AMDGPU
+BACKEND == "opencl" && using OpenCL
 using mGV, SubbasinRouting, KernelAbstractions, NCDatasets, Printf, Random, Statistics
 const M = mGV
 BACKEND == "rocm" && (AMDGPU.HARD_MEMORY_LIMIT[] = UInt64(12) * 1024^3)
-const backend = BACKEND == "rocm" ? ROCBackend() : CPU()
+const backend = BACKEND == "rocm" ? ROCBackend() : BACKEND == "opencl" ? OpenCLBackend() : CPU()
 sync() = KernelAbstractions.synchronize(backend)
 dev(x) = (y = KernelAbstractions.allocate(backend, eltype(x), size(x)); copyto!(y, x); y)
 
@@ -20,23 +22,26 @@ S = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 2048
 cpt = length(ARGS) >= 4 ? parse(Int, ARGS[4]) : 2
 ndays = length(ARGS) >= 5 ? parse(Int, ARGS[5]) : 3
 pf, ef, ev = net == "mekong" ? ("$ROOT/input_data/mekong/routing/VIC_rout_params_Mekong.nc", "$ROOT/input_data/mekong/vic_mekong_5min_params.nc", "elev") :
-    net == "indus" ? ("$ROOT/input_data/indus/routing/VIC_rout_params_Indus_accfix.nc", "$ROOT/input_data/indus/VIC_params_Mirca_calibrated_Indus.nc", "elev") :
+    net == "indus" ? ("$ROOT/input_data/indus/routing/VIC_rout_params_Indus.nc", "$ROOT/input_data/indus/VIC_params_Mirca_calibrated_Indus.nc", "elev") :
     (net, net, "elevation")
 
-elevation = NCDataset(ds -> replace(ds[ev][:, :], missing => 0.0f0), ef)
-nx, ny = size(elevation)
-cfg = (input = (paths = (routing_param_file = pf,),),)
-rh = redirect_stdout(() -> M.RoutingState(cfg, elevation), devnull)
-active = isfinite.(rh.cell_area)
+# mGV routes the active cells only: here the cells with a channel (finite cell area)
+cell_area = NCDataset(ds -> replace(ds["cell_area"][:, :], missing => NaN32), pf)
+nx, ny = size(cell_area)
+domain = M.Domain((nx, ny), findall(isfinite, vec(cell_area)))
+cfg = (input = (paths = (routing_param_file = pf, input_param_file = ef), names = (elevation = ev,)),)
+rh = redirect_stdout(() -> M.RoutingState(cfg, domain), devnull)
 
 t0 = time()
-layout = SubbasinLayout(rh.downstream_idx, rh.upstream_mask, nx, active; S)
+layout = SubbasinLayout(rh.downstream_idx, rh.upstream_ptr, rh.upstream_idx; S)
 router = SubbasinRouter(backend, layout, rh.length, rh.alpha, rh.cell_area; cells_per_thread = cpt)
-@printf("# %s %s: %d x %d grid, %d active, %s, setup %.1f s\n", BACKEND, basename(net), nx, ny, count(active), layout, time() - t0)
+@printf("# %s %s: %d x %d grid, %d active, %s, setup %.1f s\n", BACKEND, basename(net), nx, ny, M.ncells(domain), layout, time() - t0)
 
+# Runoff over the active cells, from a smooth random field on the grid
 function runoff_field(day)
     rng = Xoshiro(day); ph = rand(rng, 2) .* 2pi
-    Float32[max(0, 8 + 6 * sin(i / 37 + ph[1]) * cos(j / 23 + ph[2]) + 4 * randn(rng)) for i in 1:nx, j in 1:ny]
+    grid = Float32[max(0, 8 + 6 * sin(i / 37 + ph[1]) * cos(j / 23 + ph[2]) + 4 * randn(rng)) for i in 1:nx, j in 1:ny]
+    return vec(grid)[domain.cells]
 end
 runoffs = [dev(runoff_field(d)) for d in 1:ndays]
 mock(r, ro, dt) = (; routing = r, soil_variables = (; total_runoff = ro), clock = (; dt = (; value = dt)))
@@ -55,7 +60,7 @@ for dt in (86400, 600 * 143)
     end
     sync()
     a1, q1, a2, q2 = Array(rref.area), Array(rref.discharge), Array(rnew.area), Array(rnew.discharge)
-    nbad = count(i -> active[i] && (a1[i] !== a2[i] || q1[i] !== q2[i]), eachindex(a1))
+    nbad = count(i -> a1[i] !== a2[i] || q1[i] !== q2[i], eachindex(a1))
     @printf("VALIDATE nsub=%d days=%d differing cells: %d %s\n", nsub, ndays, nbad, nbad == 0 ? "(bitwise identical)" : "FAILED")
 end
 

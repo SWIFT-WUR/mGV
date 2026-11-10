@@ -1,5 +1,5 @@
 """
-Kinematic-wave river routing on a D8 network, decomposed into sub-basins.
+Kinematic-wave river routing on a river network, decomposed into sub-basins.
 
 Each sub-basin unit runs all routing sub-steps of a model time step in one GPU workgroup,
 with per-cell data in registers and the discharge exchange in local memory. Units are
@@ -11,9 +11,9 @@ bitwise identical to `mGV.update_routing!`.
 
 Usage:
 
-    layout = SubbasinLayout(downstream_idx, upstream_mask, nx, active)  # once, on the host
-    router = SubbasinRouter(backend, layout, length, alpha, cell_area)  # once
-    route!(router, area, discharge, runoff, nsub, dt_step)              # every time step
+    layout = SubbasinLayout(downstream_idx, upstream_ptr, upstream_idx)  # once, on the host
+    router = SubbasinRouter(backend, layout, length, alpha, cell_area)   # once
+    route!(router, area, discharge, runoff, nsub, dt_step)               # every time step
 """
 module SubbasinRouting
 

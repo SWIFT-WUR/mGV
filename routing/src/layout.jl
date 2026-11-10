@@ -1,9 +1,5 @@
 # Sub-basin decomposition, level scheduling and the renumbered cell layout (host side).
 
-# Linear index offset of D8 neighbour `b` on a grid with `nx` cells along x. Same bit
-# numbering as mGV's `upstream_mask` (see `d8_bit` in mGV's routing.jl).
-@inline d8_offset(b, nx) = b < 3 ? -nx + b - 1 : b == 3 ? -1 : b == 4 ? 1 : nx + b - 6
-
 """
     partition(downstream_idx, active, S)
 
@@ -195,25 +191,29 @@ function pack_units(p, S)
 end
 
 """
-    SubbasinLayout(downstream_idx, upstream_mask, nx, active; S = 2048, concurrency = 60)
+    SubbasinLayout(downstream_idx, upstream_ptr, upstream_idx; active, S = 2048, concurrency = 60)
 
-Host-side decomposition of a D8 routing network on a grid with `nx` cells along x.
+Host-side decomposition of a routing network (a tree of cells draining into each other).
 
-- `downstream_idx`: linear index of the downstream cell, or ≤ 0 for an outlet.
-- `upstream_mask`: bit `b` set when D8 neighbour `b` drains into the cell (mGV's layout).
-- `active`: cells that take part in routing.
+- `downstream_idx`: index of the downstream cell, or ≤ 0 for an outlet.
+- `upstream_ptr`, `upstream_idx`: the cells draining into cell `i`, in CSR format:
+  `upstream_idx[upstream_ptr[i]:(upstream_ptr[i + 1] - 1)]` (mGV's `RoutingState` layout).
+  They must be active cells. Inflow is summed in this order, so for bitwise equal results
+  to mGV use its lists, which are in increasing index order.
+- `active`: cells that take part in routing; all cells by default (as in mGV, which only
+  stores the active cells).
 - `S`: maximum cells per unit (workgroup); must be one of the kernel sizes in
   `KERNEL_SIZES`.
 - `concurrency`: the number of workgroups the device runs at once, used to balance levels
   (about the number of compute units; 60 on an RX 7800 XT).
 
-Cells are renumbered by level, unit, sub-basin and upstream-first. Upstream lists keep D8
-bit order, so the summation order equals the gather kernel. An entry `k > 0` is a local
+Cells are renumbered by level, unit, sub-basin and upstream-first. Upstream lists keep
+their order, so the summation order equals the gather kernel. An entry `k > 0` is a local
 index in the unit, `k < 0` refers to outlet record `-k` of an upstream unit.
 """
 struct SubbasinLayout
     S::Int
-    perm::Vector{Int32}       # renumbered cell -> grid cell
+    perm::Vector{Int32}       # renumbered cell -> cell
     ustart::Vector{Int32}     # first renumbered cell of each unit (+ end marker)
     lunit::Vector{Int32}      # units before each level (+ end marker)
     uptr::Vector{Int32}       # upstream list per renumbered cell (CSR)
@@ -222,9 +222,15 @@ struct SubbasinLayout
     nrec::Int
 end
 
-function SubbasinLayout(ds, upstream_mask, nx, active; S = 2048, concurrency = 60, fill_fraction = 0.9)
+function SubbasinLayout(
+        ds, upstream_ptr, upstream_idx; active = trues(length(ds)), S = 2048, concurrency = 60,
+        fill_fraction = 0.9,
+    )
     S in KERNEL_SIZES || error("S = $S: choose one of $KERNEL_SIZES")
-    ds = Int32.(ds)
+    ds = Int32.(Array(ds))
+    upstream_ptr, upstream_idx = Array(upstream_ptr), Array(upstream_idx)
+    active = Array(active)
+    length(upstream_ptr) == length(ds) + 1 || error("upstream_ptr must have length(downstream_idx) + 1 entries")
     p = partition(ds, active, S)
     p = reschedule(p, ds, S, concurrency; fill_fraction)
     units = pack_units(p, S)
@@ -280,18 +286,16 @@ function SubbasinLayout(ds, upstream_mask, nx, active; S = 2048, concurrency = 6
     cell_rec = zeros(Int32, m)
     for j in 1:m
         c = perm[j]
-        mask = upstream_mask[c]
-        for b in 0:7
-            if (mask >> b) & 0x01 != 0x00
-                up = c + d8_offset(b, nx)
-                if p.sb[up] == p.sb[c]
-                    push!(uidx, inv[up] - ustart[unit_of[j]] + 1)
-                else
-                    # an upstream sub-basin must run in an earlier level
-                    (rec_of[up] > 0 && level_of_unit[unit_of[inv[up]]] < level_of_unit[unit_of[j]]) ||
-                        error("invalid schedule at cell $c")
-                    push!(uidx, -rec_of[up])
-                end
+        for k in upstream_ptr[c]:(upstream_ptr[c + 1] - 1)
+            up = upstream_idx[k]
+            (active[up] && ds[up] == c) || error("cell $up is in the upstream list of cell $c, but doesn't drain into it")
+            if p.sb[up] == p.sb[c]
+                push!(uidx, inv[up] - ustart[unit_of[j]] + 1)
+            else
+                # an upstream sub-basin must run in an earlier level
+                (rec_of[up] > 0 && level_of_unit[unit_of[inv[up]]] < level_of_unit[unit_of[j]]) ||
+                    error("invalid schedule at cell $c")
+                push!(uidx, -rec_of[up])
             end
         end
         push!(uptr, length(uidx) + 1)

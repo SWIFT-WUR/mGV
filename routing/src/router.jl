@@ -3,8 +3,8 @@
 """
     SubbasinRouter(backend, layout, length, alpha, cell_area; cells_per_thread = 2, max_substeps = 144)
 
-Device arrays for routing with `layout`. `length`, `alpha` and `cell_area` are per grid
-cell (host or device vectors); they are permuted into the renumbered layout once.
+Device arrays for routing with `layout`. `length`, `alpha` and `cell_area` are per cell
+(host or device vectors); they are permuted into the renumbered layout once.
 
 `cells_per_thread` sets the workgroup size `S ÷ cells_per_thread` (at most 1024). Two
 cells per thread at S = 2048, or four at S = 4096, were fastest on an RX 7800 XT.
@@ -46,8 +46,8 @@ end
     route!(router, area, discharge, runoff, nsub, dt_step; max_velocity = 6f0, load_state = true)
 
 Route one model time step of `nsub` sub-steps of `dt_step` seconds. `area` and `discharge`
-are the model's grid vectors (channel cross-section [m2] and discharge [m3/s]); `runoff`
-is the grid runoff [mm/day]. With `load_state = true` the state is read from `area` and
+are the model's cell vectors (channel cross-section [m2] and discharge [m3/s]); `runoff`
+is the runoff per cell [mm/day]. With `load_state = true` the state is read from `area` and
 `discharge` first, so changes made to them outside the router (e.g. through BMI) are
 respected; it costs one gather over the active cells. The new state is written back to
 `area` and `discharge`. Inactive cells are left untouched.
