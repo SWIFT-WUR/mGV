@@ -1,7 +1,6 @@
 start_year = 1979
 end_year = 1980
 
-nveg = 14
 enable_routing = true
 enable_snow = true
 fillvalue_threshold = 1e15
@@ -15,7 +14,6 @@ format      = "netcdf"
 [input]
 [input.paths]
 input_param_file       = "../input_data/global/vic_global_5min_params_fix2_f32.nc"
-coverage_file          = "../input_data/global/vic_global_5min_domain.nc"
 routing_param_file     = "../input_data/global/routing/vic_global_5min_routing_param_wbt_f32.nc"
 
 # A single store with all forcing variables (and years) can be given instead with

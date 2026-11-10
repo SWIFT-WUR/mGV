@@ -10,7 +10,6 @@ import ..output_variables
 
 @option "paths" struct InputPaths
     input_param_file::String
-    coverage_file::String
     routing_param_file::String
     # One file or store with all forcing variables; the per-variable entries below
     # default to it, and override it when given.
@@ -102,12 +101,10 @@ end
 end
 
 @option "config" struct Cfg
-    nveg::Int = 14  # unused: the vegetation types are read from the parameter file
     enable_routing::Bool = true
     lat_var::String = "lat"
     lon_var::String = "lon"
     enable_snow::Bool = true
-    nbands::Int = 5  # unused: the snow bands are read from the parameter file
     fillvalue_threshold::Float32 = 1.0f15
     start_year::Int
     end_year::Int

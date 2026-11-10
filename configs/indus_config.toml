@@ -2,7 +2,6 @@ start_year = 1979
 end_year = 1980  # data available up to 2010
 enable_routing = true
 enable_snow = true
-nveg = 22
 
 [output]
 dir         = "../output_data/indus/"
@@ -14,7 +13,6 @@ format      = "netcdf"
 [input.paths]
 input_param_file    = "../input_data/indus/VIC_params_Mirca_calibrated_Indus.nc"
 routing_param_file  = "../input_data/indus/routing/VIC_rout_params_Indus.nc"
-coverage_file       = "../input_data/indus/domain_Indus.nc"
 precipitation_file    = "../input_data/indus/forcing/prec/pr_daily_GFDL-ESM4adj_historical_{year}.nc"
 air_temperature_file  = "../input_data/indus/forcing/tair/tas_daily_GFDL-ESM4adj_historical_{year}.nc"
 wind_speed_file       = "../input_data/indus/forcing/wind/wind10_daily_GFDL-ESM4_historical_{year}.nc"
