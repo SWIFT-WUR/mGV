@@ -66,6 +66,17 @@ end
 
 const AnyZarrForcingVar = Union{ZarrForcingVar, LandZarrForcingVar}
 
+"""
+Read-ahead state (Zarr only): `cache` is filled with the block after the readers' cache by
+`task`, which runs while the model computes. `start` and `len` are the timesteps it reads.
+"""
+mutable struct Prefetch
+    cache::Dict{String, Matrix{Float32}}
+    task::Union{Task, Nothing}
+    start::Int
+    len::Int
+end
+
 mutable struct ForcingReaders{S}
     # NetCDF variables, ZarrForcingVars or LandZarrForcingVars; `load_all_vars!` has a
     # version for each.
@@ -81,12 +92,7 @@ mutable struct ForcingReaders{S}
     cache_len::Int     # number of valid timesteps currently cached
     capacity::Int      # how many timesteps the cache can hold
     time_chunk::Int    # timesteps per chunk in the forcing (1 for NetCDF)
-    # Prefetching (Zarr only): `next_cache` is filled with the block after the cache by the
-    # task `prefetch`, while the model computes. Empty and `nothing` for NetCDF.
-    next_cache::Dict{String, Matrix{Float32}}
-    prefetch::Union{Task, Nothing}
-    prefetch_start::Int
-    prefetch_len::Int
+    prefetch::Union{Prefetch, Nothing}  # `nothing` for NetCDF
     # Reused decompression buffers for land-only Zarr
     buffers::Channel{Vector{UInt8}}
 end
@@ -355,9 +361,14 @@ function open_forcing(cfg::Cfg, domain::Domain; cache_bytes = FORCING_CACHE_BUDG
         var => Array{Float32, 3}(undef, nx, ny, gridded_zarr ? time_chunk : 0)
             for var in FORCING_VARS
     )
-    next_cache = Dict{String, Matrix{Float32}}(
-        var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS if prefetch
-    )
+    next = if prefetch
+        next_cache = Dict{String, Matrix{Float32}}(
+            var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS
+        )
+        Prefetch(next_cache, nothing, 0, 0)
+    else
+        nothing
+    end
 
     return ForcingReaders(
         sources,
@@ -369,10 +380,7 @@ function open_forcing(cfg::Cfg, domain::Domain; cache_bytes = FORCING_CACHE_BUDG
         0,
         capacity,
         time_chunk,
-        next_cache,
-        nothing,
-        0,
-        0,
+        next,
         Channel{Vector{UInt8}}(Inf),
     )
 end
@@ -477,14 +485,17 @@ function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
     start = chunk_start(readers, idx)
     len = min(readers.capacity, length(readers.times) - start + 1)
 
-    task = readers.prefetch
-    readers.prefetch = nothing
-    if !isnothing(task) && (readers.prefetch_start, readers.prefetch_len) == (start, len)
+    p = readers.prefetch
+    prefetched = false
+    if !isnothing(p) && !isnothing(p.task)
+        task, p.task = p.task, nothing
+        # Also wait for a prefetch of another block, as it uses the same buffers
         fetch(task)  # rethrows a failed read
-        readers.cache, readers.next_cache = readers.next_cache, readers.cache
+        prefetched = (p.start, p.len) == (start, len)
+    end
+    if prefetched
+        readers.cache, p.cache = p.cache, readers.cache
     else
-        # A prefetch of another block also uses the staging buffers: let it finish first
-        isnothing(task) || fetch(task)
         load_all_vars!(readers, readers.cache, start, len)
     end
     readers.cache_start = start
@@ -495,18 +506,19 @@ function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
 end
 
 """
-Start reading the block after the cache into `next_cache`, in a task that runs while the
-model computes. Only for Zarr forcing (NetCDF can only be read by one thread at a time).
+Start reading the block after the cache into the prefetch cache, in a task that runs while
+the model computes. Only for Zarr forcing (NetCDF can only be read by one thread at a time).
 """
 function start_prefetch!(readers::ForcingReaders)
-    isempty(readers.next_cache) && return nothing
+    p = readers.prefetch
+    isnothing(p) && return nothing
     next = readers.cache_start + readers.cache_len
     next > length(readers.times) && return nothing
     start = chunk_start(readers, next)
     len = min(readers.capacity, length(readers.times) - start + 1)
-    readers.prefetch_start = start
-    readers.prefetch_len = len
-    readers.prefetch = Threads.@spawn load_all_vars!(readers, readers.next_cache, start, len)
+    p.start = start
+    p.len = len
+    p.task = Threads.@spawn load_all_vars!(readers, p.cache, start, len)
     return nothing
 end
 

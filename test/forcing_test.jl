@@ -110,7 +110,7 @@ end
                 var == "air_temperature" && (expected = unpack.(quantize.(expected)))
                 mismatches += !isequal(mGV.read_var(t, land, var), expected)
             end
-            prefetches += !isnothing(land.prefetch)
+            prefetches += !isnothing(land.prefetch.task)
         end
         @test mismatches == 0
         @test prefetches > 0
