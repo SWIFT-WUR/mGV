@@ -67,14 +67,28 @@ end
 const AnyZarrForcingVar = Union{ZarrForcingVar, LandZarrForcingVar}
 
 """
+A block of consecutive forcing timesteps, `start:start+len-1`, for the active cells.
+"""
+mutable struct ForcingCache
+    data::Dict{String, Matrix{Float32}}  # (ncells, capacity) per variable, active cells only
+    start::Int  # index of the first cached timestep, 0 when empty
+    len::Int    # number of valid timesteps currently cached
+end
+
+ForcingCache(n::Int, capacity::Int) = ForcingCache(
+    Dict(var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS), 0, 0,
+)
+
+"""Whether timestep `idx` is in `cache`."""
+Base.in(idx::Int, cache::ForcingCache) = cache.start <= idx < cache.start + cache.len
+
+"""
 Read-ahead state (Zarr only): `cache` is filled with the block after the readers' cache by
-`task`, which runs while the model computes. `start` and `len` are the timesteps it reads.
+`task`, which runs while the model computes.
 """
 mutable struct Prefetch
-    cache::Dict{String, Matrix{Float32}}
+    cache::ForcingCache
     task::Union{Task, Nothing}
-    start::Int
-    len::Int
 end
 
 mutable struct ForcingReaders{S}
@@ -83,14 +97,12 @@ mutable struct ForcingReaders{S}
     sources::Dict{String, S}
     # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
-    cache::Dict{String, Matrix{Float32}}  # (ncells, capacity) per variable, active cells only
+    cache::ForcingCache
     # Gridded (nx, ny, time_chunk) buffer per variable that Zarr chunks are read into,
     # before the active cells are copied to the cache. Empty for NetCDF and land-only Zarr.
     staging::Dict{String, Array{Float32, 3}}
     cells::Vector{Int}  # linear grid index of each active cell, see `Domain`
-    cache_start::Int   # index of the first cached timestep, 0 when empty
-    cache_len::Int     # number of valid timesteps currently cached
-    capacity::Int      # how many timesteps the cache can hold
+    capacity::Int      # how many timesteps the cache (and prefetch cache) can hold
     time_chunk::Int    # timesteps per chunk in the forcing (1 for NetCDF)
     prefetch::Union{Prefetch, Nothing}  # `nothing` for NetCDF
     # Reused decompression buffers for land-only Zarr
@@ -353,31 +365,19 @@ function open_forcing(cfg::Cfg, domain::Domain; cache_bytes = FORCING_CACHE_BUDG
     time_chunk = time_chunk_length(sources)
     capacity = min(max(capacity ÷ time_chunk, 1) * time_chunk, length(times))
 
-    cache = Dict{String, Matrix{Float32}}(
-        var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS
-    )
     gridded_zarr = valtype(sources) <: ZarrForcingVar
     staging = Dict{String, Array{Float32, 3}}(
         var => Array{Float32, 3}(undef, nx, ny, gridded_zarr ? time_chunk : 0)
             for var in FORCING_VARS
     )
-    next = if prefetch
-        next_cache = Dict{String, Matrix{Float32}}(
-            var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS
-        )
-        Prefetch(next_cache, nothing, 0, 0)
-    else
-        nothing
-    end
+    next = prefetch ? Prefetch(ForcingCache(n, capacity), nothing) : nothing
 
     return ForcingReaders(
         sources,
         times,
-        cache,
+        ForcingCache(n, capacity),
         staging,
         domain.cells,
-        0,
-        0,
         capacity,
         time_chunk,
         next,
@@ -491,15 +491,15 @@ function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
         task, p.task = p.task, nothing
         # Also wait for a prefetch of another block, as it uses the same buffers
         fetch(task)  # rethrows a failed read
-        prefetched = (p.start, p.len) == (start, len)
+        prefetched = (p.cache.start, p.cache.len) == (start, len)
     end
     if prefetched
         readers.cache, p.cache = p.cache, readers.cache
     else
-        load_all_vars!(readers, readers.cache, start, len)
+        load_all_vars!(readers, readers.cache.data, start, len)
+        readers.cache.start = start
+        readers.cache.len = len
     end
-    readers.cache_start = start
-    readers.cache_len = len
 
     start_prefetch!(readers)
     return nothing
@@ -512,13 +512,13 @@ the model computes. Only for Zarr forcing (NetCDF can only be read by one thread
 function start_prefetch!(readers::ForcingReaders)
     p = readers.prefetch
     isnothing(p) && return nothing
-    next = readers.cache_start + readers.cache_len
+    next = readers.cache.start + readers.cache.len
     next > length(readers.times) && return nothing
     start = chunk_start(readers, next)
     len = min(readers.capacity, length(readers.times) - start + 1)
-    p.start = start
-    p.len = len
-    p.task = Threads.@spawn load_all_vars!(readers, p.cache, start, len)
+    p.cache.start = start
+    p.cache.len = len
+    p.task = Threads.@spawn load_all_vars!(readers, p.cache.data, start, len)
     return nothing
 end
 
@@ -637,12 +637,10 @@ the requested timestep falls outside it.
 """
 function read_var!(dest, time::DateTime, readers::ForcingReaders, var::String)
     idx = nearest_time_index(readers.times, time)
-    if idx < readers.cache_start || idx > readers.cache_start + readers.cache_len - 1
-        fill_forcing_cache!(readers, idx)
-    end
+    idx in readers.cache || fill_forcing_cache!(readers, idx)
     # Copy by position: GPU arrays (tested for CUDA, AMDGPU) can't copy a view in one go and error on the element-by-element fallback
     n = length(dest)
-    copyto!(dest, 1, readers.cache[var], (idx - readers.cache_start) * n + 1, n)
+    copyto!(dest, 1, readers.cache.data[var], (idx - readers.cache.start) * n + 1, n)
     return nothing
 end
 
@@ -650,7 +648,7 @@ end
 Read in forcing data at a certain point in time.
 """
 function read_var(time, readers::ForcingReaders, var::String)
-    dest = Vector{Float32}(undef, size(readers.cache[var], 1))
+    dest = Vector{Float32}(undef, size(readers.cache.data[var], 1))
     read_var!(dest, time, readers, var)
     return dest
 end

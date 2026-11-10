@@ -114,7 +114,7 @@ end
         end
         @test mismatches == 0
         @test prefetches > 0
-        @test land.cache_start > 700  # all blocks were read
+        @test land.cache.start > 700  # all blocks were read
     end
 
     @testset "Rejects stores without all active cells" begin
