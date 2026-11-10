@@ -12,7 +12,6 @@ format      = "netcdf"
 [input]
 [input.paths]
 input_param_file       = "../input_data/mekong/vic_mekong_5min_params.nc"
-coverage_file          = "../input_data/mekong/vic_mekong_5min_domain.nc"
 routing_param_file     = "../input_data/mekong/routing/VIC_rout_params_Mekong.nc"
 
 # Forcing data:
