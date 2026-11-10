@@ -45,11 +45,11 @@ DOY = np.arange(1, 366)
 
 # ET variable spec (reused for both basins)
 ET_VARS = [
-    ("OUT_EVAP",       "total_et_output",                    "Total ET",           "mm d$^{-1}$"),
-    ("OUT_TRANSP_VEG", "transpiration_summed_output",        "Transpiration",       "mm d$^{-1}$"),
-    ("OUT_EVAP_CANOP", "canopy_evaporation_summed_output",   "Canopy Evaporation",  "mm d$^{-1}$"),
-    ("OUT_EVAP_BARE",  "soil_evaporation_output",            "Soil Evaporation",    "mm d$^{-1}$"),
-    ("OUT_PET",        "potential_evaporation_summed_output","Potential ET",         "mm d$^{-1}$"),
+    ("OUT_EVAP",       "total_et",                    "Total ET",           "mm d$^{-1}$"),
+    ("OUT_TRANSP_VEG", "transpiration",        "Transpiration",       "mm d$^{-1}$"),
+    ("OUT_EVAP_CANOP", "canopy_evaporation",   "Canopy Evaporation",  "mm d$^{-1}$"),
+    ("OUT_EVAP_BARE",  "soil_evaporation",            "Soil Evaporation",    "mm d$^{-1}$"),
+    ("OUT_PET",        "potential_evaporation","Potential ET",         "mm d$^{-1}$"),
 ]
 
 # ── CSV reference helpers ─────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ def load_ts(ds, varname, mask=None, vmax=None):
     return ts[:365]
 
 def load_sm(ds, layer, is_mgv=False, mask=None):
-    vn = "soil_moisture_output" if is_mgv else "OUT_SOIL_MOIST"
+    vn = "soil_moisture" if is_mgv else "OUT_SOIL_MOIST"
     if ds is None or vn not in ds.variables:
         return None
     raw = np.ma.filled(ds.variables[vn][:], np.nan).astype(float)
@@ -227,8 +227,8 @@ def load_sm(ds, layer, is_mgv=False, mask=None):
     return np.nanmean(raw.reshape(T, -1), axis=1)[:365]
 
 def load_baseflow(mds, mask=None):
-    t = load_ts(mds, "total_runoff_output",   mask=mask)
-    s = load_ts(mds, "surface_runoff_output", mask=mask)
+    t = load_ts(mds, "total_runoff",   mask=mask)
+    s = load_ts(mds, "surface_runoff", mask=mask)
     if t is None or s is None: return None
     n  = min(len(t), len(s))
     bf = t[:n] - s[:n]; bf[bf < 0] = 0.0
@@ -379,7 +379,7 @@ def make_water_fig(title, vds, mds, mask_v, mask_m):
 
     plot_var(ax_hy[0],
              load_ts(vds, "OUT_RUNOFF",   mask=mask_v),
-             load_ts(mds, "surface_runoff_output", mask=mask_m),
+             load_ts(mds, "surface_runoff", mask=mask_m),
              "Surface Runoff", "mm d$^{-1}$")
     plot_var(ax_hy[1],
              load_ts(vds, "OUT_BASEFLOW", mask=mask_v),
@@ -421,7 +421,7 @@ if __name__ == "__main__":
     print(f"=== {case} ===")
     vic_mek = open_vic(vic_nc, vic_csv, case)
     mgv_mek = open_dataset(mgv_file, f"mGV {case}")
-    mask_v_mek, mask_m_mek = get_masks(vic_mek, mgv_mek, "OUT_SURF_TEMP", "tsurf_output")
+    mask_v_mek, mask_m_mek = get_masks(vic_mek, mgv_mek, "OUT_SURF_TEMP", "tsurf")
 
     # Energy
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
@@ -430,11 +430,11 @@ if __name__ == "__main__":
     plt.subplots_adjust(wspace=0.35, left=0.08, right=0.97, top=0.88, bottom=0.13)
     plot_var(axes[0],
             load_ts(vic_mek, "OUT_R_NET",    mask=mask_v_mek),
-            load_ts(mgv_mek, "net_radiation_summed_output", mask=mask_m_mek),
+            load_ts(mgv_mek, "net_radiation", mask=mask_m_mek),
             "Net Radiation", "W m$^{-2}$")
     plot_var(axes[1],
             load_ts(vic_mek, "OUT_SURF_TEMP", mask=mask_v_mek),
-            load_ts(mgv_mek, "tsurf_output",  mask=mask_m_mek),
+            load_ts(mgv_mek, "tsurf",  mask=mask_m_mek),
             "Surface Temperature", "°C")
     axes[0].legend(handles=LEGEND_ELEMS, fontsize=9)
     save(fig, f"{outdir}/{case.lower()}_energy.png")
