@@ -1,23 +1,19 @@
-# Checks for the BMI getters and setters of the per-layer and per-band variables, which BMI
-# exposes as views into 3D or 4D model arrays. For 4D arrays these views are non-contiguous.
+# Checks for the BMI getters and setters of the per-layer variables, which BMI exposes as
+# views into 2D model arrays.
 # Shared between opencl_test.jl and gpu_test.jl, so the arrays live on a device: the expected
 # values are always computed from a host copy of the full model array.
 
-is_layered(name::String) = occursin(r"_(layer|band)_\d", name)
+is_layered(name::String) = occursin(r"_layer_\d", name)
 
-# Host copy of the full model array behind the layered variable `name`, and the layer/band index
+# Host copy of the full model array behind the layered variable `name`, and the layer index
 function host_field(model::mGV.Model, name::String)
-    name_2d, ind = if occursin(r"_layer_\d", name)
-        mGV.soil_layer_standard_name(name)
-    else
-        mGV.snow_band_standard_name(name)
-    end
+    name_2d, ind = mGV.soil_layer_standard_name(name)
     model_vals, _ = mGV.get_field_in_model(model, name_2d)
     return Array(model_vals), ind
 end
 
 # Flattened (writable) slice of a host array, in the order BMI uses for the variable
-host_slice(field::Array, ind::Int) = vec(selectdim(field, 3, ind))
+host_slice(field::Array, ind::Int) = vec(selectdim(field, 2, ind))
 
 function var_size_type(model::mGV.Model, name::String)
     n = BMI.get_grid_size(model, BMI.get_var_grid(model, name))
@@ -48,7 +44,7 @@ function check_get_value_at_indices(model::mGV.Model, name::String)
     return nothing
 end
 
-# The full model array is compared, so writes outside of the layer/band are detected as well
+# The full model array is compared, so writes outside of the layer are detected as well
 function check_set_value(model::mGV.Model, name::String)
     n, T = var_size_type(model, name)
     expected, ind = host_field(model, name)

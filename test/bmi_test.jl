@@ -90,31 +90,50 @@ end
     @test BMI.get_time_step(model) == Float64(86400)
     @test BMI.get_start_time(model) == Float64(2.839968e8)
     @test BMI.get_current_time(model) == Float64(2.839968e8)
-    @test BMI.get_end_time(model) == Float64(3.470688e8)
+    @test BMI.get_end_time(model) == Float64(3.471552e8)
 
     # "model information functions" begin
     @test BMI.get_component_name(model) == "mGV"
-    @test BMI.get_grid_shape(
-        model,
-        BMI.get_var_grid(model, "land_vegetation_canopy__evaporation"),
-    ) == [14, 36, 36]
+    # 894 active (land) cells of the 36 x 36 grid
+    grid = BMI.get_var_grid(model, "land_surface__temperature")
+    @test BMI.get_grid_type(model, grid) == "unstructured"
+    @test BMI.get_grid_rank(model, grid) == 2  # x and y
+    @test BMI.get_grid_node_count(model, grid) == BMI.get_grid_size(model, grid) == 894
+    @test BMI.get_grid_edge_count(model, grid) == 0
+    @test BMI.get_grid_face_count(model, grid) == 0
+    @test BMI.get_grid_edge_nodes(model, grid, Int[]) == Int[]
+    @test BMI.get_grid_nodes_per_face(model, grid, Int[]) == Int[]
+    @test BMI.get_var_location(model, "land_surface__temperature") == "node"
+    @test BMI.get_var_location(model, "soil__moisture_layer_1") == "node"
+    x = BMI.get_grid_x(model, grid)
+    y = BMI.get_grid_y(model, grid)
+    @test length(x) == length(y) == 894
+    # Coordinates of the active cells, in grid order (longitude varies fastest)
+    lon, lat = model.grid_parameters.longitude, model.grid_parameters.latitude
+    @test all(in(lon), x) && all(in(lat), y)
+    @test issorted(collect(zip(y, x)))
     n_inputs = count(meta -> meta.input, values(mGV.standard_name_map))
     n_outputs = count(meta -> meta.output, values(mGV.standard_name_map))
     @test BMI.get_input_item_count(model) >= n_inputs
     @test BMI.get_output_item_count(model) >= n_outputs
-    @test length(
-        BMI.get_grid_z(
-            model,
-            BMI.get_var_grid(model, "land_vegetation_canopy__evaporation"),
-        ),
-    ) == model.config.nveg
+    # Tile grid: a node per snow band and vegetation type (z) with area in a cell. The Mekong
+    # cells have a single snow band each, and on average 4 of the 14 vegetation types.
+    tile_grid = BMI.get_var_grid(model, "land_vegetation_canopy__evaporation")
+    tile_cell = Array(model.tiles.cell)
+    @test BMI.get_grid_rank(model, tile_grid) == 3
+    @test BMI.get_grid_node_count(model, tile_grid) == 3580
+    @test issorted(tile_cell) && unique(tile_cell) == 1:894
+    @test BMI.get_grid_z(model, tile_grid) == Array(model.tiles.veg)
+    @test BMI.get_grid_x(model, tile_grid) == x[tile_cell]
+    @test BMI.get_grid_y(model, tile_grid) == y[tile_cell]
+    @test length(BMI.get_value_ptr(model, "land_vegetation_canopy__evaporation")) == 3580
 
     out_vars = BMI.get_output_var_names(model)
     in_vars = BMI.get_input_var_names(model)
     for i in 1:10
         BMI.update(model)
         if i == 1
-            @test BMI.get_current_time(model) == Float64(2.839968e8)
+            @test BMI.get_current_time(model) == Float64(2.840832e8)
         end
     end
 
@@ -145,6 +164,8 @@ end
     time = BMI.get_current_time(model) + (200 * BMI.get_time_step(model))
     BMI.update_until(model, time)
     @test BMI.get_current_time(model) == time
+    @test_logs (:warn, r"already at time") BMI.update_until(model, time)
+    @test_throws r"not a multiple" BMI.update_until(model, time + 1.0)
 
     BMI.finalize(model)
 end

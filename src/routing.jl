@@ -3,13 +3,13 @@ const MANNING_N = 3.5f-2
 const ROUTING_DT = 600.0f0  # timestep in seconds
 const MAX_RIVER_VELOCITY = 6.0f0  # Cap at 6.0 m/s so wave celerity (5/3 * v) is max 10.0 m/s
 
-using Atomix: @atomic
-
-
 struct RoutingState{F <: AbstractVector, I <: AbstractVector}
     # --- Topography ---
     # Downstream index is integer
     downstream_idx::I
+    # Upstream cells of cell i, in CSR format: upstream_idx[upstream_ptr[i]:(upstream_ptr[i + 1] - 1)]
+    upstream_ptr::I
+    upstream_idx::I
 
     # Static parameters (geometry)
     length::F
@@ -28,8 +28,8 @@ struct RoutingState{F <: AbstractVector, I <: AbstractVector}
     cfl::F
 
     # --- Buffers ---
-    inflow_current::F
-    inflow_next::F
+    discharge_next::F  # Discharge of the next sub-step, swapped with discharge
+    lateral_inflow::F  # Runoff into the channel [m3/s], constant over the sub-steps
 
     # --- Diagnostic counter ---
     violation_counter::I
@@ -37,7 +37,12 @@ end
 
 @adapt_structure RoutingState
 
-function RoutingState(config, elevation)
+"""
+Initialize the routing for the active cells of `domain`. The connectivity and slopes are
+built on the full grid, so a cell that flows into an inactive cell (e.g. the ocean) gets
+its slope from that cell's elevation, and then becomes an outlet.
+"""
+function RoutingState(config, domain::Domain)
     param_file = config.input.paths.routing_param_file
     println("Initializing Kinematic Wave Routing...")
     println("  -> Source: $param_file")
@@ -63,9 +68,16 @@ function RoutingState(config, elevation)
 
     close_param_source(ds)
 
+    # Elevation of all grid cells, including the inactive ones
+    ds_params = open_param_source(config.input.paths.input_param_file)
+    elevation = readfull(ds_params, config.input.names.elevation, 0.0)
+    close_param_source(ds_params)
+
     nx, ny = size(raw_ids)
+    (nx, ny) == domain.grid_size ||
+        error("Routing grid of size $((nx, ny)) does not match the parameter grid $(domain.grid_size)")
     n_total = nx * ny
-    println("  -> Grid: $nx x $ny ($n_total pixels)")
+    println("  -> Grid: $nx x $ny ($n_total pixels), $(ncells(domain)) active")
 
     # 2. Build Topology (with lookup table)
     # We must map ID -> Linear Index.
@@ -138,25 +150,39 @@ function RoutingState(config, elevation)
     # instead of in every routing sub-step
     flat_alpha = @. (sqrt(flat_slope) / MANNING_N) * (flat_width^-0.66666667f0) # -2/3
 
-    # 4. Allocate GPU state
+    # 4. Keep the active cells. Cells flowing into an inactive cell become outlets.
+    (; cells) = domain
+    cell_index = zeros(Int32, n_total)  # index of each grid cell among the active cells, 0 if inactive
+    cell_index[cells] .= 1:length(cells)
+    downstream = [
+        d == -1 || cell_index[d] == 0 ? Int32(-1) : cell_index[d] for d in cpu_downstream[cells]
+    ]
+
+    # Upstream list, so each cell can gather its inflow without atomics.
+    # Upstream cells are in increasing index order, which fixes the summation order.
+    upstream_ptr, upstream_idx = upstream_csr(downstream)
+    n_cells = length(cells)
+
+    # 5. Allocate GPU state
     println("  -> Allocating Routing State on GPU...")
 
     r_state = RoutingState(
-        cpu_downstream,
-        Float32.(flat_dist),
-        Float32.(flat_slope),
-        Float32.(flat_width),
-        Float32.(flat_area),
-        Float32.(flat_acc),
-        Float32.(flat_alpha),
+        downstream,
+        upstream_ptr,
+        upstream_idx,
+        Float32.(flat_dist[cells]),
+        Float32.(flat_slope[cells]),
+        Float32.(flat_width[cells]),
+        Float32.(flat_area[cells]),
+        Float32.(flat_acc[cells]),
+        Float32.(flat_alpha[cells]),
         # State vectors initialized to zero
-        # alloc(n_total) defaults to FloatType
-        zeros(Float32, n_total), # area
-        zeros(Float32, n_total), # discharge
-        zeros(Float32, n_total), # travel_time
-        zeros(Float32, n_total), # cfl
-        zeros(Float32, n_total), # inflow_current
-        zeros(Float32, n_total), # inflow_next
+        zeros(Float32, n_cells), # area
+        zeros(Float32, n_cells), # discharge
+        zeros(Float32, n_cells), # travel_time
+        zeros(Float32, n_cells), # cfl
+        zeros(Float32, n_cells), # discharge_next
+        zeros(Float32, n_cells), # lateral_inflow
         # Violation (of max speed) counter (1-element Int32 array)
         zeros(Int32, 1),
     )
@@ -165,18 +191,46 @@ function RoutingState(config, elevation)
     return r_state
 end
 
+"""
+Upstream cells of every cell, from the `downstream` index of each cell (-1 for outlets),
+in CSR format: the upstream cells of cell `i` are `idx[ptr[i]:(ptr[i + 1] - 1)]`, in
+increasing order.
+"""
+function upstream_csr(downstream::Vector{Int32})
+    n = length(downstream)
+    counts = zeros(Int32, n)
+    for d in downstream
+        d == -1 || (counts[d] += 1)
+    end
+    ptr = Int32.(cumsum([1; counts]))
+    idx = zeros(Int32, ptr[end] - 1)
+    next = ptr[1:n]
+    for (i, d) in enumerate(downstream)
+        d == -1 && continue
+        idx[next[d]] = i
+        next[d] += 1
+    end
+    return ptr, idx
+end
+
+@kernel function lateral_inflow_kernel!(lateral_inflow, runoff_forcing_flat, cell_areas, n)
+    i = @index(Global, Linear)
+
+    if i <= n
+        # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8
+        lateral_inflow[i] = (runoff_forcing_flat[i] * cell_areas[i]) * 1.15740741f-8
+    end
+end
+
 @kernel function kinematic_wave_kernel!(
         area,
-        discharge,
-        inflow_next,
-        inflow_current,
-        cfl_buffer,
-        travel_time_buffer,
-        runoff_forcing_flat,
-        downstream_idx,
+        discharge_next,
+        @Const(discharge),
+        lateral_inflow,
+        upstream_ptr,
+        upstream_idx,
         lengths,
         alphas,
-        cell_areas,
         dt,
         n,
     )
@@ -189,12 +243,17 @@ end
         # Load Data
         A_old = area[i] # Water (area) stored in channel (in this cell)
         Q_old = discharge[i]
-        Q_in = inflow_current[i] # Inflow from upstream cell(s)
+
+        # Gather inflow from upstream cell(s), from the previous sub-step.
+        # No atomics, and a fixed summation order, so results are reproducible.
+        Q_in = 0.0f0
+        for k in upstream_ptr[i]:(upstream_ptr[i + 1] - Int32(1))
+            # In bounds: upstream_csr only stores indices of existing cells
+            Q_in += @inbounds discharge[upstream_idx[k]]
+        end
 
         # Lateral inflow from runoff
-        # 1/86400000 (mm/day -> m/s) is roughly 1.15740741e-8
-        runoff_m3s = (runoff_forcing_flat[i] * cell_areas[i]) * 1.15740741f-8
-        Q_total_in = Q_in + runoff_m3s
+        Q_total_in = Q_in + lateral_inflow[i]
 
         # Mass balance
         dAdt = (Q_total_in - Q_old) / lengths[i] # Rate of change of stored water
@@ -206,7 +265,6 @@ end
 
         # Velocity capping
         # We calculate the theoretical velocity
-        v = 0.0f0
         if A_new > 1.0f-6
             v = Q_new / A_new
 
@@ -219,12 +277,31 @@ end
             end
         end
 
-        # CFL and travel time
+        # Update states
+        area[i] = A_new
+        discharge_next[i] = Q_new
+    end
+end
+
+# CFL and travel time, from the state after the last sub-step
+@kernel function routing_diagnostics_kernel!(
+        cfl_buffer,
+        travel_time_buffer,
+        area,
+        discharge,
+        lengths,
+        dt,
+        n,
+    )
+    i = @index(Global, Linear)
+
+    if i <= n
+        A = area[i]
         current_cfl = 0.0f0
         t_time = NaN32
 
-        if A_new > 1.0f-4 # Threshold for "water exists"
-            v = Q_new / A_new # Speed of the water
+        if A > 1.0f-4 # Threshold for "water exists"
+            v = discharge[i] / A # Speed of the water
             c = 1.66666667f0 * v # Wave celerity c = 5/3 * v
             current_cfl = (c * dt) / lengths[i]
 
@@ -236,23 +313,6 @@ end
 
         cfl_buffer[i] = current_cfl
         travel_time_buffer[i] = t_time
-
-        # Update states
-        area[i] = A_new
-        discharge[i] = Q_new
-
-        # Scatter / routing
-        dest = downstream_idx[i]
-
-        # Atomic add for safety since multiple upstream cells
-        # can simultaneously flow into the same downstream cell
-        if dest > 0
-            @atomic inflow_next[dest] += Q_new
-        end
-
-        # Clear inflow_current for reuse next sub-step. Keep this store at the end:
-        # placed before the loads above, it made kernel twice as slow.
-        inflow_current[i] = 0.0f0
     end
 end
 
@@ -265,26 +325,28 @@ function update_routing!(model)
     n_pixels = Int32(length(routing.downstream_idx))
     n_substeps = Int(ceil(dt / ROUTING_DT))
     dt_step = dt / Float32(n_substeps)
-    runoff_flat = reshape(total_runoff, :)
+    backend = get_backend(total_runoff)
 
-    kernel_launcher! = kinematic_wave_kernel!(get_backend(runoff_flat))
+    # Runoff is constant over the sub-steps, so convert it to channel inflow once
+    lateral_inflow_kernel!(backend)(
+        routing.lateral_inflow, total_runoff, routing.cell_area, n_pixels; ndrange = n_pixels
+    )
 
-    # Swap inflow buffers instead of copy+clear
-    inflow_current, inflow_next = routing.inflow_current, routing.inflow_next
+    kernel_launcher! = kinematic_wave_kernel!(backend)
+
+    # Swap discharge buffers: each sub-step reads the previous discharge and writes the next
+    discharge, discharge_next = routing.discharge, routing.discharge_next
     for t in 1:n_substeps
 
         kernel_launcher!(
             routing.area,
-            routing.discharge,
-            inflow_next,
-            inflow_current,
-            routing.cfl,
-            routing.travel_time,
-            runoff_flat,
-            routing.downstream_idx,
+            discharge_next,
+            discharge,
+            routing.lateral_inflow,
+            routing.upstream_ptr,
+            routing.upstream_idx,
             routing.length,
             routing.alpha,
-            routing.cell_area,
             dt_step,
             n_pixels,
             # routing.violation_counter;
@@ -296,13 +358,17 @@ function update_routing!(model)
         #     @warn "Velocity capped!" substep=t count=routing.violation_counter[1] max_allowed=MAX_RIVER_VELOCITY
         # end
 
-        inflow_current, inflow_next = inflow_next, inflow_current
+        discharge, discharge_next = discharge_next, discharge
     end
 
-    # With an odd number of sub-steps the next inflow ends up in routing.inflow_next
-    if inflow_current !== routing.inflow_current
-        copyto!(routing.inflow_current, inflow_current)
-        fill!(routing.inflow_next, 0.0f0)
+    # With an odd number of sub-steps the latest discharge ends up in routing.discharge_next
+    if discharge !== routing.discharge
+        copyto!(routing.discharge, discharge)
     end
+
+    routing_diagnostics_kernel!(backend)(
+        routing.cfl, routing.travel_time, routing.area, routing.discharge, routing.length,
+        dt_step, n_pixels; ndrange = n_pixels
+    )
     return nothing
 end

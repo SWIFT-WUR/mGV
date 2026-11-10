@@ -3,6 +3,7 @@ using Test
 import BasicModelInterface as BMI
 using mGV
 using TOML
+using Zarr: zopen
 
 const COORDS = ["lat", "lon", "time"]
 
@@ -65,6 +66,28 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         end
     end
 
+    @testset "Output is gridded, with NaN outside the active cells" begin
+        dir = mktempdir()
+        config_file = write_test_config(dir, ["soil_moisture", "total_runoff"])
+        model = BMI.initialize(mGV.Model, config_file)
+        BMI.update(model)
+        (; domain) = model
+        moisture = Array(model.soil_variables.moisture)
+        BMI.finalize(model)
+
+        store = zopen(joinpath(dir, only(filter(endswith(".zarr"), readdir(dir)))))
+        runoff = store["total_runoff"][:, :, 1]
+        @test size(runoff) == domain.grid_size == (36, 36)
+        active = falses(domain.grid_size)
+        active[domain.cells] .= true
+        @test all(isfinite, runoff[active])
+        @test all(isnan, runoff[.!active])
+        # Layered output: the active cells of each layer hold the model values
+        layers = store["soil_moisture"][:, :, 1, :]
+        @test mGV.to_cells(domain, layers) == moisture
+        @test all(isnan, reshape(layers, :, size(layers, 3))[vec(.!active), :])
+    end
+
     @testset "Unknown variable names are rejected when loading the config" begin
         config_file = write_test_config(mktempdir(), ["not_a_variable"])
         @test_throws r"Unknown output variable 'not_a_variable'" mGV.Config.load_config(config_file)
@@ -82,4 +105,17 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         @test any(isfinite, dest)
         @test !any(endswith(".zarr"), readdir(dir))
     end
+end
+
+@testset "Domain" begin
+    domain = mGV.Domain((3, 2), [2, 3, 5])
+    @test mGV.ncells(domain) == 3
+    grid = reshape(collect(1.0:12.0), 3, 2, 2)
+    cells = mGV.to_cells(domain, grid)
+    @test cells == [2.0 8.0; 3.0 9.0; 5.0 11.0]
+    @test mGV.to_cells(domain, grid[:, :, 1]) == [2.0, 3.0, 5.0]
+    out = fill(NaN, 3, 2, 2)
+    mGV.to_grid!(out, domain, cells)
+    @test isequal(out, ifelse.(reshape([0, 1, 1, 0, 1, 0], 3, 2) .== 1, grid, NaN))
+    @test_throws "does not match the domain grid" mGV.to_cells(domain, zeros(2, 3))
 end

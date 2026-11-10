@@ -25,8 +25,9 @@ include("backend_setup.jl")
 include("constants.jl")
 using .Constants: PhysConsts, SimConsts, SnowConsts
 
-include("reader.jl")
+include("domain.jl")
 include("parameters.jl")
+include("reader.jl")
 include("physics.jl")
 include("snow.jl")
 include("soil.jl")
@@ -53,13 +54,12 @@ end
 """
 Advance clock one step in time.
 
-Note: at iteration 0 the clock is not advanced in time,
-to have the model start time at iteration 1.
+The clock is advanced at the end of each update, so during an update `clock.time`
+is the start of the time step being computed, and afterwards it is the model time
+reached (as reported by BMI).
 """
 function advance!(clock)
-    if clock.iteration != 0
-        clock.time += clock.dt
-    end
+    clock.time += clock.dt
     clock.iteration += 1
     return nothing
 end
@@ -79,6 +79,8 @@ require.
 @kwdef mutable struct Model
     const config::Cfg    # all configuration options
     const clock::Clock   # to keep track of simulation time
+    const domain::Domain # the active cells of the input grid, which the model arrays hold
+    const tiles::Tiles   # the active snow bands and vegetation types of the cells
     const grid_parameters::GridParameters
     const vegetation_parameters::VegetationParameters
     const monthly_vegetation_parameters::MonthlyVegetationParameters
@@ -92,7 +94,7 @@ require.
     const routing::Union{RoutingState, Nothing}  # nothing when routing is disabled
     writer::Union{OutputWriter, Nothing} # writes model output; nothing when no output is selected
     const selected_outputs::Vector{ParameterMetadata} # output variables to write
-    # preallocated 2D daily output buffers
+    # preallocated per-cell daily output buffers
     const output_buffers::OutputBuffers =
         OutputBuffers(surface_energy_variables.surface_temperature, selected_outputs, config)
 end
@@ -113,29 +115,27 @@ function Model(config_file::AbstractString; backend = "auto")
     println("Active backend: $(backend_name(backend))")
 
     clock = Clock(config)
-    forcing_readers, forcing_variables = initialize_forcing(config)
-    grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters =
-        read_parameters(config)
+    domain = Domain(config)
+    forcing_readers, forcing_variables = initialize_forcing(config, domain)
+    grid_parameters, vegetation_parameters, soil_parameters, monthly_vegetation_parameters, tiles =
+        read_parameters(config, domain)
 
-    # Check dim order!
-    nx = length(grid_parameters.longitude)
-    ny = length(grid_parameters.latitude)
-    nveg = config.nveg  # vegetation types
-    nbands = config.nbands  # snow bands
-    nlayers = size(soil_parameters.depth, 3) # derive soil layers from input data
-    grid_dims = (nx, ny)
-    tile_dims = (nx, ny, nbands, nveg)
-    soil_dims = (nx, ny, nlayers)
+    n = ncells(domain)
+    nlayers = size(soil_parameters.depth, 2) # derive soil layers from input data
+    grid_dims = (n,)
+    tile_dims = (ntiles(tiles),)
+    soil_dims = (n, nlayers)
 
     surface_energy_variables = SurfaceEnergyVariables(grid_dims, tile_dims)
     canopy_variables = CanopyVariables(tile_dims)
     soil_variables = SoilVariables(grid_dims, soil_dims)
-    snow_variables = SnowVariables(nx, ny, nbands, nveg)
-    routing =
-        config.enable_routing ? RoutingState(config, grid_parameters.elevation) : nothing
+    snow_variables = SnowVariables(ntiles(tiles), nbands(tiles))
+    routing = config.enable_routing ?
+        RoutingState(config, domain) : nothing
 
     # Move data to backend during model initialization
     if !(backend isa CPU)
+        tiles = adapt(backend, tiles)
         grid_parameters = adapt(backend, grid_parameters)
         vegetation_parameters = adapt(backend, vegetation_parameters)
         soil_parameters = adapt(backend, soil_parameters)
@@ -162,17 +162,19 @@ function Model(config_file::AbstractString; backend = "auto")
         clamp(soil_parameters.initial_moisture, 0.0f0, soil_parameters.maximum_moisture)
 
     # Initialize soil column temperature using annual mean
-    for layer in axes(soil_variables.temperature, 3)
-        @views soil_variables.temperature[:, :, layer] .=
+    for layer in axes(soil_variables.temperature, 2)
+        @views soil_variables.temperature[:, layer] .=
             grid_parameters.average_temperature
     end
 
     writer = isempty(selected_outputs) ? nothing :
-        start_io_service(config, grid_parameters, year(clock.time), clock.dt, selected_outputs)
+        start_io_service(config, grid_parameters, domain, year(clock.time), clock.dt, selected_outputs)
 
     return Model(;
         config,
         clock,
+        domain,
+        tiles,
         grid_parameters,
         vegetation_parameters,
         monthly_vegetation_parameters,
@@ -190,18 +192,8 @@ function Model(config_file::AbstractString; backend = "auto")
 end
 
 @timeit_all to function update!(model::Model)
-    advance!(model.clock)
-
-    update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
-
-    load_monthly_parameters!(
-        model.vegetation_parameters,
-        model.monthly_vegetation_parameters,
-        month(model.clock.time),
-    )
-
     # Initialize surface temperature on first timestep
-    if model.clock.iteration == 1
+    if model.clock.iteration == 0
         model.surface_energy_variables.surface_temperature .=
             model.forcing_variables.air_temperature
     end
@@ -237,7 +229,7 @@ end
     update_soil_volumetric_heat_capacity!(model)
     estimate_soil_layer_temperature!(model)
 
-    if model.clock.iteration == 1
+    if model.clock.iteration == 0
         update_surface_temperature!(model)
         update_aerodynamic_resistance!(model)
     end
@@ -265,13 +257,24 @@ end
             open_new_file!(model)
         end
     end
+
+    advance!(model.clock)
+
+    if model.clock.time < DateTime(model.config.end_year + 1)
+        update_forcing!(model.clock.time, model.forcing_readers, model.forcing_variables)
+        load_monthly_parameters!(
+            model.vegetation_parameters,
+            model.monthly_vegetation_parameters,
+            month(model.clock.time),
+        )
+    end
     return nothing
 end
 
 function run(config_file::AbstractString; backend = "auto")
     m = Model(config_file; backend)
 
-    end_time = DateTime(m.config.end_year + 1) - m.clock.dt
+    end_time = DateTime(m.config.end_year + 1)
     while m.clock.time < end_time
         update!(m)
     end
@@ -319,6 +322,7 @@ function open_new_file!(model::Model)
     model.writer = start_io_service(
         model.config,
         model.grid_parameters,
+        model.domain,
         year(model.clock.time) + 1,
         model.clock.dt,
         model.selected_outputs,

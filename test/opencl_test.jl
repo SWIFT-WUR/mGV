@@ -76,7 +76,7 @@ end
 
 include("bmi_views.jl")
 
-@testset "OpenCL BMI layer and band views" begin
+@testset "OpenCL BMI layer views" begin
     model = mGV.Model(make_config("opencl"); backend = "opencl")
     @test model.grid_parameters.latitude isa CLArray
     test_layered_views(model)
