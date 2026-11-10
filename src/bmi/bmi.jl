@@ -185,14 +185,13 @@ on the tile grid.
 """
 function node_coordinates(model::Model, grid::Int)
     grid in values(GRIDS) || error("unknown grid type $grid")
-    (; domain) = model
-    cells = CartesianIndices(domain.grid_size)[domain.cells]
-    if grid == GRIDS["tile_grid"]
-        cells = cells[Array(model.tiles.cell)]
-    end
     lon = Array(model.grid_parameters.longitude)
     lat = Array(model.grid_parameters.latitude)
-    return [lon[I[1]] for I in cells], [lat[I[2]] for I in cells]
+    if grid == GRIDS["tile_grid"]
+        cell = Array(model.tiles.cell)
+        return lon[cell], lat[cell]
+    end
+    return lon, lat
 end
 
 # RemoteBMI uses outdated BasicModelInterface.jl definition;

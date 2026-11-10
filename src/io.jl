@@ -216,17 +216,16 @@ function start_io_service(
     nt = (DateTime(year + 1) - DateTime(year)) ÷ dt
 
     backend = get_backend(grid_parameters.elevation)
-    grid_parameters = adapt(Array, grid_parameters)
 
     nlayers = 3  # hardcoded 3 soil layers
 
     if lowercase(config.output.format) == "netcdf"
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).nc")
         # Create a buffer pool
-        output_store = create_output_netcdf(output_path, domain, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
+        output_store = create_output_netcdf(output_path, domain, nt, nlayers, domain.latitude, domain.longitude, selected_outputs)
     else
         output_path = joinpath(config.output.dir, "$(config.output.file_prefix)$(year).zarr")
-        output_store = create_output_zarr(output_path, year, domain, nt, nlayers, grid_parameters.latitude, grid_parameters.longitude, selected_outputs)
+        output_store = create_output_zarr(output_path, year, domain, nt, nlayers, domain.latitude, domain.longitude, selected_outputs)
     end
 
     # Start the async pool

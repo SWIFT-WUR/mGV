@@ -108,7 +108,7 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
 end
 
 @testset "Domain" begin
-    domain = mGV.Domain((3, 2), [2, 3, 5])
+    domain = mGV.Domain((3, 2), [2, 3, 5], [100.0, 101.0, 102.0], [-10.0, 20.0])
     @test mGV.ncells(domain) == 3
     grid = reshape(collect(1.0:12.0), 3, 2, 2)
     cells = mGV.to_cells(domain, grid)
@@ -118,4 +118,5 @@ end
     mGV.to_grid!(out, domain, cells)
     @test isequal(out, ifelse.(reshape([0, 1, 1, 0, 1, 0], 3, 2) .== 1, grid, NaN))
     @test_throws "does not match the domain grid" mGV.to_cells(domain, zeros(2, 3))
+    @test mGV.cell_coordinates(domain) == ([101.0, 102.0, 101.0], [-10.0, -10.0, 20.0])
 end

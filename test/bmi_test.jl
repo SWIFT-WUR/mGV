@@ -109,8 +109,9 @@ end
     y = BMI.get_grid_y(model, grid)
     @test length(x) == length(y) == 894
     # Coordinates of the active cells, in grid order (longitude varies fastest)
-    lon, lat = model.grid_parameters.longitude, model.grid_parameters.latitude
-    @test all(in(lon), x) && all(in(lat), y)
+    (; domain) = model
+    @test all(in(domain.longitude), x) && all(in(domain.latitude), y)
+    @test x == Array(model.grid_parameters.longitude) && y == Array(model.grid_parameters.latitude)
     @test issorted(collect(zip(y, x)))
     n_inputs = count(meta -> meta.input, values(mGV.standard_name_map))
     n_outputs = count(meta -> meta.output, values(mGV.standard_name_map))
