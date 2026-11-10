@@ -10,6 +10,8 @@ gridded array, and [`to_grid!`](@ref) scatters them back.
 struct Domain
     grid_size::Tuple{Int, Int}  # (nx, ny) of the input grid
     cells::Vector{Int}          # linear index into the (nx, ny) grid of each active cell
+    longitude::Vector{Float64}  # coordinate of the input grid (nx)
+    latitude::Vector{Float64}   # coordinate of the input grid (ny)
 end
 
 ncells(domain::Domain) = length(domain.cells)
@@ -22,10 +24,12 @@ function Domain(config::Cfg)
     name = config.input.names.run_cell
     ds = open_param_source(config.input.paths.input_param_file)
     run_cell = readfull(ds, name, 0)
+    longitude = vec(readfull(ds, config.input.names.longitude, 0.0))
+    latitude = vec(readfull(ds, config.input.names.latitude, 0.0))
     close_param_source(ds)
     active = run_cell .> 0
 
-    domain = Domain(size(active), findall(vec(active)))
+    domain = Domain(size(active), findall(vec(active)), longitude, latitude)
     ncells(domain) > 0 || error("The parameter file has no active cells ($name is zero everywhere)")
     nx, ny = domain.grid_size
     println("Domain: $(ncells(domain)) active cells of $nx x $ny grid cells")
@@ -42,6 +46,12 @@ function to_cells(domain::Domain, grid::AbstractArray)
     rest = size(grid)[3:end]
     flat = reshape(grid, prod(domain.grid_size), prod(rest))
     return reshape(flat[domain.cells, :], ncells(domain), rest...)
+end
+
+"""Longitude and latitude of each active cell."""
+function cell_coordinates(domain::Domain)
+    cells = CartesianIndices(domain.grid_size)[domain.cells]
+    return [domain.longitude[I[1]] for I in cells], [domain.latitude[I[2]] for I in cells]
 end
 
 """

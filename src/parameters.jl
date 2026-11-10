@@ -1,7 +1,7 @@
-struct GridParameters{V <: AbstractVector, M <: AbstractVector, B <: AbstractVector}
-    # Static
-    latitude::V   # of the input grid (ny)
-    longitude::V  # of the input grid (nx)
+struct GridParameters{M <: AbstractVector, B <: AbstractVector}
+    # Static, per active cell
+    longitude::M
+    latitude::M
     elevation::M
     average_temperature::M
     annual_precipitation::M
@@ -155,10 +155,12 @@ function read_parameters(config::Cfg, domain::Domain)
     readbands(ds, name, fallback) = to_bands(tiles, readcells(ds, name, fallback))
     readtiles(ds, name, fallback) = to_tiles(tiles, readcells(ds, name, fallback))
 
+    elevation = readcells(ds_params, config.input.names.elevation, 0.0)
+    longitude, latitude = cell_coordinates(domain)
     grid_params = GridParameters(
-        readfull(ds_params, config.input.names.latitude, 0.0),
-        readfull(ds_params, config.input.names.longitude, 0.0),
-        readcells(ds_params, config.input.names.elevation, 0.0),
+        convert(typeof(elevation), longitude),
+        convert(typeof(elevation), latitude),
+        elevation,
         readcells(ds_params, config.input.names.average_temperature, 0.0),
         readcells(ds_params, config.input.names.annual_precipitation, 0.0),
         to_bands(tiles, area_fraction),
