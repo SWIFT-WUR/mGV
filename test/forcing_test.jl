@@ -53,16 +53,21 @@ function write_land_store(path, cfg, domain, netcdf, year)
 
     group = zgroup(path)
     function vector(name, values, dim; attrs = Dict{String, Any}())
-        z = zcreate(eltype(values), group, name, length(values);
-            attrs = merge(attrs, Dict{String, Any}("_ARRAY_DIMENSIONS" => [dim])))
+        z = zcreate(
+            eltype(values), group, name, length(values);
+            attrs = merge(attrs, Dict{String, Any}("_ARRAY_DIMENSIONS" => [dim]))
+        )
         z[:] = values
+        return nothing
     end
     vector(names.longitude, lon, names.longitude)
     vector(names.latitude, lat, names.latitude)
     vector("lon_index", Int32.((cells .- 1) .% nx), "cell")
     vector("lat_index", Int32.((cells .- 1) .÷ nx), "cell")
-    vector(names.time, Int32[Dates.value(Date(t) - Date(1970)) for t in times], names.time;
-        attrs = Dict{String, Any}("units" => "days since 1970-01-01", "calendar" => "standard"))
+    vector(
+        names.time, Int32[Dates.value(Date(t) - Date(1970)) for t in times], names.time;
+        attrs = Dict{String, Any}("units" => "days since 1970-01-01", "calendar" => "standard")
+    )
 
     for var in mGV.FORCING_VARS
         data = reduce(hcat, (mGV.read_var(t, netcdf, var) for t in times))[reverse(1:n), :]
@@ -74,9 +79,11 @@ function write_land_store(path, cfg, domain, netcdf, year)
         end
         # The cell outside the domain gets values that should never be read
         data = vcat(data, fill(eltype(data)(12345), 1, length(times)))
-        z = zcreate(eltype(data), group, mGV.getval(names, var), size(data)...;
+        z = zcreate(
+            eltype(data), group, mGV.getval(names, var), size(data)...;
             chunks = (100, 10), compressor = BloscCompressor(cname = "zstd", clevel = 5, shuffle = 1),
-            fill_value = eltype(data) == Int16 ? Int16(-32768) : NaN32, attrs)
+            fill_value = eltype(data) == Int16 ? Int16(-32768) : NaN32, attrs
+        )
         z[:, :] = data
     end
     return nothing
