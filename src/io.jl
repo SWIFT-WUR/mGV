@@ -1,6 +1,7 @@
 include("async_writer.jl")
 
 const OUTPUT_COMPRESSOR = Zarr.BloscCompressor(cname = "lz4", clevel = 1, shuffle = 1)
+const libblosc = Blosc.libblosc
 
 # Target size of an (uncompressed) output chunk. Chunks are compressed in parallel, so
 # they should be small enough to give every thread work, and large enough to keep the
@@ -238,11 +239,13 @@ end
 
 """
 Copy the timesteps of `block` for the cells `rows` into `buf`, as a (cell_chunk,
-time_chunk, nlayers) land-only chunk. Missing cells and timesteps are the fill value.
+time_chunk, nlayers) land-only chunk. Missing cells and timesteps are the fill value. Only
+a chunk that the block does not fill is filled with it first: the last chunk of cells, and
+the chunks of a partial block.
 """
 function fill_cell_chunk!(buf::Vector{T}, data::Array{T, 3}, len, rows, cell_chunk, time_chunk) where {T}
     n, block_length, nlayers = size(data)
-    fill!(buf, fill_value(T))
+    (length(rows) < cell_chunk || len < time_chunk) && fill!(buf, fill_value(T))
     for l in 1:nlayers, t in 1:len
         copyto!(
             buf, ((l - 1) * time_chunk + t - 1) * cell_chunk + 1,
@@ -255,14 +258,71 @@ end
 """
 Compress the chunk `buf` and write it as chunk `index` of the Zarr `array`, from any
 thread. Chunks of only the fill value are not written: they read as NaN.
+
+Compression and (for a `DirectoryStore`) writing are GC-safe calls into C: a garbage
+collection, on any thread, does not wait for them. The file is written in place, not to a
+temporary file that is then moved: the store is new, so nothing reads a chunk while it is
+written.
 """
 function write_chunk!(array::ZArray, buf::Vector{T}, index::CartesianIndex, buffers::ChunkBuffers) where {T}
     all(isequal(fill_value(T)), buf) && return nothing
     bytes = acquire!(buffers.bytes)
     resize!(bytes, sizeof(buf) + Blosc.MAX_OVERHEAD)
-    n = Blosc.compress!(bytes, buf; level = OUTPUT_COMPRESSOR.clevel, shuffle = OUTPUT_COMPRESSOR.shuffle)
-    Zarr.store_writechunk(array.storage, resize!(bytes, n), array.path, index, array.metadata.chunk_key_encoding)
+    resize!(bytes, blosc_compress!(bytes, buf, OUTPUT_COMPRESSOR))
+    key = Zarr.citostring(array.metadata.chunk_key_encoding, index)
+    if array.storage isa Zarr.DirectoryStore
+        write_file_gcsafe(joinpath(array.storage.folder, array.path, key), bytes)
+    else
+        array.storage[array.path, key] = bytes
+    end
     release!(buffers.bytes, bytes)
+    return nothing
+end
+
+"""
+Compress `src` into `dest` with Blosc `compressor` (its codec, level and shuffle), in the
+calling thread, and return the compressed size. Uses `blosc_compress_ctx`, which needs no
+global Blosc settings and no lock, so it can run in many threads at once.
+"""
+function blosc_compress!(dest::Vector{UInt8}, src::Vector{T}, compressor) where {T}
+    (; cname, clevel, shuffle) = compressor
+    n = GC.@preserve dest src @ccall gc_safe = true libblosc.blosc_compress_ctx(
+        clevel::Cint, shuffle::Cint, sizeof(T)::Csize_t, sizeof(src)::Csize_t, src::Ptr{Cvoid},
+        dest::Ptr{Cvoid}, length(dest)::Csize_t, cname::Cstring, 0::Csize_t, 1::Cint,
+    )::Cint
+    n > 0 || error("Blosc compression failed ($n)")
+    return Int(n)
+end
+
+"""
+Write `bytes` to the file `path`, creating its directory if needed, with GC-safe calls (see
+[`write_chunk!`](@ref)).
+"""
+function write_file_gcsafe(path::String, bytes::Vector{UInt8})
+    flags = Base.Filesystem.JL_O_WRONLY | Base.Filesystem.JL_O_CREAT | Base.Filesystem.JL_O_TRUNC
+    open_file() = @ccall gc_safe = true open(path::Cstring, flags::Cint; 0o644::Cuint)::Cint
+    fd = open_file()
+    # Not `Libc.errno() == ENOENT`: errno may not survive the return from a GC-safe call
+    # (the thread can wait there for a garbage collection), so check the directory instead
+    if fd < 0 && !isdir(dirname(path))
+        mkpath(dirname(path))
+        fd = open_file()
+    end
+    fd < 0 && throw(SystemError("opening $path", Libc.errno()))
+    written = 0
+    GC.@preserve bytes while written < length(bytes)
+        n = @ccall gc_safe = true write(
+            fd::Cint, (pointer(bytes) + written)::Ptr{UInt8}, (length(bytes) - written)::Csize_t,
+        )::Cssize_t
+        if n < 0
+            errno = Libc.errno()
+            errno == Libc.EINTR && continue
+            @ccall close(fd::Cint)::Cint
+            throw(SystemError("writing $path", errno))
+        end
+        written += n
+    end
+    (@ccall gc_safe = true close(fd::Cint)::Cint) == 0 || throw(SystemError("closing $path", Libc.errno()))
     return nothing
 end
 

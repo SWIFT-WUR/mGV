@@ -144,11 +144,6 @@ function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, bloc
         put!(free, OutputBlock(data, clipped, nothing, 0, 0))
     end
 
-    # Let Blosc compress in several threads at once (for `write_block!`). The compressor is
-    # a global Blosc setting; every output store uses the same one.
-    ENV["BLOSC_NOLOCK"] = "1"
-    Blosc.set_compressor(OUTPUT_COMPRESSOR.cname)
-
     store = open_store(year)
     busy = Ref(0.0)
     buffers = ChunkBuffers()
