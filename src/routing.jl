@@ -163,6 +163,19 @@ function RoutingState(config, domain::Domain)
     upstream_ptr, upstream_idx = upstream_csr(downstream)
     n_cells = length(cells)
 
+    # Channel length. Outlets and sinks point to themselves with a flow distance of 0,
+    # which would divide by zero in the mass balance, so use the cell size instead.
+    cell_length = flat_dist[cells]
+    cell_size = sqrt.(flat_area[cells])
+    invalid_length = @. !(cell_length > 0.0f0) | isinf(cell_length)
+    n_invalid = count(invalid_length)
+    if n_invalid > 0
+        @warn "$n_invalid active cells have a zero or missing flow distance; using sqrt(cell_area) as their channel length"
+        cell_length[invalid_length] .= cell_size[invalid_length]
+    end
+    all(x -> x > 0.0f0 && isfinite(x), cell_length) ||
+        error("Routing channel length is not positive and finite for all active cells; check cell_dist and cell_area in $param_file")
+
     # 5. Allocate GPU state
     println("  -> Allocating Routing State on GPU...")
 
@@ -170,7 +183,7 @@ function RoutingState(config, domain::Domain)
         downstream,
         upstream_ptr,
         upstream_idx,
-        Float32.(flat_dist[cells]),
+        Float32.(cell_length),
         Float32.(flat_slope[cells]),
         Float32.(flat_width[cells]),
         Float32.(flat_area[cells]),
