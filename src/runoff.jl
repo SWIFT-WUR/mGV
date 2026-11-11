@@ -1,4 +1,4 @@
-@kernel function surface_runoff_kernel!(
+@kernel_inbounds function surface_runoff_kernel!(
         surface_runoff,
         A_sat,
         soil_moisture,
@@ -187,7 +187,7 @@ function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
     return clamp.(Qb, 0.0f0, avail)
 end
 
-@kernel function runoff_drainage_kernel!(
+@kernel_inbounds function runoff_drainage_kernel!(
         soil_moisture,          # (ncells, 3)
         subsurface_runoff,      # (ncells)
         surface_runoff,         # (ncells)
@@ -241,7 +241,7 @@ end
         # Config: RUNOFF_STEPS_PER_DAY = 24 (hourly runoff sub-steps)
         # MODEL_STEPS_PER_DAY = 1 (daily meteo) -> runoff_steps_per_dt = 24/1 = 24
         # ==========================================================
-        N_STEPS = 24
+        # 24 sub-steps, unrolled below (with `@nexprs`) so that the kernel vectorizes
         INV_STEPS = 1.0f0 / 24.0f0
 
         inflow_sub = inflow * INV_STEPS
@@ -255,7 +255,7 @@ end
         tot_baseflow = zero
         tot_spill_1 = zero
 
-        for step in 1:N_STEPS
+        Base.Cartesian.@nexprs 24 step -> begin
             # ==================== LAYER 1 ====================
             eff_sm1 = max(sm1 + inflow_sub - evap_sub - t1_sub, zero)
             dpot_1 = calculate_interlayer_drainage(k1 * INV_STEPS, eff_sm1, max1, res1, exp1)
@@ -364,7 +364,7 @@ function solve_runoff_and_drainage!(
     return nothing
 end
 
-@kernel function infiltration_kernel!(
+@kernel_inbounds function infiltration_kernel!(
         infiltration, throughfall, surface_runoff, cv_grid, area_fraction, cell_tiles, band
     )
     i = @index(Global, Linear)

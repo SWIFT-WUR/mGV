@@ -226,7 +226,7 @@ function upstream_csr(downstream::Vector{Int32})
     return ptr, idx
 end
 
-@kernel function lateral_inflow_kernel!(lateral_inflow, runoff_forcing_flat, cell_areas, n)
+@kernel_inbounds function lateral_inflow_kernel!(lateral_inflow, runoff_forcing_flat, cell_areas, n)
     i = @index(Global, Linear)
 
     if i <= n
@@ -235,7 +235,7 @@ end
     end
 end
 
-@kernel function kinematic_wave_kernel!(
+@kernel_inbounds function kinematic_wave_kernel!(
         area,
         discharge_next,
         @Const(discharge),
@@ -262,7 +262,7 @@ end
         Q_in = 0.0f0
         for k in upstream_ptr[i]:(upstream_ptr[i + 1] - Int32(1))
             # In bounds: upstream_csr only stores indices of existing cells
-            Q_in += @inbounds discharge[upstream_idx[k]]
+            Q_in += discharge[upstream_idx[k]]
         end
 
         # Lateral inflow from runoff
@@ -296,7 +296,7 @@ end
 end
 
 # CFL and travel time, from the state after the last sub-step
-@kernel function routing_diagnostics_kernel!(
+@kernel_inbounds function routing_diagnostics_kernel!(
         cfl_buffer,
         travel_time_buffer,
         area,

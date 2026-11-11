@@ -1,4 +1,4 @@
-@kernel function surface_temp_kernel!(
+@kernel_inbounds function surface_temp_kernel!(
         tsurf_val, T_soil_1, T_soil_2, albedo,
         swdown, lwdown, ra,
         kap, D_1, D_2, D_3, Cs_val, total_et_val, Ta, psurf,
@@ -84,7 +84,7 @@ end
 Compute the grid-cell albedo and effective aerodynamic resistance, weighted by
 the snow band area fraction and vegetation fraction of every tile.
 """
-@kernel function mean_albedo_resistance_kernel!(
+@kernel_inbounds function mean_albedo_resistance_kernel!(
         mean_albedo, ra_eff,
         @Const(AreaFract), @Const(cv), @Const(albedo), @Const(ra),
         @Const(cell_tiles), @Const(band)

@@ -47,6 +47,9 @@ jobs:
       # 4. Execute the script
       - name: Run validations
         run: bash run_validations.sh
+        env:
+          # Check the kernels' array accesses, which skip bounds checking by default
+          JULIA_FLAGS: --check-bounds=yes
 
       # 5. Debug: show what was produced
       - name: Output files
