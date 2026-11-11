@@ -323,7 +323,7 @@ end
     # 6. Effective saturation parameter (Ke)
     Ke = ifelse(
         Wu == moist[I],
-        0.7f0 * log10(max(Sr, 1.0f-10)) + 1.0f0,
+        0.7f0 * fastlog10(max(Sr, 1.0f-10)) + 1.0f0,
         Sr
     )
 

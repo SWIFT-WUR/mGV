@@ -1,13 +1,3 @@
-"""
-    fastpow(x, y)
-
-`x^y` for `x ≥ 0`, computed as `exp2(y * log2(x))`. On the KernelAbstractions CPU backend
-(PoCL) this is about 3x cheaper than `pow`, and 2x cheaper than `cbrt`. The result can
-differ from `x^y` in the last few bits. Negative `x` gives `NaN`.
-"""
-@inline fastpow(x::T, y::T) where {T <: AbstractFloat} =
-    ifelse(iszero(y), one(T), exp2(y * log2(x)))
-
 """Surface energy variables per cell (`M`), and per tile (`T`, see `Tiles`)."""
 struct SurfaceEnergyVariables{M <: AbstractVector, T <: AbstractVector}
     # State
