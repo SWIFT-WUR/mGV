@@ -1,10 +1,13 @@
-# Float32 `exp2`, `log2` and `log10` written as plain arithmetic.
+# `exp2`, `log2` and `log10` for device code, with Float32 versions written as plain
+# arithmetic for the KernelAbstractions CPU backend (PoCL).
 #
-# On the KernelAbstractions CPU backend (PoCL), the `exp2`, `log2` and `log10` builtins are
-# calls that LLVM cannot vectorize, so a kernel using them runs one work-item at a time
-# (`exp` and `log` do vectorize). These versions are only arithmetic, bit operations and
-# `ifelse`, so a kernel using them vectorizes across work-items: about 7x faster for `exp2`
-# and 10x for `log2` and `log10`. Other types fall back to Base.
+# On PoCL, the `exp2`, `log2` and `log10` builtins are calls that LLVM cannot vectorize, so a
+# kernel using them runs one work-item at a time (`exp` and `log` do vectorize). The
+# polynomial versions below are only arithmetic, bit operations and `ifelse`, so a kernel
+# using them vectorizes across work-items: about 7x faster for `exp2` and 10x for `log2` and
+# `log10`. GPUs have fast native instructions for these functions, which beat the
+# polynomials, so `fastexp2`, `fastlog2` and `fastlog10` call Base, and only PoCL's method
+# table overrides them with the polynomial versions.
 
 # p * 2^n, for n in [-162, 128]: two factors keep each exponent valid, so the result
 # overflows to Inf and underflows gradually to subnormals and zero
@@ -17,12 +20,12 @@
 end
 
 """
-    fastexp2(x)
+    polynomial_exp2(x::Float32)
 
-`2^x`, within 1 ulp of the exact result for `Float32`. Vectorizes on the CPU backend, unlike
-`exp2`. Special values match `exp2`.
+`2^x`, within 1 ulp of the exact result. Vectorizes on PoCL, unlike `exp2`. Special values
+match `exp2`.
 """
-@inline function fastexp2(x::Float32)
+@inline function polynomial_exp2(x::Float32)
     # beyond these, the result is Inf or 0 (NaN passes through)
     xc = clamp(x, -160.0f0, 128.0f0)
     n = round(xc)
@@ -41,16 +44,14 @@ end
     )
     return _scale_pow2(p, unsafe_trunc(Int32, n))
 end
-@inline fastexp2(x::AbstractFloat) = exp2(x)
 
 """
-    fastlog2(x)
+    polynomial_log2(x::Float32)
 
-`log2(x)`, within 1.8 ulp of the exact result for `Float32` (including subnormal `x`).
-Vectorizes on the CPU backend, unlike `log2`. Gives `-Inf` for zero, `Inf` for `Inf`, and
-`NaN` for negative `x` or `NaN`.
+`log2(x)`, within 1.8 ulp of the exact result (including subnormal `x`). Vectorizes on PoCL,
+unlike `log2`. Gives `-Inf` for zero, `Inf` for `Inf`, and `NaN` for negative `x` or `NaN`.
 """
-@inline function fastlog2(x::Float32)
+@inline function polynomial_log2(x::Float32)
     # x = 2^e * m, with m in [sqrt(1/2), sqrt(2)); subnormals are scaled up by 2^23 first
     subnormal = x < floatmin(Float32)
     xs = ifelse(subnormal, x * 8.388608f6, x)
@@ -80,24 +81,41 @@ Vectorizes on the CPU backend, unlike `log2`. Gives `-Inf` for zero, `Inf` for `
     r = ifelse(x == 0.0f0, -Inf32, r)
     return ifelse((x < 0.0f0) | isnan(x), NaN32, r)
 end
-@inline fastlog2(x::AbstractFloat) = log2(x)
 
 """
+    polynomial_log10(x::Float32)
+
+`log10(x)`, computed as `polynomial_log2(x) * log10(2)`: within 3 ulp. Vectorizes on PoCL,
+unlike `log10`. Special values match [`polynomial_log2`](@ref).
+"""
+@inline polynomial_log10(x::Float32) = polynomial_log2(x) * 0.30103f0
+
+"""
+    fastexp2(x)
+    fastlog2(x)
     fastlog10(x)
 
-`log10(x)`, computed as `fastlog2(x) * log10(2)`: within 3 ulp for `Float32`.
-Vectorizes on the CPU backend, unlike `log10`. Special values match [`fastlog2`](@ref).
+`exp2`, `log2` and `log10`, except in Float32 kernels compiled for PoCL, where they are
+[`polynomial_exp2`](@ref), [`polynomial_log2`](@ref) and [`polynomial_log10`](@ref).
 """
-@inline fastlog10(x::Float32) = fastlog2(x) * 0.30103f0
-@inline fastlog10(x::AbstractFloat) = log10(x)
+@inline fastexp2(x) = exp2(x)
+@inline fastlog2(x) = log2(x)
+@inline fastlog10(x) = log10(x)
+
+# Not `KernelAbstractions.POCL.@device_override`: it only works inside the POCL module. And a
+# plain (not "consistent") overlay, since the results can differ from Base in the last bits.
+const POCL_METHOD_TABLE = KernelAbstractions.POCL.method_table
+Base.Experimental.@overlay POCL_METHOD_TABLE @inline fastexp2(x::Float32) = polynomial_exp2(x)
+Base.Experimental.@overlay POCL_METHOD_TABLE @inline fastlog2(x::Float32) = polynomial_log2(x)
+Base.Experimental.@overlay POCL_METHOD_TABLE @inline fastlog10(x::Float32) = polynomial_log10(x)
 
 """
     fastpow(x, y)
 
 `x^y` for `x ≥ 0`, computed as `fastexp2(y * fastlog2(x))`. On the KernelAbstractions CPU
-backend (PoCL) this vectorizes, unlike `pow` and `cbrt`. The result can differ from `x^y`
-in the last few bits; more when `y * log2(x)` is large, as its rounding error is amplified.
-Negative `x` gives `NaN`.
+backend (PoCL) this is cheaper than `pow` and `cbrt`, and vectorizes. The result can differ
+from `x^y` in the last few bits; more when `y * log2(x)` is large, as its rounding error is
+amplified. Negative `x` gives `NaN` in kernels, and a `DomainError` in host code.
 """
 @inline fastpow(x::T, y::T) where {T <: AbstractFloat} =
     ifelse(iszero(y), one(T), fastexp2(y * fastlog2(x)))
