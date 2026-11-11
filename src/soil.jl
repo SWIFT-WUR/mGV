@@ -137,7 +137,7 @@ function arno_evaporation_beta(sm_top, sm_max_top, b_i)
 
     # 3. Handle b_i == -1.0 case without explicit branching
     # In VIC, if the shape parameter b_i is exactly -1.0, it denotes a linear storage limit.
-    ratio_adj = b_i == -1.0f0 ? ratio : ratio^(1.0f0 / (b_i + 1.0f0))
+    ratio_adj = b_i == -1.0f0 ? ratio : fastpow(ratio, 1.0f0 / (b_i + 1.0f0))
     tmp = b_i == -1.0f0 ? max_infil : max_infil * (1.0f0 - ratio_adj)
 
     # 4. Saturation Check
@@ -147,9 +147,9 @@ function arno_evaporation_beta(sm_top, sm_max_top, b_i)
     # We replace the recursive if/else thresholds with branchless ternary expressions to compute the beta scaler.
     ratio_unsat = clamp(1.0f0 - (tmp / max_infil), 0.0f0, 1.0f0)
 
-    ratio_powered = ratio_unsat > 0.0f0 ? ratio_unsat^b_i : 0.0f0
+    ratio_powered = ratio_unsat > 0.0f0 ? fastpow(ratio_unsat, b_i) : 0.0f0
     as_val = 1.0f0 - ratio_powered
-    ratio_beta = ratio_powered > 0.0f0 ? ratio_powered^(1.0f0 / b_i) : 0.0f0
+    ratio_beta = ratio_powered > 0.0f0 ? fastpow(ratio_powered, 1.0f0 / b_i) : 0.0f0
 
     # 6. Series Expansion for exact curve integration
     dummy = 1.0f0
@@ -303,10 +303,10 @@ end
     # 4. Mineral soil conductivity (Ks_min)
     Ks_min = ifelse(
         quartz[I] < 0.2f0,
-        7.7f0^quartz[I] * 3.0f0^(1.0f0 - quartz[I]),
+        fastpow(7.7f0, quartz[I]) * fastpow(3.0f0, 1.0f0 - quartz[I]),
         ifelse(
             quartz[I] <= 1.0f0,
-            7.7f0^quartz[I] * 2.2f0^(1.0f0 - quartz[I]),
+            fastpow(7.7f0, quartz[I]) * fastpow(2.2f0, 1.0f0 - quartz[I]),
             0.0f0
         )
     )
@@ -316,8 +316,8 @@ end
     # 5. Saturated conductivity (Ksat)
     Ksat = ifelse(
         Wu == moist[I],
-        Ks^(1.0f0 - porosity[I]) * KW^porosity[I],
-        Ks^(1.0f0 - porosity[I]) * KI^(porosity[I] - Wu) * KW^Wu
+        fastpow(Ks, 1.0f0 - porosity[I]) * fastpow(KW, porosity[I]),
+        fastpow(Ks, 1.0f0 - porosity[I]) * fastpow(KI, porosity[I] - Wu) * fastpow(KW, Wu)
     )
 
     # 6. Effective saturation parameter (Ke)

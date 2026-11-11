@@ -36,8 +36,7 @@ function canopy_evap_physics(
     Wratio = clamp(ws / max(max_ws, 1.0f-6), 0.0f0, 1.0f0)
     ra_ratio = ra / max(ra + rarc, 1.0f-6)
 
-    # Wratio^(2/3) as cbrt(Wratio)^2: ~5x cheaper than pow on GPU
-    canopy_evap_star = (cbrt(Wratio)^2) * E_p_wet * ra_ratio
+    canopy_evap_star = fastpow(Wratio, 2.0f0 / 3.0f0) * E_p_wet * ra_ratio
 
     # --- 5. Fraction Calculation (f_n) ---
     # Determines what fraction of the timestep the canopy will be evaporating.
@@ -223,8 +222,7 @@ end
         pe = potential_evaporation[t]
 
         term_inner = clamp((ws / max(cv, EPS)) / max(max_ws, EPS), ZERO, ONE)
-        # term_inner^(2/3) as cbrt(term_inner)^2: ~5x cheaper than pow on GPU
-        dry_time_factor = clamp(ONE - fn_val * (cbrt(term_inner)^2), ZERO, ONE)
+        dry_time_factor = clamp(ONE - fn_val * fastpow(term_inner, 2.0f0 / 3.0f0), ZERO, ONE)
 
         dry_time_factor = ifelse(k == nveg, ONE, dry_time_factor)
 

@@ -44,7 +44,7 @@
 
         # A_sat = 1 - (1 - ratio)^ex
         term_ratio = max(one - ratio, zero)
-        asat_val = one - (term_ratio^ex_param)
+        asat_val = one - fastpow(term_ratio, ex_param)
 
         # Store A_sat
         A_sat[i] = asat_val
@@ -66,7 +66,7 @@
         # i_0 = max_infil * (1 - (1 - A_sat)^(1/b))
         term_asat = max(one - asat_val, zero)
         pow_b = one / max(b, eps)
-        i_0 = max_infil * (one - (term_asat^pow_b))
+        i_0 = max_infil * (one - fastpow(term_asat, pow_b))
 
         # --- 6. VIC Runoff Logic (Branchless Formulation) ---
         #
@@ -86,7 +86,7 @@
 
         # Calculate runoff if the soil is PARTIALLY saturated (follows non-linear ARNO curve)
         basis = max(one - (i_0 + inflow_sum) / max_infil_safe, zero)
-        runoff_partial_sat = runoff_full_sat + (top_max * (basis^(one + b)))
+        runoff_partial_sat = runoff_full_sat + (top_max * fastpow(basis, one + b))
 
         # Determine the physical state of the grid cell
         state_no_inflow = inflow_sum <= eps
@@ -159,7 +159,7 @@ function calculate_interlayer_drainage(Ksat, current_moist, max_moist, resid_moi
     term2 = (Ksat / W_m) * (1.0f0 - m)
 
     inner = max(term1 - term2, EPS)
-    W_new = W_m * (inner^(1.0f0 / (1.0f0 - m)))
+    W_new = W_m * fastpow(inner, 1.0f0 / (1.0f0 - m))
 
     Q12 = W_a - W_new
     return clamp(Q12, 0.0f0, W_a)
@@ -179,7 +179,7 @@ function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
 
     nonlin_amp = Dsmax .* (1.0f0 .- Ds ./ Ws_safe)
     nonlin_frac = max.(rel_moist .- Ws, 0.0f0) ./ Ws_compl
-    Qb_nonlin = Qb_lin .+ nonlin_amp .* (nonlin_frac .^ cexp)
+    Qb_nonlin = Qb_lin .+ nonlin_amp .* fastpow.(nonlin_frac, cexp)
 
     Qb = ifelse.(rel_moist .<= Ws, Qb_lin, Qb_nonlin)
 

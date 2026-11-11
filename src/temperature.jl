@@ -63,7 +63,7 @@
         # Derivative
         if Tk < Tc
             ratio = max((Tc - Tk) / denom_L, 1.0f-6)
-            lv_deriv = Hvap_Tb * n_exp * (ratio^(n_exp - 1.0f0)) * (-1.0f0 / denom_L)
+            lv_deriv = Hvap_Tb * n_exp * fastpow(ratio, n_exp - 1.0f0) * (-1.0f0 / denom_L)
         else
             lv_deriv = 0.0f0
         end
