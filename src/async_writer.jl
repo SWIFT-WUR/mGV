@@ -38,6 +38,10 @@ block. Full blocks are written by a background task (`task`), so writing happens
 model computes the next block. There are `nblocks` blocks: while one is written, the model
 fills another.
 
+On a GPU, the outputs of a timestep are first copied to `staging` buffers on the device,
+which are copied to the (pinned) host block by a separate task (`copy`), on its own stream,
+while the model computes the next timestep.
+
 The writer persists over the years of the run; every year gets its own store, see
 [`next_store!`](@ref).
 """
@@ -50,8 +54,11 @@ mutable struct OutputWriter
     const block_length::Int
     const open_store::Function        # year -> new `OutputStore` for that year
     const busy::Base.RefValue{Float64}  # seconds spent writing, by the writer task
+    const backend::Backend
     store::Any                        # the store of the current year
     block::Union{OutputBlock, Nothing}  # the block being filled, if any
+    staging::Vector{Any}              # device copies of the outputs of a timestep (GPU only)
+    copy::Union{Task, Nothing}        # the task copying `staging` to the block, if any
 end
 
 """
@@ -88,7 +95,9 @@ function OutputWriter(open_store, year, outputs, ncells, nlayers, block_length, 
     bind(free, task)
     bind(jobs, task)
 
-    return OutputWriter(outputs, free, jobs, task, nblocks, block_length, open_store, busy, store, nothing)
+    return OutputWriter(
+        outputs, free, jobs, task, nblocks, block_length, open_store, busy, backend, store, nothing, Any[], nothing,
+    )
 end
 
 """The time index of the current model time in the output store of its year."""
@@ -98,8 +107,13 @@ output_time_index(clock) = (clock.time - DateTime(year(clock.time))) ÷ clock.dt
 Copy the outputs of the current timestep from the `model` (on the GPU) into the current
 block, and hand the block to the writer task when it is full. Waits for a free block if
 the writer is behind.
+
+On a GPU the copy to the host is asynchronous: the outputs are copied to device buffers,
+which a separate task copies to the block while the model continues. The block is handed
+to the writer once that copy is done, see [`finish_copy!`](@ref).
 """
 function record_output!(writer::OutputWriter, model)
+    finish_copy!(writer)
     t = output_time_index(model.clock)
     block = writer.block
     if isnothing(block)
@@ -111,10 +125,41 @@ function record_output!(writer::OutputWriter, model)
     end
     t == block.first + block.len || error("Output timestep $t does not follow timestep $(block.first + block.len - 1)")
     block.len += 1
-    for (meta, data) in zip(writer.outputs, block.data)
-        copy_timestep!(data, block.len, meta.lens(model))
+    sources = [meta.lens(model) for meta in writer.outputs]
+    if writer.backend isa CPU
+        foreach((data, src) -> copy_timestep!(data, block.len, src), block.data, sources)
+        finish_copy!(writer)
+    else
+        isempty(writer.staging) && append!(writer.staging, [similar(src, length(src)) for src in sources])
+        # In the model's stream: after the kernels of this timestep, and before those of the next
+        for (staged, src) in zip(writer.staging, sources)
+            copyto!(staged, 1, src, 1, length(src))
+        end
+        KernelAbstractions.synchronize(writer.backend)
+        staging, len, backend = writer.staging, block.len, writer.backend
+        device = KernelAbstractions.device(backend)
+        # In the interactive threadpool, so that the copy is not queued behind the many
+        # (compression) tasks of the writer. A new task gets its own stream, on the default device.
+        writer.copy = Threads.@spawn :interactive begin
+            KernelAbstractions.device!(backend, device)
+            foreach((data, src) -> copy_timestep!(data, len, src), block.data, staging)
+        end
     end
-    block.len == writer.block_length && submit_block!(writer)
+    return nothing
+end
+
+"""
+Wait until the outputs of the last timestep are copied to the host, then hand the current
+block to the writer task if it is full.
+"""
+function finish_copy!(writer::OutputWriter)
+    if !isnothing(writer.copy)
+        task = writer.copy
+        writer.copy = nothing
+        @timeit to "wait for output copy" wait(task)
+    end
+    block = writer.block
+    !isnothing(block) && block.len == writer.block_length && submit_block!(writer)
     return nothing
 end
 
@@ -155,6 +200,7 @@ so the writer can still be writing the old one. NetCDF is not thread-safe: the w
 be done with the old file before it is closed and the new one is created.
 """
 function next_store!(writer::OutputWriter, year)
+    finish_copy!(writer)
     submit_block!(writer)
     if writer.store isa NetCDFStore
         wait_for_writer(writer)
@@ -166,9 +212,14 @@ end
 
 """Write all output, close the store and stop the writer task."""
 function Base.close(writer::OutputWriter)
+    finish_copy!(writer)
     submit_block!(writer)
     close(writer.jobs)  # the writer task stops when it has written every block
     wait(writer.task)
+    # Every block is back in `free` once the writer task is done
+    while isready(writer.free)
+        foreach(a -> unpin_memory!(writer.backend, a), take!(writer.free).data)
+    end
     close_output(writer.store)
     println("Output writer: $(round(writer.busy[]; digits = 1)) s writing")
     return nothing

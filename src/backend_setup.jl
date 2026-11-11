@@ -85,7 +85,16 @@ function select_backend(name::AbstractString = "auto")
 end
 
 """
-Page-lock host memory to speed up device transfers. Does nothing unless a backend
-extension adds a method for its backend.
+Page-lock (pin) host memory, so that device transfers can run asynchronously. Uses
+`KernelAbstractions.pagelock!`, which the GPU packages implement for their backend (e.g.
+CUDA and AMDGPU). Returns whether `arr` was pinned: `false` for backends that do not
+implement it (`pagelock!` then returns `missing`), whose transfers still work, but can block
+the task that makes them until they are done.
 """
-pin_memory!(::Backend, arr) = nothing
+pin_memory!(backend::Backend, arr) = !ismissing(KernelAbstractions.pagelock!(backend, arr))
+
+"""
+Undo [`pin_memory!`](@ref), for backends that do not unpin memory when it is freed (e.g.
+AMDGPU). Does nothing unless a backend extension adds a method for its backend.
+"""
+unpin_memory!(::Backend, arr) = nothing
