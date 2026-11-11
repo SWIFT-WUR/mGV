@@ -294,8 +294,14 @@ function run()
     return run(cfg_path)
 end
 
-"""Finalize the model: write the remaining output, close the output file and stop the writer."""
+"""
+Finalize the model: write the remaining output, close the output file and stop the writer.
+
+Synchronizes the device first, so that errors in kernels are reported: with a
+[`host_copier`](@ref), nothing else in a run synchronizes the model's stream.
+"""
 function finalize!(model::Model)
+    KernelAbstractions.synchronize(get_backend(model.forcing_variables.air_temperature))
     if !isnothing(model.writer)
         close(model.writer)
         model.writer = nothing
