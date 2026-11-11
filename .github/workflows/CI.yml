@@ -14,6 +14,9 @@ jobs:
   test:
     name: Run validation script
     runs-on: ubuntu-latest
+    env:
+      # Multithreaded model kernels (CPU backend) and forcing reads
+      JULIA_NUM_THREADS: auto
 
     steps:
       # 1. Check out repo

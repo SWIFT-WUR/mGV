@@ -13,6 +13,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Multithreaded model kernels (CPU backend) and forcing reads
+      JULIA_NUM_THREADS: auto
 
     steps:
       - uses: actions/checkout@v7
