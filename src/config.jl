@@ -94,6 +94,9 @@ end
     variables::Union{Nothing, Vector{String}} = nothing  # variables to write; nothing = all, [] = none
     # Timesteps kept in memory before they are written; also the time chunk size of the output
     write_interval::Int = 8
+    # true: store variables with a `packing` in their metadata as scaled Int16 (lossy, at the
+    # precision of the packing, and clipped to its range); false: store every variable as Float32
+    packing::Bool = true
 end
 
 @option "API" struct APISection
@@ -187,6 +190,8 @@ function load_config(config_file)
     if !isdir(cfg_dict["output"]["dir"])
         error("Output directory '$(cfg_dict["output"]["dir"])' does not exist")
     end
+    packing = get(cfg_dict["output"], "packing", true)
+    packing isa Bool || error("[output].packing must be true or false, got $(repr(packing))")
 
     cfg = from_dict(Cfg, cfg_dict)
     validate_output_variables(cfg)

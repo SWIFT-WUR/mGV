@@ -3,6 +3,8 @@ module mGV
 using NetCDF
 using NCDatasets
 using Zarr
+using Zarr: JSON
+using ZarrScaleCast: ScaleOffsetCodec, CastValueCodec
 using ProgressMeter
 using Dates
 using LinearAlgebra  # Need this?

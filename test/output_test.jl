@@ -5,6 +5,8 @@ using mGV
 using TOML
 using Zarr: zopen
 using NCDatasets: NCDataset
+using ZarrScaleCast: ScaleOffsetCodec, CastValueCodec
+import Zarr
 
 const COORDS = ["lat", "lon", "time"]
 
@@ -71,7 +73,7 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
 
     @testset "Output is gridded, with NaN outside the active cells" begin
         dir = mktempdir()
-        config_file = write_test_config(dir, ["soil_moisture", "total_runoff"])
+        config_file = write_test_config(dir, ["soil_moisture", "total_runoff"]; output = Dict("packing" => false))
         model = BMI.initialize(mGV.Model, config_file)
         BMI.update(model)
         (; domain) = model
@@ -91,18 +93,19 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         @test all(isnan, reshape(layers, :, size(layers, 3))[vec(.!active), :])
     end
 
-    @testset "Output is written in blocks of timesteps ($format)" for format in ["zarr", "zarr_landonly", "netcdf"]
+    @testset "Output is written in blocks of timesteps ($format, packing $packing)" for format in ["zarr", "zarr_landonly", "netcdf"],
+            packing in [false, true]
         # 7 timesteps in blocks of 3: two full blocks, and a partial one written by finalize
         dir = mktempdir()
         variables = ["soil_moisture", "total_runoff"]
-        config_file = write_test_config(dir, variables; output = Dict("format" => format, "write_interval" => 3))
+        config_file = write_test_config(dir, variables; output = Dict("format" => format, "write_interval" => 3, "packing" => packing))
         model = BMI.initialize(mGV.Model, config_file)
-        lenses = Dict(meta.output_name => meta.lens for meta in model.selected_outputs)
+        metas = Dict(meta.output_name => meta for meta in model.selected_outputs)
         expected = Dict(name => [] for name in variables)
         for _ in 1:7
             BMI.update(model)
             for name in variables
-                push!(expected[name], Array(lenses[name](model)))
+                push!(expected[name], Array(metas[name].lens(model)))
             end
         end
         (; domain) = model
@@ -111,11 +114,25 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         path = joinpath(dir, only(filter(startswith("outputfile"), readdir(dir))))
         if format == "netcdf"
             ds = NCDataset(path)
-            moisture = [mGV.to_cells(domain, ds["soil_moisture"].var[:, :, t, :]) for t in 1:7]
-            runoff = [mGV.to_cells(domain, ds["total_runoff"].var[:, :, t]) for t in 1:7]
+            # The stored values, unpacked here to test the CF attributes
+            function read_nc(name, idx...)
+                var = ds[name]
+                raw = var.var[idx...]
+                packing || return raw
+                @test eltype(raw) == Int16
+                sf, ao = var.attrib["scale_factor"], var.attrib["add_offset"]
+                return ifelse.(raw .== typemin(Int16), NaN32, Float32.(raw .* sf .+ ao))
+            end
+            moisture = [mGV.to_cells(domain, read_nc("soil_moisture", :, :, t, :)) for t in 1:7]
+            runoff = [mGV.to_cells(domain, read_nc("total_runoff", :, :, t)) for t in 1:7]
             close(ds)
         else
             store = zopen(path)
+            @test eltype(store["total_runoff"]) == Float32  # also when packed
+            # Packed: stored as Int16 with the scale_offset and cast_value codecs
+            codecs = store["total_runoff"].metadata.pipeline.array_array
+            @test any(c -> c isa ScaleOffsetCodec, codecs) == packing
+            @test any(c -> c isa CastValueCodec, codecs) == packing
             if format == "zarr"
                 @test store["total_runoff"].metadata.chunks == (36, 36, 3)
                 moisture = [mGV.to_cells(domain, store["soil_moisture"][:, :, t, :]) for t in 1:7]
@@ -131,13 +148,26 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
                 @test all(isnan, store["total_runoff"][:, 8:end])
             end
         end
-        @test moisture == expected["soil_moisture"]
-        @test runoff == expected["total_runoff"]
+        if !packing
+            @test moisture == expected["soil_moisture"]
+            @test runoff == expected["total_runoff"]
+        else
+            # At most half a step off, plus the rounding of the decoding in Float32
+            for (name, values) in (("soil_moisture", moisture), ("total_runoff", runoff))
+                p = metas[name].packing
+                for (v, e) in zip(values, expected[name])
+                    @test isequal(isnan.(v), isnan.(e))
+                    ok = .!isnan.(e)
+                    tolerance = 0.5f0 / p.scale .+ 4 .* eps.(abs(p.offset) .+ abs.(e[ok]))
+                    @test all(abs.(v[ok] .- e[ok]) .<= tolerance)
+                end
+            end
+        end
     end
 
     @testset "The writer continues in the store of the next year ($format)" for format in ["zarr", "netcdf"]
         dir = mktempdir()
-        config_file = write_test_config(dir, ["total_runoff"]; output = Dict("format" => format, "write_interval" => 7))
+        config_file = write_test_config(dir, ["total_runoff"]; output = Dict("format" => format, "write_interval" => 7, "packing" => false))
         model = BMI.initialize(mGV.Model, config_file)
         lens = only(model.selected_outputs).lens
         runoff = []
@@ -166,6 +196,9 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         @test_throws r"Unknown output format 'grib'" mGV.Config.load_config(config_file)
         config_file = write_test_config(mktempdir(), nothing; output = Dict("write_interval" => 0))
         @test_throws r"write_interval must be at least 1" mGV.Config.load_config(config_file)
+        config_file = write_test_config(mktempdir(), nothing; output = Dict("packing" => "int16"))
+        @test_throws r"packing must be true or false, got \"int16\"" mGV.Config.load_config(config_file)
+        @test mGV.Config.load_config(write_test_config(mktempdir(), nothing)).output.packing  # the default
     end
 
     @testset "Unknown variable names are rejected when loading the config" begin
@@ -184,6 +217,58 @@ all_names = [meta.output_name for meta in values(mGV.output_variables())]
         BMI.get_value(model, name, dest)
         @test any(isfinite, dest)
         @test !any(endswith(".zarr"), readdir(dir))
+    end
+end
+
+@testset "Int16 packing" begin
+    p = mGV.Packing(100, 3)
+    lo, hi = 3 - 327.67f0, 3 + 327.67f0
+    x = Float32[
+        randn(1000) .* 100; 3; 3.005; 3.015; -3.005; 2.995; 0; -0.0;  # including ties
+        lo; hi; lo - 0.004; hi + 0.004; lo - 0.006; hi + 0.006; -1.0f4; 1.0f4; -Inf; Inf; NaN;
+    ]
+    packed = mGV.pack_value.(x, Ref(p))
+    values, clipped = first.(packed), last.(packed)
+    @test eltype(values) == Int16
+
+    @testset "Same values as the Zarr codecs" begin
+        cast = CastValueCodec(
+            Int16; rounding = RoundNearest, out_of_range = :clamp,
+            encode_map = [NaN => typemin(Int16)], decode_map = [typemin(Int16) => NaN],
+        )
+        codec = Zarr.Codecs.V3Codecs.codec_encode
+        expected = codec(cast, codec(ScaleOffsetCodec(offset = p.offset, scale = p.scale), x))
+        # Except below the range: -32768 would read as NaN
+        expected[expected .== typemin(Int16) .&& .!isnan.(x)] .= -32767
+        @test values == expected
+    end
+
+    @testset "Clipping" begin
+        @test clipped == (.!isnan.(x) .& .!(lo - 0.005f0 .<= x .<= hi + 0.005f0))
+        @test values[x .== Inf] == [32767]
+        @test values[x .== -Inf] == [-32767]
+        @test values[isnan.(x)] == [typemin(Int16)]
+    end
+
+    @testset "Kernel" begin
+        src = reshape(x[1:1000], 500, 2)
+        dst = zeros(Int16, 1200)
+        flags = zeros(Int32, 3)
+        mGV.pack_output!(mGV.CPU(), dst, 100, 600, src, p, flags, 2)
+        mGV.KernelAbstractions.synchronize(mGV.CPU())
+        @test dst[101:600] == values[1:500]
+        @test dst[701:1200] == values[501:1000]
+        @test flags == [0, any(clipped[1:1000]), 0]  # random values can be out of range
+        fill!(flags, 0)
+        mGV.pack_output!(mGV.CPU(), dst, 0, 1, Float32[1.0f0], p, flags, 2)
+        mGV.KernelAbstractions.synchronize(mGV.CPU())
+        @test flags == [0, 0, 0]
+        mGV.pack_output!(mGV.CPU(), dst, 0, 1, Float32[1.0f6], p, flags, 2)
+        mGV.KernelAbstractions.synchronize(mGV.CPU())
+        @test flags == [0, 1, 0]
+        mGV.pack_output!(mGV.CPU(), Float32[0], 0, 1, Float32[1.0f6], nothing, flags, 3)
+        mGV.KernelAbstractions.synchronize(mGV.CPU())
+        @test flags == [0, 1, 0]  # not packed
     end
 end
 

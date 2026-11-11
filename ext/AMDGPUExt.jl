@@ -12,11 +12,12 @@ function mGV.unpin_memory!(::ROCBackend, arr::Array)
 end
 
 """
-Copies device arrays to the host with `hipMemcpyAsync`, which (unlike the
-`hipMemcpyWithStream` of `copyto!`) does not block the host until the copy is done. The
-copies run in a stream of their own (`stream`), ordered against the model's stream (the
-stream of the calling task) with events: `staged` marks the end of the staging copies in the
-model's stream, `done` the end of the host copies.
+Copies output from the device to the host with `hipMemcpyAsync`, which (unlike the
+`hipMemcpyWithStream` of `copyto!`) does not block the host until the copy is done.
+
+Copies to the host run in a stream of their own (`stream`), ordered against the model's
+stream (the stream of the calling task) with events: `staged` marks the end of the staging
+(by kernels in the model's stream), `done` the end of the host copies.
 """
 struct HostCopier
     stream::HIPStream
@@ -39,13 +40,8 @@ function memcpy_async(dst, src, bytes, kind, stream)
     return nothing
 end
 
-function mGV.stage_copy!(c::HostCopier, dst::ROCArray{T}, src::ROCArray{T}) where {T}
-    length(dst) == length(src) || error("Staging buffer of length $(length(dst)) for an array of length $(length(src))")
-    model = AMDGPU.stream()
-    HIP.hipStreamWaitEvent(model, c.done, 0)  # `dst` is free once the last host copy is done
-    GC.@preserve dst src memcpy_async(pointer(dst), pointer(src), sizeof(dst), HIP.hipMemcpyDeviceToDevice, model)
-    return nothing
-end
+# The staging buffers are free once the last host copies are done
+mGV.begin_staging!(c::HostCopier) = (HIP.hipStreamWaitEvent(AMDGPU.stream(), c.done, 0); nothing)
 
 function mGV.start_host_copy!(c::HostCopier)
     HIP.hipEventRecord(c.staged, AMDGPU.stream())

@@ -106,11 +106,11 @@ An object that copies device arrays to host memory asynchronously, on a stream o
 for the output writer (see [`record_output!`](@ref)). Backend extensions that provide one
 implement, for their copier `c`:
 
-- `stage_copy!(c, dst, src)`: copy device array `src` to device array `dst` (of the same
-  length), in the model's stream, after the model's kernels and before those that follow.
-  Before it, waits (on the device) until the last host copy is done, so that `dst` can be reused.
+- `begin_staging!(c)`: makes the model's stream wait (on the device) until the last host
+  copies are done, so that the staging buffers they read from can be written again. The
+  writer then writes the staging buffers with kernels in the model's stream.
 - `start_host_copy!(c)`: makes the following host copies wait (on the device) for the model's
-  stream, i.e. for the staged copies.
+  stream, i.e. for the staging.
 - `copy_to_host!(c, dst, doffs, src, soffs, n)`: copy `n` elements from device array `src`
   (from index `soffs`) to host array `dst` (from index `doffs`), without blocking the host.
 - `finish_host_copy!(c)`: marks the end of the host copies of a timestep.
@@ -121,7 +121,7 @@ separate task instead.
 """
 host_copier(::Backend) = nothing
 
-function stage_copy! end
+function begin_staging! end
 function start_host_copy! end
 function copy_to_host! end
 function finish_host_copy! end

@@ -27,6 +27,7 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
+ZarrScaleCast = "b758a08b-d30c-44c2-997e-dec540a36994"
 
 [weakdeps]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
@@ -69,4 +70,8 @@ Statistics = "1.11.1"
 TOML = "1.0.3"
 TimerOutputs = "1.2.0"
 Zarr = "0.10.0"
+ZarrScaleCast = "0.1.0"
 oneAPI = "2.10"
+
+[sources]
+ZarrScaleCast = {url = "https://github.com/SWIFT-WUR/ZarrScaleCast.jl"}
