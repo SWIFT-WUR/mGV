@@ -39,8 +39,10 @@ model computes the next block. There are `nblocks` blocks: while one is written,
 fills another.
 
 On a GPU, the outputs of a timestep are first copied to `staging` buffers on the device,
-which are copied to the (pinned) host block by a separate task (`copy`), on its own stream,
-while the model computes the next timestep.
+which are copied to the (pinned) host block while the model computes the next timestep. If
+the backend has a [`host_copier`](@ref) (`copier`), it queues these copies on a stream of its
+own without blocking the host; otherwise they run on a separate task (`copy`), which has its
+own stream.
 
 The writer persists over the years of the run; every year gets its own store, see
 [`next_store!`](@ref).
@@ -58,7 +60,9 @@ mutable struct OutputWriter
     store::Any                        # the store of the current year
     block::Union{OutputBlock, Nothing}  # the block being filled, if any
     staging::Vector{Any}              # device copies of the outputs of a timestep (GPU only)
-    copy::Union{Task, Nothing}        # the task copying `staging` to the block, if any
+    const copier::Any                 # the backend's `host_copier`, or `nothing`
+    copy::Union{Task, Nothing}        # the task copying `staging` to the block, if any (without `copier`)
+    copying::Bool                     # whether `copier` may still be copying to the block
 end
 
 """
@@ -96,7 +100,8 @@ function OutputWriter(open_store, year, outputs, ncells, nlayers, block_length, 
     bind(jobs, task)
 
     return OutputWriter(
-        outputs, free, jobs, task, nblocks, block_length, open_store, busy, backend, store, nothing, Any[], nothing,
+        outputs, free, jobs, task, nblocks, block_length, open_store, busy, backend, store, nothing, Any[],
+        host_copier(backend), nothing, false,
     )
 end
 
@@ -109,11 +114,12 @@ block, and hand the block to the writer task when it is full. Waits for a free b
 the writer is behind.
 
 On a GPU the copy to the host is asynchronous: the outputs are copied to device buffers,
-which a separate task copies to the block while the model continues. The block is handed
-to the writer once that copy is done, see [`finish_copy!`](@ref).
+which are copied to the block while the model continues (by the backend's `host_copier`, or
+else a separate task). The block is handed to the writer once its copies are done, see
+[`finish_copy!`](@ref).
 """
 function record_output!(writer::OutputWriter, model)
-    finish_copy!(writer)
+    finish_copy!(writer; force = false)
     t = output_time_index(model.clock)
     block = writer.block
     if isnothing(block)
@@ -131,6 +137,7 @@ function record_output!(writer::OutputWriter, model)
         finish_copy!(writer)
     else
         isempty(writer.staging) && append!(writer.staging, [similar(src, length(src)) for src in sources])
+        isnothing(writer.copier) || return copy_with_copier!(writer, block, sources)
         # In the model's stream: after the kernels of this timestep, and before those of the next
         for (staged, src) in zip(writer.staging, sources)
             copyto!(staged, 1, src, 1, length(src))
@@ -149,17 +156,39 @@ function record_output!(writer::OutputWriter, model)
 end
 
 """
-Wait until the outputs of the last timestep are copied to the host, then hand the current
-block to the writer task if it is full.
+Queue the copies of the outputs of a timestep (`sources`) to timestep `block.len` of `block`
+with the writer's `copier`, without blocking the host: first to the staging buffers in the
+model's stream, then from those to the host in the copier's stream.
 """
-function finish_copy!(writer::OutputWriter)
+function copy_with_copier!(writer::OutputWriter, block, sources)
+    copier = writer.copier
+    foreach((staged, src) -> stage_copy!(copier, staged, src), writer.staging, sources)
+    start_host_copy!(copier)
+    copy = (dst, doffs, src, soffs, n) -> copy_to_host!(copier, dst, doffs, src, soffs, n)
+    foreach((data, src) -> copy_timestep!(data, block.len, src; copy), block.data, writer.staging)
+    finish_host_copy!(copier)
+    writer.copying = true
+    return nothing
+end
+
+"""
+Hand the current block to the writer task if it is full, once the outputs of the last
+timestep are copied to it. With `force`, also wait for the copy if the block is not full.
+A `copier` needs no waiting until then: it orders the copies on the device.
+"""
+function finish_copy!(writer::OutputWriter; force = true)
     if !isnothing(writer.copy)
         task = writer.copy
         writer.copy = nothing
         @timeit to "wait for output copy" wait(task)
     end
     block = writer.block
-    !isnothing(block) && block.len == writer.block_length && submit_block!(writer)
+    full = !isnothing(block) && block.len == writer.block_length
+    if writer.copying && (full || force)
+        @timeit to "wait for output copy" wait_host_copy(writer.copier)
+        writer.copying = false
+    end
+    full && submit_block!(writer)
     return nothing
 end
 
@@ -167,12 +196,12 @@ end
 Copy `src`, of size (ncells, nlayers) or (ncells,), to timestep `t` of the block `data`, of
 size (ncells, block length, nlayers). One copy per layer, without intermediate buffers.
 """
-function copy_timestep!(data::Array{Float32, 3}, t, src::AbstractArray)
+function copy_timestep!(data::Array{Float32, 3}, t, src::AbstractArray; copy = copyto!)
     n, len, nlayers = size(data)
     length(src) == n * nlayers ||
         error("Output of size $(size(src)) does not match the block size $((n, nlayers))")
     for l in 1:nlayers
-        copyto!(data, ((l - 1) * len + t - 1) * n + 1, src, (l - 1) * n + 1, n)
+        copy(data, ((l - 1) * len + t - 1) * n + 1, src, (l - 1) * n + 1, n)
     end
     return nothing
 end

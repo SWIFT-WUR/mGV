@@ -98,3 +98,31 @@ Undo [`pin_memory!`](@ref), for backends that do not unpin memory when it is fre
 AMDGPU). Does nothing unless a backend extension adds a method for its backend.
 """
 unpin_memory!(::Backend, arr) = nothing
+
+"""
+    host_copier(backend)
+
+An object that copies device arrays to host memory asynchronously, on a stream of its own,
+for the output writer (see [`record_output!`](@ref)). Backend extensions that provide one
+implement, for their copier `c`:
+
+- `stage_copy!(c, dst, src)`: copy device array `src` to device array `dst` (of the same
+  length), in the model's stream, after the model's kernels and before those that follow.
+  Before it, waits (on the device) until the last host copy is done, so that `dst` can be reused.
+- `start_host_copy!(c)`: makes the following host copies wait (on the device) for the model's
+  stream, i.e. for the staged copies.
+- `copy_to_host!(c, dst, doffs, src, soffs, n)`: copy `n` elements from device array `src`
+  (from index `soffs`) to host array `dst` (from index `doffs`), without blocking the host.
+- `finish_host_copy!(c)`: marks the end of the host copies of a timestep.
+- `wait_host_copy(c)`: blocks the calling task until the host copies are done.
+
+Returns `nothing` (the default) if the backend has none; the writer then copies on a
+separate task instead.
+"""
+host_copier(::Backend) = nothing
+
+function stage_copy! end
+function start_host_copy! end
+function copy_to_host! end
+function finish_host_copy! end
+function wait_host_copy end
