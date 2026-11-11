@@ -152,12 +152,10 @@ function arno_evaporation_beta(sm_top, sm_max_top, b_i)
     ratio_beta = ratio_powered > 0.0f0 ? fastpow(ratio_powered, 1.0f0 / b_i) : 0.0f0
 
     # 6. Series Expansion for exact curve integration
-    dummy = 1.0f0
-    ratio_pow_term = ratio_beta
-    # Unrolled (with `@nexprs`), so that the kernel vectorizes
-    Base.Cartesian.@nexprs 40 k -> begin
-        dummy += (b_i * ratio_pow_term) / (b_i + Float32(k))
-        ratio_pow_term *= ratio_beta
+    # 40 terms, unrolled on the CPU backend (see `foldsteps`)
+    dummy, _ = foldsteps((1.0f0, ratio_beta), Val(40)) do k, (dummy, ratio_pow_term)
+        @inline
+        return (dummy + (b_i * ratio_pow_term) / (b_i + Float32(k)), ratio_pow_term * ratio_beta)
     end
 
     beta_asp = as_val + (1.0f0 - as_val) * (1.0f0 - ratio_beta) * dummy

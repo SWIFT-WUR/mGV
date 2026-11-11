@@ -111,9 +111,9 @@ end
 
     # 5. Newton-Raphson Solver
     # f(ts) = LW_out(ts) + h_sens(ts,Ta) - LE(min(ts,0)) - rhs_base = 0
-    ts = tsurf_init
-    # Unrolled (with `@nexprs`), so that the kernel vectorizes
-    Base.Cartesian.@nexprs 12 iteration -> begin
+    # 12 iterations, unrolled on the CPU backend (see `foldsteps`)
+    ts = foldsteps(tsurf_init, Val(12)) do iteration, ts
+        @inline
         Ts_K = ts + 273.15f0
         lw_out = sig_eps * @fastmath(Ts_K^4)
         h_sens = ha * ts
@@ -132,7 +132,7 @@ end
         # Step update with clamping for stability
         step = f_val / max(abs(df_val), 1.0f-6)
         step = clamp(step, -10.0f0, 10.0f0)
-        ts = ts - step
+        return ts - step
     end
     ts = clamp(ts, -60.0f0, 50.0f0)
 

@@ -69,7 +69,7 @@ unlike `log2`. Gives `-Inf` for zero, `Inf` for `Inf`, and `NaN` for negative `x
         f,
         (
             3.3333331f-1, -2.4999994f-1, 2.0000714f-1, -1.6668057f-1, 1.4249323f-1,
-            -1.2420141f-1, 1.1676999f-1, -1.1514610f-1, 7.0376836f-2,
+            -1.2420141f-1, 1.1676999f-1, -1.151461f-1, 7.0376836f-2,
         ),
     )
     ln_m = muladd(-0.5f0, z, y) + f
@@ -102,9 +102,7 @@ unlike `log10`. Special values match [`polynomial_log2`](@ref).
 @inline fastlog2(x) = log2(x)
 @inline fastlog10(x) = log10(x)
 
-# Not `KernelAbstractions.POCL.@device_override`: it only works inside the POCL module. And a
-# plain (not "consistent") overlay, since the results can differ from Base in the last bits.
-const POCL_METHOD_TABLE = KernelAbstractions.POCL.method_table
+# A plain (not "consistent") overlay, since the results can differ from Base in the last bits
 Base.Experimental.@overlay POCL_METHOD_TABLE @inline fastexp2(x::Float32) = polynomial_exp2(x)
 Base.Experimental.@overlay POCL_METHOD_TABLE @inline fastlog2(x::Float32) = polynomial_log2(x)
 Base.Experimental.@overlay POCL_METHOD_TABLE @inline fastlog10(x::Float32) = polynomial_log10(x)

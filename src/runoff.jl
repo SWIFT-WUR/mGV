@@ -241,7 +241,6 @@ end
         # Config: RUNOFF_STEPS_PER_DAY = 24 (hourly runoff sub-steps)
         # MODEL_STEPS_PER_DAY = 1 (daily meteo) -> runoff_steps_per_dt = 24/1 = 24
         # ==========================================================
-        # 24 sub-steps, unrolled below (with `@nexprs`) so that the kernel vectorizes
         INV_STEPS = 1.0f0 / 24.0f0
 
         inflow_sub = inflow * INV_STEPS
@@ -250,12 +249,10 @@ end
         t2_sub = t2 * INV_STEPS
         t3_sub = t3 * INV_STEPS
 
-        tot_drain_1 = zero
-        tot_drain_2 = zero
-        tot_baseflow = zero
-        tot_spill_1 = zero
-
-        Base.Cartesian.@nexprs 24 step -> begin
+        # 24 sub-steps, unrolled on the CPU backend (see `foldsteps`)
+        init = (sm1, sm2, sm3, zero, zero, zero, zero)
+        state = foldsteps(init, Val(24)) do step, (sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)
+            @inline
             # ==================== LAYER 1 ====================
             eff_sm1 = max(sm1 + inflow_sub - evap_sub - t1_sub, zero)
             dpot_1 = calculate_interlayer_drainage(k1 * INV_STEPS, eff_sm1, max1, res1, exp1)
@@ -314,7 +311,9 @@ end
             tot_drain_1 += d_1
             tot_drain_2 += d_2
             tot_baseflow += b
+            return (sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)
         end
+        sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow = state
 
         surface_runoff[i] += tot_spill_1
 
