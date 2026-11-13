@@ -28,6 +28,8 @@ using .Constants: PhysConsts, SimConsts, SnowConsts
 include("domain.jl")
 include("parameters.jl")
 include("reader.jl")
+include("kernel_utils.jl")
+include("fastmath.jl")
 include("physics.jl")
 include("snow.jl")
 include("soil.jl")

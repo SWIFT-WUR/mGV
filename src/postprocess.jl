@@ -14,7 +14,7 @@
     return acc + ifelse(isnan(val) | (abs(val) > threshold), 0.0f0, w * val)
 end
 
-@kernel function fused_postprocess_kernel!(
+@kernel inbounds = true function fused_postprocess_kernel!(
         pe_out, nr_out, tr_out, ce_out, ws_out, # Per-cell outputs
         swe_out, sc_out, sm_out,                # Per-cell snow outputs
         salb_out, sts_out, tsurf_out,           # Per-cell snow-weighted outputs

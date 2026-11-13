@@ -1,6 +1,6 @@
 using .Constants: T_FREEZE, PA_PER_KPA, P_STD, C_P_AIR, DAY_SEC
 
-@kernel function band_forcings_kernel!(
+@kernel inbounds = true function band_forcings_kernel!(
         band_air_temperature, band_precipitation,
         @Const(air_temperature), @Const(precipitation), @Const(elevation),
         @Const(snow_band_elevation), @Const(snow_band_area_fraction),
@@ -78,7 +78,7 @@ function aerodynamic_kernel(z0, d0, tsurf, tair, wind, Z2, Kt, gt, Tf, Ric, z_fl
     return clamp(ra_val, ra_min, ra_max)
 end
 
-@kernel function aerodynamic_resistance_kernel!(
+@kernel inbounds = true function aerodynamic_resistance_kernel!(
         aerodynamic_resistance,
         @Const(roughness_length), @Const(displacement_height), @Const(bare_roughness),
         @Const(surface_temperature), @Const(air_temperature), @Const(wind_speed),
@@ -142,7 +142,7 @@ present. Without snow (`coverage` is `nothing`) they are returned unchanged.
     return eff_alb, eff_t
 end
 
-@kernel function net_radiation_kernel!(
+@kernel inbounds = true function net_radiation_kernel!(
         net_radiation,
         @Const(albedo), @Const(surface_temperature),
         @Const(shortwave_down), @Const(longwave_down), @Const(cell),
@@ -211,7 +211,7 @@ function calculate_net_radiation!(
 end
 
 
-@kernel function potential_evaporation_kernel!(
+@kernel inbounds = true function potential_evaporation_kernel!(
         potential_evaporation,
         air_temperature,
         surface_pressure,

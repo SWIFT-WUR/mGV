@@ -18,6 +18,9 @@ jobs:
   test:
     name: Run GPU code on pocl
     runs-on: ubuntu-latest
+    env:
+      # Multithreaded model kernels (CPU backend) and forcing reads
+      JULIA_NUM_THREADS: auto
 
     steps:
       - uses: actions/checkout@v7
@@ -30,11 +33,13 @@ jobs:
       # Separate environment, so OpenCL and pocl stay out of the package's own dependencies.
       - name: Set up environment with OpenCL and pocl
         run: |
-          julia --project=${{ runner.temp }}/pocl -e '
+          julia --project=${{ runner.temp }}/pocl --check-bounds=yes -e '
             using Pkg
             Pkg.develop(path=".")
             Pkg.add(["OpenCL", "pocl_jll", "BasicModelInterface", "TOML", "Test"])
             Pkg.precompile()'
 
       - name: Run model on OpenCL and compare with CPU
-        run: julia --project=${{ runner.temp }}/pocl test/opencl_test.jl
+        # --check-bounds=yes (also used when precompiling above, to share the cache) so that
+        # out-of-range kernel indexing errors instead of being skipped
+        run: julia --project=${{ runner.temp }}/pocl --check-bounds=yes test/opencl_test.jl

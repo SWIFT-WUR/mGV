@@ -72,7 +72,7 @@ function calculate_max_water_storage(lai, canopy_coverage, fillvalue_threshold)
     return max_water_storage
 end
 
-@kernel function canopy_evaporation_kernel!(
+@kernel inbounds = true function canopy_evaporation_kernel!(
         lai,
         canopy_coverage,
         fillvalue_threshold,
@@ -147,7 +147,7 @@ function update_canopy_evaporation!(model::Model)
     return nothing
 end
 
-@kernel function transpiration_kernel!(
+@kernel inbounds = true function transpiration_kernel!(
         # Outputs
         transpiration_full,
         transpiration_layers,
@@ -350,7 +350,7 @@ function update_transpiration!(model::Model)
     return nothing
 end
 
-@kernel function water_canopy_storage_kernel!(
+@kernel inbounds = true function water_canopy_storage_kernel!(
         throughfall, water_storage,
         @Const(maximum_water_storage), @Const(canopy_evaporation),
         @Const(band_precipitation), @Const(canopy_coverage), @Const(band)
@@ -392,7 +392,7 @@ function update_water_canopy_storage!(model::Model)
     return nothing
 end
 
-@kernel function total_evapotranspiration_kernel!(
+@kernel inbounds = true function total_evapotranspiration_kernel!(
         total_evapotranspiration,
         @Const(soil_evaporation), @Const(canopy_evaporation), @Const(transpiration),
         @Const(vegetation_fraction), @Const(canopy_coverage), @Const(AreaFract),

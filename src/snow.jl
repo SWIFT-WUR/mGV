@@ -111,8 +111,9 @@ end
 
     # 5. Newton-Raphson Solver
     # f(ts) = LW_out(ts) + h_sens(ts,Ta) - LE(min(ts,0)) - rhs_base = 0
-    ts = tsurf_init
-    for _ in 1:12
+    # 12 iterations, unrolled on the CPU backend (see `foldsteps`)
+    ts = foldsteps(tsurf_init, Val(12)) do iteration, ts
+        @inline
         Ts_K = ts + 273.15f0
         lw_out = sig_eps * @fastmath(Ts_K^4)
         h_sens = ha * ts
@@ -131,7 +132,7 @@ end
         # Step update with clamping for stability
         step = f_val / max(abs(df_val), 1.0f-6)
         step = clamp(step, -10.0f0, 10.0f0)
-        ts = ts - step
+        return ts - step
     end
     ts = clamp(ts, -60.0f0, 50.0f0)
 
@@ -163,7 +164,7 @@ end
 end
 
 # Computing the daily mass and energy balance of the snowpack tiles.
-@kernel function snow_dynamics_kernel!(
+@kernel inbounds = true function snow_dynamics_kernel!(
         # Snowpack state per tile (in/out)
         swe,                    # Snow water equivalent [mm]
         surf_water,             # Surface layer liquid water [mm]
@@ -550,7 +551,7 @@ Aggregate the per-tile soil influx over vegetation tiles (weighted by the
 vegetation fraction) into the per-band melt and infiltration, and broadcast it
 back to every vegetation tile of the throughfall.
 """
-@kernel function aggregate_soil_influx_kernel!(
+@kernel inbounds = true function aggregate_soil_influx_kernel!(
         aggregated_melt, infiltration, throughfall,
         @Const(soil_influx), @Const(cv), @Const(band_tiles)
     )
@@ -571,7 +572,7 @@ back to every vegetation tile of the throughfall.
 end
 
 """Sum the throughfall over all tiles of the cell of each band."""
-@kernel function cell_throughfall_kernel!(
+@kernel inbounds = true function cell_throughfall_kernel!(
         infiltration, @Const(throughfall), @Const(band_cell), @Const(cell_tiles)
     )
     j = @index(Global, Linear)
