@@ -100,10 +100,8 @@ see [`Packing`](@ref). On a GPU, that kernel writes the outputs of a timestep to
 buffers on the device (also those that stay Float32), which are copied to the (pinned) host
 block while the model computes the next timestep. If the backend has a
 [`host_copier`](@ref) (`copier`), it queues these copies on a stream of its own without
-blocking the host; otherwise they run on a separate task (`copy`), which has its own stream.
-That task runs in the interactive threadpool. Julia also runs the main task there, so with
-one interactive thread the copy only starts when the model task yields: start Julia with
-two interactive threads (`-t N,2`) for backends without a copier.
+blocking the host; otherwise they run on a separate task (`copy`), which has its own stream,
+in the threadpool `copy_pool` (see [`copy_threadpool`](@ref)).
 
 With a copier, a full block is handed to the writer task right away; the writer task waits
 until the copies to it are done (the block's `copied` event). The model task only waits when
@@ -129,6 +127,25 @@ mutable struct OutputWriter
     flags::Any                        # device copy of the clipping flags of a timestep (GPU only)
     const copier::Any                 # the backend's `host_copier`, or `nothing`
     copy::Union{Task, Nothing}        # the task copying `staging` to the block, if any (without `copier`)
+    const copy_pool::Symbol           # the threadpool of `copy`
+end
+
+"""
+The threadpool for the task that copies a timestep to the host, on backends without a
+[`host_copier`](@ref): the interactive one, so that the copy is not queued behind the many
+(compression) tasks of the writer, if it has a thread besides the one of the calling (model)
+task. Julia runs the main task on the first interactive thread, and `julia -t N` gives one
+interactive thread: a copy task there would only start when the model task waits for it,
+which serialises the copy with the model. Then the copy runs in the default threadpool, with
+a warning to start Julia with two interactive threads (`-t N,2`).
+"""
+function copy_threadpool()
+    free = Threads.nthreads(:interactive) - (Threads.threadpool() === :interactive)
+    free > 0 && return :interactive
+    @warn "The output is copied from the GPU in the default threadpool, where it competes with " *
+        "the compression of the output. Start Julia with two interactive threads (e.g. " *
+        "`julia -t auto,2`) for this backend." maxlog = 1
+    return :default
 end
 
 """
@@ -142,6 +159,7 @@ function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, bloc
     jobs = Channel{OutputBlock}(nblocks)
 
     copier = backend isa CPU ? nothing : host_copier(backend)
+    copy_pool = backend isa CPU || !isnothing(copier) ? :interactive : copy_threadpool()
     types = stored_type.(packings)
     bytes = nblocks * block_length * ncells * sum(nlayers .* sizeof.(types))
     println("  -> Allocating $nblocks output blocks of $block_length timesteps ($(Base.format_bytes(bytes)))")
@@ -175,7 +193,7 @@ function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, bloc
 
     return OutputWriter(
         outputs, packings, free, jobs, task, nblocks, block_length, open_store, busy, backend, store, nothing,
-        Any[], nothing, copier, nothing,
+        Any[], nothing, copier, nothing, copy_pool,
     )
 end
 
@@ -252,9 +270,9 @@ function record_output!(writer::OutputWriter, model)
     KernelAbstractions.synchronize(backend)
     staging, flags, len = writer.staging, writer.flags, block.len
     device = KernelAbstractions.device(backend)
-    # In the interactive threadpool, so that the copy is not queued behind the many
-    # (compression) tasks of the writer. A new task gets its own stream, on the default device.
-    writer.copy = Threads.@spawn :interactive begin
+    # Preferably in the interactive threadpool, see `copy_threadpool`. A new task gets its own
+    # stream, on the default device.
+    writer.copy = Threads.@spawn writer.copy_pool begin
         KernelAbstractions.device!(backend, device)
         foreach((data, src) -> copy_timestep!(data, len, src), block.data, staging)
         copyto!(block.clipped, (len - 1) * nout + 1, flags, 1, nout)

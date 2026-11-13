@@ -45,6 +45,15 @@ More specifically:
 - If you don't have GPU available, the model's computation is
   multithreaded on CPU.
 
+On a GPU with CUDA, Metal, oneAPI or OpenCL, also start Julia with two
+interactive threads, e.g. `julia -t auto,2`. On these backends the output
+of every time step is copied from the GPU by a separate task, which needs
+an interactive thread besides the one the model runs on: `julia -t auto`
+gives only one. With a single interactive thread the model warns at
+startup, and the copy runs on the default threads, where it competes with
+the compression of the output. On AMD GPUs (`rocm`) the copy is queued on
+the GPU instead, so this is not needed.
+
 ## Have input & output on a fast disk
 
 Depending on your setup (e.g. HPC), make sure the data is available
