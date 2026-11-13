@@ -1,7 +1,7 @@
 using Zarr: Blosc
 using NCDatasets.CommonDataModel: CFVariable, MFCFVariable
 using NCDatasets.CFTime: timedecode
-using Dates: DateTime
+using Dates: DateTime, Second
 
 const FORCING_VARS = [
     "precipitation",
@@ -123,6 +123,8 @@ mutable struct ForcingReaders{S}
     sources::Dict{String, S}
     # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
+    # The last timestep the run reads (the forcing may hold more): no block after it is read
+    stop::Int
     cache::ForcingCache
     # Gridded (nx, ny, time_chunk) buffer per variable that Zarr chunks are read into,
     # before the active cells are copied to the cache. Empty for NetCDF and land-only Zarr.
@@ -401,9 +403,14 @@ function open_forcing(cfg::Cfg, domain::Domain; cache_bytes = FORCING_CACHE_BUDG
     )
     next = prefetch ? Prefetch(ForcingCache(n, capacity), nothing) : nothing
 
+    # The last timestep of the run is before the end of `end_year` (as in `run`)
+    # and `nearest_time_index` does not decrease with time
+    stop = nearest_time_index(times, DateTime(cfg.end_year + 1) - Second(cfg.timestep))
+
     return ForcingReaders(
         sources,
         times,
+        stop,
         ForcingCache(n, capacity),
         staging,
         domain.cells,
@@ -457,13 +464,27 @@ function use_backend!(readers::ForcingReaders, backend::Backend)
     return nothing
 end
 
-"""Undo [`use_backend!`](@ref), once the forcing is no longer needed."""
-function release_backend!(readers::ForcingReaders, backend::Backend)
+"""
+Undo [`use_backend!`](@ref), once the forcing is no longer needed. First waits for a prefetch
+that is still running, as it copies to the device caches. Its block is not needed anymore,
+so a failed prefetch is only reported as a warning.
+"""
+function release_backend!(readers::ForcingReaders)
     isnothing(readers.backend) && return nothing
     KernelAbstractions.synchronize(readers.backend)
-    isnothing(readers.prefetch) || isnothing(readers.prefetch.task) || wait(readers.prefetch.task)
+    p = readers.prefetch
+    if !isnothing(p) && !isnothing(p.task)
+        task, p.task = p.task, nothing
+        try
+            wait(task)
+        catch e
+            e isa TaskFailedException || rethrow()
+            @warn "Reading ahead the forcing of timesteps $(p.cache.start) to " *
+                "$(p.cache.start + p.cache.len - 1) failed. Ignored, as they are not used." exception = e
+        end
+    end
     readers.cache.device = nothing
-    isnothing(readers.prefetch) || (readers.prefetch.cache.device = nothing)
+    isnothing(p) || (p.cache.device = nothing)
     readers.backend = nothing
     return nothing
 end
@@ -570,7 +591,7 @@ function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
     isnothing(readers.backend) ||
         @timeit to "synchronize at forcing refill" KernelAbstractions.synchronize(readers.backend)
     start = chunk_start(readers, idx)
-    len = min(readers.capacity, length(readers.times) - start + 1)
+    len = min(readers.capacity, max(readers.stop, idx) - start + 1)
 
     p = readers.prefetch
     prefetched = false
@@ -601,9 +622,9 @@ function start_prefetch!(readers::ForcingReaders)
     p = readers.prefetch
     isnothing(p) && return nothing
     next = readers.cache.start + readers.cache.len
-    next > length(readers.times) && return nothing
+    next > readers.stop && return nothing
     start = chunk_start(readers, next)
-    len = min(readers.capacity, length(readers.times) - start + 1)
+    len = min(readers.capacity, readers.stop - start + 1)
     p.cache.start = start
     p.cache.len = len
     backend = readers.backend

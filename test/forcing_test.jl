@@ -9,10 +9,11 @@ const MEKONG_CONFIG = joinpath(@__DIR__, "../configs/mekong_config.toml")
 
 """
 Write a copy of the Mekong config to `dir` without output. With `forcing`, all forcing
-variables are read from that path instead.
+variables are read from that path instead. With `end_year`, the run ends in that year.
 """
-function forcing_test_config(dir; forcing = nothing)
+function forcing_test_config(dir; forcing = nothing, end_year = nothing, name = nothing)
     cfg = TOML.parsefile(MEKONG_CONFIG)
+    isnothing(end_year) || (cfg["end_year"] = end_year)
     for (key, path) in cfg["input"]["paths"]
         cfg["input"]["paths"][key] = abspath(joinpath(dirname(MEKONG_CONFIG), path))
     end
@@ -24,7 +25,8 @@ function forcing_test_config(dir; forcing = nothing)
     end
     cfg["output"]["dir"] = dir
     cfg["output"]["variables"] = []
-    config_file = joinpath(dir, "config_$(isnothing(forcing) ? "netcdf" : "land").toml")
+    name = something(name, isnothing(forcing) ? "netcdf" : "land")
+    config_file = joinpath(dir, "config_$name.toml")
     open(io -> TOML.print(io, cfg), config_file, "w")
     return config_file
 end
@@ -41,17 +43,17 @@ quantize(x) = isnan(x) ? Int16(-32768) : round(Int16, x / TAIR_SCALE)
 unpack(q) = q == -32768 ? NaN32 : Float32(q) * TAIR_SCALE + 0.0f0
 
 """
-Write the NetCDF forcing of `year` as a land-only Zarr store at `path`. The cells are stored
+Write the NetCDF forcing of `year` (or of several years) as a land-only Zarr store at `path`. The cells are stored
 in reverse order, followed by a cell outside the domain, in small chunks of 100 cells and 10
 days, so the chunks at the edges are partly filled.
 """
-function write_land_store(path, cfg, domain, netcdf, year)
+function write_land_store(path, cfg, domain, netcdf, years)
     names = cfg.input.names
     n = mGV.ncells(domain)
     outside = first(setdiff(1:prod(domain.grid_size), domain.cells))
     cells = [reverse(domain.cells); outside]
     nx = first(domain.grid_size)
-    times = filter(t -> Dates.year(t) == year, netcdf.times)
+    times = filter(t -> Dates.year(t) in years, netcdf.times)
 
     ds = mGV.open_param_source(cfg.input.paths.input_param_file)
     lon, lat = mGV.readfull(ds, names.longitude, 0.0), mGV.readfull(ds, names.latitude, 0.0)
@@ -128,6 +130,49 @@ end
         @test mismatches == 0
         @test prefetches > 0
         @test land.cache.start > 700  # all blocks were read
+    end
+
+    @testset "Reads no block after the end of the run" begin
+        # One store with both years, for a run of the first
+        path = joinpath(dir, "forcing_all.zarr")
+        write_land_store(path, netcdf_cfg, domain, netcdf, 1979:1980)
+        cfg = mGV.load_config(forcing_test_config(dir; forcing = path, end_year = 1979, name = "1979"))
+        land = mGV.open_forcing(cfg, domain; cache_bytes = 2 * 20 * n * 4 * length(mGV.FORCING_VARS))
+        @test length(land.times) == 731
+        @test land.stop == 365
+        @test mGV.open_forcing(land_cfg, domain).stop == 731
+
+        last_block = 0
+        for t in DateTime(1979):Day(1):DateTime(1979, 12, 31)
+            @test isequal(mGV.read_var(t, land, "precipitation"), mGV.read_var(t, netcdf, "precipitation"))
+            isnothing(land.prefetch.task) || (last_block = max(last_block, land.prefetch.cache.start + land.prefetch.cache.len - 1))
+        end
+        @test last_block == 365  # the last block read ahead is 361:365, not 361:380
+        @test land.cache.start + land.cache.len - 1 == 365
+        @test isnothing(land.prefetch.task)
+        # Reading after the end of the run still works, without prefetching
+        @test isequal(mGV.read_var(DateTime(1980, 1, 5), land, "precipitation"), mGV.read_var(DateTime(1980, 1, 5), netcdf, "precipitation"))
+        @test isnothing(land.prefetch.task)
+    end
+
+    @testset "Releasing the device caches" begin
+        land = mGV.open_forcing(land_cfg, domain; cache_bytes = 2 * 20 * n * 4 * length(mGV.FORCING_VARS))
+        mGV.read_var(DateTime(1979), land, "precipitation")
+        wait(land.prefetch.task)
+        # Pretend the caches are on a device: the CPU backend can also be synchronized
+        land.backend = mGV.CPU()
+        land.prefetch.task = Threads.@spawn error("Chunk 3 is missing")
+        @test_logs (:warn, r"Reading ahead the forcing of timesteps 21 to 40 failed") mGV.release_backend!(land)
+        @test isnothing(land.backend) && isnothing(land.prefetch.task)
+
+        # A prefetch that is still running is finished first
+        land.backend = mGV.CPU()
+        land.cache.device = Dict{String, Any}()
+        done = Ref(false)
+        land.prefetch.task = Threads.@spawn (sleep(0.5); done[] = true)
+        @test_logs mGV.release_backend!(land)
+        @test done[]
+        @test isnothing(land.backend) && isnothing(land.cache.device)
     end
 
     @testset "Keeps the forcing caches on the host if the device has no room" begin

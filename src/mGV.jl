@@ -308,7 +308,7 @@ function finalize!(model::Model)
         close(model.writer)
         model.writer = nothing
     end
-    release_backend!(model.forcing_readers, get_backend(model.forcing_variables.air_temperature))
+    release_backend!(model.forcing_readers)
     return nothing
 end
 
