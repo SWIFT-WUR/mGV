@@ -29,8 +29,10 @@ jobs:
 
       - uses: julia-actions/cache@v3
 
+      # Precompile with the same --check-bounds=yes as the validation step: Julia keys its
+      # precompile cache on this flag, so a mismatch would rebuild everything there.
       - name: Install Julia dependencies
-        run: julia --project -e 'using Pkg; Pkg.instantiate()'
+        run: julia --project --check-bounds=yes -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 
       # 3. Set up Python & Numpy
       - uses: actions/setup-python@v7
