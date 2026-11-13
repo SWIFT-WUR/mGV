@@ -113,8 +113,11 @@ implement, for their copier `c`:
   stream, i.e. for the staging.
 - `copy_to_host!(c, dst, doffs, src, soffs, n)`: copy `n` elements from device array `src`
   (from index `soffs`) to host array `dst` (from index `doffs`), without blocking the host.
-- `finish_host_copy!(c)`: marks the end of the host copies of a timestep.
-- `wait_host_copy(c)`: blocks the calling task until the host copies are done.
+- `block_event(c)`: a new event, which marks the end of the copies to one output block.
+- `finish_host_copy!(c, event)`: marks the end of the host copies of a timestep, also with
+  `event` (of the block they copy to).
+- `wait_host_copy(c, event)`: blocks the calling task until the copies up to `event` are
+  done (letting other tasks run). The writer task calls it before it writes a block.
 
 Returns `nothing` (the default) if the backend has none; the writer then copies on a
 separate task instead.
@@ -126,3 +129,4 @@ function start_host_copy! end
 function copy_to_host! end
 function finish_host_copy! end
 function wait_host_copy end
+function block_event end

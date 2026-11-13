@@ -52,11 +52,13 @@ written to `store` on the writer task. `data[i]` holds output `i`, of size
 (ncells, block length, nlayers), with nlayers = 1 for outputs without a layer dimension, in
 its stored element type (see [`stored_type`](@ref)). Timestep `t` of the block is timestep
 `first + t - 1` of the store. `clipped[i, t]` is nonzero when values of output `i` were
-clipped to the range of its packing in timestep `t`.
+clipped to the range of its packing in timestep `t`. With a [`host_copier`](@ref), `copied`
+is the event that marks the end of the copies to the block; the writer task waits for it.
 """
 mutable struct OutputBlock
     const data::Vector{Array}
     const clipped::Matrix{Int32}
+    const copied::Any  # an event of the copier, or `nothing`
     store::Any   # the `OutputStore` the block is written to
     first::Int   # time index in the store of the first timestep of the block
     len::Int     # number of timesteps in the block
@@ -99,6 +101,13 @@ buffers on the device (also those that stay Float32), which are copied to the (p
 block while the model computes the next timestep. If the backend has a
 [`host_copier`](@ref) (`copier`), it queues these copies on a stream of its own without
 blocking the host; otherwise they run on a separate task (`copy`), which has its own stream.
+That task runs in the interactive threadpool. Julia also runs the main task there, so with
+one interactive thread the copy only starts when the model task yields: start Julia with
+two interactive threads (`-t N,2`) for backends without a copier.
+
+With a copier, a full block is handed to the writer task right away; the writer task waits
+until the copies to it are done (the block's `copied` event). The model task only waits when
+there is no free block.
 
 The writer persists over the years of the run; every year gets its own store, see
 [`next_store!`](@ref).
@@ -120,7 +129,6 @@ mutable struct OutputWriter
     flags::Any                        # device copy of the clipping flags of a timestep (GPU only)
     const copier::Any                 # the backend's `host_copier`, or `nothing`
     copy::Union{Task, Nothing}        # the task copying `staging` to the block, if any (without `copier`)
-    copying::Bool                     # whether `copier` may still be copying to the block
 end
 
 """
@@ -129,10 +137,11 @@ The blocks are allocated on the host, and pinned when the backend supports it. `
 is the number of layers of output `i` (1 for outputs without a layer dimension), and
 `packings[i]` how it is stored.
 """
-function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, block_length, backend; nblocks = 2)
+function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, block_length, backend; nblocks = 3)
     free = Channel{OutputBlock}(nblocks)
     jobs = Channel{OutputBlock}(nblocks)
 
+    copier = backend isa CPU ? nothing : host_copier(backend)
     types = stored_type.(packings)
     bytes = nblocks * block_length * ncells * sum(nlayers .* sizeof.(types))
     println("  -> Allocating $nblocks output blocks of $block_length timesteps ($(Base.format_bytes(bytes)))")
@@ -141,7 +150,7 @@ function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, bloc
         clipped = zeros(Int32, length(outputs), block_length)
         foreach(a -> pin_memory!(backend, a), data)
         pin_memory!(backend, clipped)
-        put!(free, OutputBlock(data, clipped, nothing, 0, 0))
+        put!(free, OutputBlock(data, clipped, isnothing(copier) ? nothing : block_event(copier), nothing, 0, 0))
     end
 
     store = open_store(year)
@@ -151,6 +160,8 @@ function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, bloc
         warned = Set{Int}()  # outputs with a warning about clipping, for the current store
         current = nothing
         for block in jobs
+            # Here, rather than in the model task, so that the model can queue more work
+            isnothing(block.copied) || wait_host_copy(copier, block.copied)
             block.store === current || (current = block.store; empty!(warned))
             warn_clipped!(warned, block, outputs, packings)
             busy[] += @elapsed write_block!(block.store, block, buffers)
@@ -164,7 +175,7 @@ function OutputWriter(open_store, year, outputs, packings, ncells, nlayers, bloc
 
     return OutputWriter(
         outputs, packings, free, jobs, task, nblocks, block_length, open_store, busy, backend, store, nothing,
-        Any[], nothing, host_copier(backend), nothing, false,
+        Any[], nothing, copier, nothing,
     )
 end
 
@@ -196,7 +207,7 @@ else a separate task). The block is handed to the writer once its copies are don
 [`finish_copy!`](@ref).
 """
 function record_output!(writer::OutputWriter, model)
-    finish_copy!(writer; force = false)
+    finish_copy!(writer)
     t = output_time_index(model.clock)
     block = writer.block
     if isnothing(block)
@@ -263,29 +274,23 @@ function copy_with_copier!(writer::OutputWriter, block)
     foreach((data, src) -> copy_timestep!(data, block.len, src; copy), block.data, writer.staging)
     nout = length(writer.staging)
     copy_to_host!(copier, block.clipped, (block.len - 1) * nout + 1, writer.flags, 1, nout)
-    finish_host_copy!(copier)
-    writer.copying = true
+    finish_host_copy!(copier, block.copied)
     return nothing
 end
 
 """
-Hand the current block to the writer task if it is full, once the outputs of the last
-timestep are copied to it. With `force`, also wait for the copy if the block is not full.
-A `copier` needs no waiting until then: it orders the copies on the device.
+Hand the current block to the writer task if it is full. Without a `copier`, first wait
+until the outputs of the last timestep are copied to it. With a `copier`, the writer task
+waits for the copies (see [`OutputBlock`](@ref)), so the model never does.
 """
-function finish_copy!(writer::OutputWriter; force = true)
+function finish_copy!(writer::OutputWriter)
     if !isnothing(writer.copy)
         task = writer.copy
         writer.copy = nothing
         @timeit to "wait for output copy" wait(task)
     end
     block = writer.block
-    full = !isnothing(block) && block.len == writer.block_length
-    if writer.copying && (full || force)
-        @timeit to "wait for output copy" wait_host_copy(writer.copier)
-        writer.copying = false
-    end
-    full && submit_block!(writer)
+    !isnothing(block) && block.len == writer.block_length && submit_block!(writer)
     return nothing
 end
 

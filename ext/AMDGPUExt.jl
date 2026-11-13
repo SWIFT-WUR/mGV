@@ -58,10 +58,16 @@ function mGV.copy_to_host!(c::HostCopier, dst::Array{T}, doffs, src::ROCArray{T}
     return nothing
 end
 
-mGV.finish_host_copy!(c::HostCopier) = (HIP.hipEventRecord(c.done, c.stream); nothing)
+function mGV.finish_host_copy!(c::HostCopier, event::HIPEvent)
+    HIP.hipEventRecord(c.done, c.stream)
+    HIP.hipEventRecord(event, c.stream)
+    return nothing
+end
+
+mGV.block_event(c::HostCopier) = HIPEvent(c.stream; do_record = false)
 
 # Lets other Julia tasks (e.g. the writer) run while waiting
-mGV.wait_host_copy(c::HostCopier) = HIP.synchronize(c.done)
+mGV.wait_host_copy(::HostCopier, event::HIPEvent) = HIP.synchronize(event)
 
 function __init__()
     return mGV.register_backend!("rocm", "AMDGPU", AMDGPU.functional, ROCBackend)
