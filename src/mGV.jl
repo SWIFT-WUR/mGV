@@ -38,15 +38,18 @@ include("postprocess.jl")
 include("io.jl")
 
 const CLI_EPILOG = """
+Usage 1:
+    mGV config.toml -b cpu
+Usage 2:
+    mGV config.toml --backend cuda
+
 Number of threads:
   Threads are a Julia option, so pass them before `--`, and the app's arguments after it:
 
     mGV --threads=8 -- config.toml -b cpu
     mGV --threads=auto -- config.toml       (one thread per CPU thread, the default)
 
-GPU backends need their package installed in the app environment, e.g. for -b cuda:
-
-    julia --project=~/.julia/environments/apps/mGV -e 'using Pkg; Pkg.add("CUDA")'
+GPU backends need their package installed in the general Julia environment
 """
 
 function parse_cli(args)
@@ -371,6 +374,7 @@ function (@main)(args)
         ArgParse.show_help(s, exit_when_done = false)
         return 1
     end
+    load_gpu_backend!(opts["backend"])
     run(opts["config"]; backend = opts["backend"])
     return 0
 end
