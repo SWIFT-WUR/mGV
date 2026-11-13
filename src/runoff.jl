@@ -1,4 +1,4 @@
-@kernel_inbounds function surface_runoff_kernel!(
+@kernel inbounds=true function surface_runoff_kernel!(
         surface_runoff,
         A_sat,
         soil_moisture,
@@ -187,7 +187,7 @@ function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
     return clamp.(Qb, 0.0f0, avail)
 end
 
-@kernel_inbounds function runoff_drainage_kernel!(
+@kernel inbounds=true function runoff_drainage_kernel!(
         soil_moisture,          # (ncells, 3)
         subsurface_runoff,      # (ncells)
         surface_runoff,         # (ncells)
@@ -363,7 +363,7 @@ function solve_runoff_and_drainage!(
     return nothing
 end
 
-@kernel_inbounds function infiltration_kernel!(
+@kernel inbounds=true function infiltration_kernel!(
         infiltration, throughfall, surface_runoff, cv_grid, area_fraction, cell_tiles, band
     )
     i = @index(Global, Linear)
