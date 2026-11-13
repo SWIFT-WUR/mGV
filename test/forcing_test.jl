@@ -31,6 +31,12 @@ end
 
 # Air temperature is stored as int16 with this scale factor, the other variables as Float32
 const TAIR_SCALE = 0.01f0
+
+# Device backends whose device has 1 KiB free, and whose allocations fail
+struct TinyBackend <: mGV.KernelAbstractions.Backend end
+mGV.device_free_memory(::TinyBackend) = 1024
+struct FailingBackend <: mGV.KernelAbstractions.Backend end
+mGV.KernelAbstractions.allocate(::FailingBackend, ::Type, ::Tuple) = throw(OutOfMemoryError())
 quantize(x) = isnan(x) ? Int16(-32768) : round(Int16, x / TAIR_SCALE)
 unpack(q) = q == -32768 ? NaN32 : Float32(q) * TAIR_SCALE + 0.0f0
 
@@ -122,6 +128,17 @@ end
         @test mismatches == 0
         @test prefetches > 0
         @test land.cache.start > 700  # all blocks were read
+    end
+
+    @testset "Keeps the forcing caches on the host if the device has no room" begin
+        land = mGV.open_forcing(land_cfg, domain; cache_bytes = 2 * 20 * n * 4 * length(mGV.FORCING_VARS))
+        mGV.read_var(DateTime(1979), land, "precipitation")
+        @test_logs (:warn, r"take more than half of the free device memory") mGV.use_backend!(land, TinyBackend())
+        @test_logs (:warn, r"Could not allocate the forcing caches") match_mode = :any mGV.use_backend!(land, FailingBackend())
+        @test isnothing(land.backend)
+        @test isnothing(land.cache.device) && isnothing(land.prefetch.cache.device)
+        # Read from the host caches, as before
+        @test isequal(mGV.read_var(DateTime(1979, 3), land, "precipitation"), mGV.read_var(DateTime(1979, 3), netcdf, "precipitation"))
     end
 
     @testset "Rejects stores without all active cells" begin

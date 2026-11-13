@@ -148,6 +148,7 @@ function Model(config_file::AbstractString; backend = "auto")
         soil_variables = adapt(backend, soil_variables)
         snow_variables = adapt(backend, snow_variables)
         forcing_variables = adapt(backend, forcing_variables)
+        use_backend!(forcing_readers, backend)
         if !isnothing(routing)
             routing = adapt(backend, routing)
         end
@@ -296,6 +297,7 @@ end
 
 """
 Finalize the model: write the remaining output, close the output file and stop the writer.
+Also frees the device copies of the forcing caches.
 
 Synchronizes the device first, so that errors in kernels are reported: with a
 [`host_copier`](@ref), nothing else in a run synchronizes the model's stream.
@@ -306,6 +308,7 @@ function finalize!(model::Model)
         close(model.writer)
         model.writer = nothing
     end
+    release_backend!(model.forcing_readers, get_backend(model.forcing_variables.air_temperature))
     return nothing
 end
 

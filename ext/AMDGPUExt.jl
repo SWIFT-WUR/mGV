@@ -4,6 +4,9 @@ using AMDGPU: AMDGPU, ROCBackend, ROCArray
 using AMDGPU.HIP: HIP, HIPStream, HIPEvent
 import mGV
 
+# Of the current device, which `KernelAbstractions.allocate` allocates on
+mGV.device_free_memory(::ROCBackend) = first(AMDGPU.info())
+
 # `KernelAbstractions.pagelock!` pins with `hipHostRegister`, which is not undone when the array is freed
 function mGV.unpin_memory!(::ROCBackend, arr::Array)
     isdefined(AMDGPU.Mem, :is_registered) || return nothing  # older AMDGPU versions

@@ -12,6 +12,12 @@ The model currently only supports a single GPU at a time,
 however, the model does not need a lot of VRAM (2 - 8 GB for a
 global 5′ grid, depending on the configuration and parameter file).
 
+The forcing caches are kept on the GPU as well, which takes up to about
+2 GB of VRAM. If they would take more than half of the free memory of
+the GPU, or cannot be allocated, the model warns at startup and keeps
+them on the host instead. The run then still works, but passing the
+forcing to the GPU is slower.
+
 Do note that this leads to bottlenecks elsewhere in the code.
 Use the other performance tips from this page to make optimal use of
 the GPU resources.

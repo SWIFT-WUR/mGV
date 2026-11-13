@@ -100,6 +100,14 @@ AMDGPU). Does nothing unless a backend extension adds a method for its backend.
 unpin_memory!(::Backend, arr) = nothing
 
 """
+    device_free_memory(backend)
+
+Free memory on the device of `backend`, in bytes, or `nothing` if the backend cannot tell.
+Backend extensions add a method for their backend.
+"""
+device_free_memory(::Backend) = nothing
+
+"""
     host_copier(backend)
 
 An object that copies device arrays to host memory asynchronously, on a stream of its own,
