@@ -1,6 +1,6 @@
 include("runoff.jl")
 
-@kernel inbounds=true function soil_properties_kernel!(
+@kernel inbounds = true function soil_properties_kernel!(
         # Outputs
         bulk_dens_min, soil_dens_min, porosity,
         soil_moisture_max, soil_moisture_critical,
@@ -83,7 +83,7 @@ end
 """
 NIJSSEN2001 BASEFLOW CONVERSION KERNEL
 """
-@kernel inbounds=true function convert_nijssen2001_kernel!(Dsmax, Ds, Ws, @Const(c), @Const(max_moist))
+@kernel inbounds = true function convert_nijssen2001_kernel!(Dsmax, Ds, Ws, @Const(c), @Const(max_moist))
     i = @index(Global, Linear)
 
     d1 = Ds[i]
@@ -162,7 +162,7 @@ function arno_evaporation_beta(sm_top, sm_max_top, b_i)
     return is_saturated, beta_asp
 end
 
-@kernel inbounds=true function soil_evaporation_kernel!(
+@kernel inbounds = true function soil_evaporation_kernel!(
         soil_evap,
         @Const(soil_moisture), @Const(soil_moisture_max), @Const(residual_moisture),
         @Const(potential_evaporation), @Const(b_infilt),
@@ -216,7 +216,7 @@ Sum the per-layer transpiration over the tiles of each cell, weighted by canopy
 coverage. `transpiration_layers` only holds the top soil layers; the uptake
 from the layers below is zero.
 """
-@kernel inbounds=true function layer_transpiration_kernel!(
+@kernel inbounds = true function layer_transpiration_kernel!(
         transpiration_uptake, @Const(transpiration_layers), @Const(canopy_coverage),
         @Const(cell_tiles)
     )
@@ -281,7 +281,7 @@ function update_soil!(model)
     return nothing
 end
 
-@kernel inbounds=true function soil_conductivity_kernel!(
+@kernel inbounds = true function soil_conductivity_kernel!(
         moist, ice_frac, soil_dens_min, bulk_dens_min, quartz, ORGANIC_FRAC, porosity, kappa
     )
     (; KW, KI, KS_ORG, KDRY_ORG) = Constants

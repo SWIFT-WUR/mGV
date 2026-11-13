@@ -8,7 +8,7 @@ fibonacci_sum(x) = mGV.foldsteps((x, x, 0), Val(30)) do step, (a, b, s)
     return (b, a + b, s + step)
 end
 
-@kernel inbounds=true function foldsteps_kernel!(fib, sums, @Const(x))
+@kernel inbounds = true function foldsteps_kernel!(fib, sums, @Const(x))
     i = @index(Global, Linear)
     a, _, s = fibonacci_sum(x[i])
     fib[i] = a

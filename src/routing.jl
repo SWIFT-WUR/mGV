@@ -226,7 +226,7 @@ function upstream_csr(downstream::Vector{Int32})
     return ptr, idx
 end
 
-@kernel inbounds=true function lateral_inflow_kernel!(lateral_inflow, runoff_forcing_flat, cell_areas, n)
+@kernel inbounds = true function lateral_inflow_kernel!(lateral_inflow, runoff_forcing_flat, cell_areas, n)
     i = @index(Global, Linear)
 
     if i <= n
@@ -235,7 +235,7 @@ end
     end
 end
 
-@kernel inbounds=true function kinematic_wave_kernel!(
+@kernel inbounds = true function kinematic_wave_kernel!(
         area,
         discharge_next,
         @Const(discharge),
@@ -296,7 +296,7 @@ end
 end
 
 # CFL and travel time, from the state after the last sub-step
-@kernel inbounds=true function routing_diagnostics_kernel!(
+@kernel inbounds = true function routing_diagnostics_kernel!(
         cfl_buffer,
         travel_time_buffer,
         area,

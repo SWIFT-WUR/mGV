@@ -164,7 +164,7 @@ end
 end
 
 # Computing the daily mass and energy balance of the snowpack tiles.
-@kernel inbounds=true function snow_dynamics_kernel!(
+@kernel inbounds = true function snow_dynamics_kernel!(
         # Snowpack state per tile (in/out)
         swe,                    # Snow water equivalent [mm]
         surf_water,             # Surface layer liquid water [mm]
@@ -551,7 +551,7 @@ Aggregate the per-tile soil influx over vegetation tiles (weighted by the
 vegetation fraction) into the per-band melt and infiltration, and broadcast it
 back to every vegetation tile of the throughfall.
 """
-@kernel inbounds=true function aggregate_soil_influx_kernel!(
+@kernel inbounds = true function aggregate_soil_influx_kernel!(
         aggregated_melt, infiltration, throughfall,
         @Const(soil_influx), @Const(cv), @Const(band_tiles)
     )
@@ -572,7 +572,7 @@ back to every vegetation tile of the throughfall.
 end
 
 """Sum the throughfall over all tiles of the cell of each band."""
-@kernel inbounds=true function cell_throughfall_kernel!(
+@kernel inbounds = true function cell_throughfall_kernel!(
         infiltration, @Const(throughfall), @Const(band_cell), @Const(cell_tiles)
     )
     j = @index(Global, Linear)

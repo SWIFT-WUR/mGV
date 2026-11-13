@@ -1,4 +1,4 @@
-@kernel inbounds=true function surface_runoff_kernel!(
+@kernel inbounds = true function surface_runoff_kernel!(
         surface_runoff,
         A_sat,
         soil_moisture,
@@ -274,7 +274,7 @@ parameters (see `runoff_drainage_kernel!`).
     return (sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)
 end
 
-@kernel inbounds=true function runoff_drainage_kernel!(
+@kernel inbounds = true function runoff_drainage_kernel!(
         soil_moisture,          # (ncells, 3)
         subsurface_runoff,      # (ncells)
         surface_runoff,         # (ncells)
@@ -393,7 +393,7 @@ function solve_runoff_and_drainage!(
     return nothing
 end
 
-@kernel inbounds=true function infiltration_kernel!(
+@kernel inbounds = true function infiltration_kernel!(
         infiltration, throughfall, surface_runoff, cv_grid, area_fraction, cell_tiles, band
     )
     i = @index(Global, Linear)
