@@ -375,7 +375,7 @@ function (@main)(args)
         return 1
     end
     load_gpu_backend!(opts["backend"])
-    run(opts["config"]; backend = opts["backend"])
+    Base.invokelatest(run, opts["config"]; backend = opts["backend"])
     return 0
 end
 
