@@ -1,7 +1,7 @@
 using Zarr: Blosc
 using NCDatasets.CommonDataModel: CFVariable, MFCFVariable
 using NCDatasets.CFTime: timedecode
-using Dates: DateTime
+using Dates: DateTime, Second
 
 const FORCING_VARS = [
     "precipitation",
@@ -67,17 +67,43 @@ end
 const AnyZarrForcingVar = Union{ZarrForcingVar, LandZarrForcingVar}
 
 """
-A block of consecutive forcing timesteps, `start:start+len-1`, for the active cells.
+A block of consecutive forcing timesteps, `start:start+len-1`, for the active cells. On a
+GPU, `device` holds a copy of `data` on the device (see [`use_backend!`](@ref)), which the
+model's forcing arrays are filled from.
 """
 mutable struct ForcingCache
     data::Dict{String, Matrix{Float32}}  # (ncells, capacity) per variable, active cells only
     start::Int  # index of the first cached timestep, 0 when empty
     len::Int    # number of valid timesteps currently cached
+    device::Union{Dict{String, Any}, Nothing}  # device copy of `data`, or `nothing`
 end
 
 ForcingCache(n::Int, capacity::Int) = ForcingCache(
-    Dict(var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS), 0, 0,
+    Dict(var => Matrix{Float32}(undef, n, capacity) for var in FORCING_VARS), 0, 0, nothing,
 )
+
+"""
+Copy the timesteps in `cache` to its device copy, if it has one. Blocks the calling task
+until the copy is done: on a task of its own (the prefetch), only that task waits.
+"""
+function upload!(cache::ForcingCache)
+    foreach(var -> upload!(cache, var), keys(cache.data))
+    return nothing
+end
+
+"""Copy the timesteps of variable `var` in `cache` to its device copy, if it has one."""
+function upload!(cache::ForcingCache, var::String)
+    isnothing(cache.device) && return nothing
+    data = cache.data[var]
+    copyto!(cache.device[var], 1, data, 1, size(data, 1) * cache.len)
+    return nothing
+end
+
+"""Copy column `col` of the (ncells, capacity) device matrix `src` to `dest`."""
+@kernel function copy_column_kernel!(dest, @Const(src), offset)
+    i = @index(Global)
+    @inbounds dest[i] = src[offset + i]
+end
 
 """Whether timestep `idx` is in `cache`."""
 Base.in(idx::Int, cache::ForcingCache) = cache.start <= idx < cache.start + cache.len
@@ -97,6 +123,8 @@ mutable struct ForcingReaders{S}
     sources::Dict{String, S}
     # Cache multiple forcing time steps to reduce read overhead
     times::Vector{DateTime}
+    # The last timestep the run reads (the forcing may hold more): no block after it is read
+    stop::Int
     cache::ForcingCache
     # Gridded (nx, ny, time_chunk) buffer per variable that Zarr chunks are read into,
     # before the active cells are copied to the cache. Empty for NetCDF and land-only Zarr.
@@ -107,6 +135,9 @@ mutable struct ForcingReaders{S}
     prefetch::Union{Prefetch, Nothing}  # `nothing` for NetCDF
     # Reused decompression buffers for land-only Zarr
     buffers::Channel{Vector{UInt8}}
+    # The backend of the model, when it is not the CPU: the caches then have a copy on the
+    # device, see `use_backend!`
+    backend::Any
 end
 
 """
@@ -372,9 +403,14 @@ function open_forcing(cfg::Cfg, domain::Domain; cache_bytes = FORCING_CACHE_BUDG
     )
     next = prefetch ? Prefetch(ForcingCache(n, capacity), nothing) : nothing
 
+    # The last timestep of the run is before the end of `end_year` (as in `run`)
+    # and `nearest_time_index` does not decrease with time
+    stop = nearest_time_index(times, DateTime(cfg.end_year + 1) - Second(cfg.timestep))
+
     return ForcingReaders(
         sources,
         times,
+        stop,
         ForcingCache(n, capacity),
         staging,
         domain.cells,
@@ -382,7 +418,75 @@ function open_forcing(cfg::Cfg, domain::Domain; cache_bytes = FORCING_CACHE_BUDG
         time_chunk,
         next,
         Channel{Vector{UInt8}}(Inf),
+        nothing,
     )
+end
+
+"""
+Keep a copy of the forcing caches on the device of `backend` (unless it is the CPU), so that
+the model's forcing arrays are filled by a kernel every step, without copies from the host.
+The prefetch task copies the block it read to the device itself, on its own stream, while
+the model computes. Takes device memory of the size of the caches (`FORCING_CACHE_BUDGET_BYTES`
+in all, or one Zarr chunk per variable and cache if that is more).
+
+The device copies take at most half of the free device memory (when the backend can tell,
+see [`device_free_memory`](@ref)), so that the rest of the model still fits. When they would
+take more, or cannot be allocated, the forcing is copied from the host caches every step
+instead, which is slower.
+"""
+function use_backend!(readers::ForcingReaders, backend::Backend)
+    backend isa CPU && return nothing
+    caches = isnothing(readers.prefetch) ? [readers.cache] : [readers.cache, readers.prefetch.cache]
+    bytes = sum(cache -> sum(sizeof, values(cache.data)), caches)
+    free = device_free_memory(backend)
+    if !isnothing(free) && bytes > free ÷ 2
+        @warn "The forcing caches ($(Base.format_bytes(bytes))) take more than half of the " *
+            "free device memory ($(Base.format_bytes(free))), so they are kept on the host. " *
+            "Copying the forcing to the device every step is slower."
+        return nothing
+    end
+    isnothing(readers.prefetch) || isnothing(readers.prefetch.task) || wait(readers.prefetch.task)
+    try
+        for cache in caches
+            cache.device = Dict{String, Any}(var => KernelAbstractions.allocate(backend, Float32, size(data)) for (var, data) in cache.data)
+        end
+    catch e
+        e isa InterruptException && rethrow()
+        foreach(cache -> cache.device = nothing, caches)
+        @warn "Could not allocate the forcing caches ($(Base.format_bytes(bytes))) on the " *
+            "device, so they are kept on the host. Copying the forcing to the device every " *
+            "step is slower." exception = (e, catch_backtrace())
+        return nothing
+    end
+    readers.backend = backend
+    upload!(readers.cache)
+    isnothing(readers.prefetch) || isnothing(readers.prefetch.task) || upload!(readers.prefetch.cache)
+    return nothing
+end
+
+"""
+Undo [`use_backend!`](@ref), once the forcing is no longer needed. First waits for a prefetch
+that is still running, as it copies to the device caches. Its block is not needed anymore,
+so a failed prefetch is only reported as a warning.
+"""
+function release_backend!(readers::ForcingReaders)
+    isnothing(readers.backend) && return nothing
+    KernelAbstractions.synchronize(readers.backend)
+    p = readers.prefetch
+    if !isnothing(p) && !isnothing(p.task)
+        task, p.task = p.task, nothing
+        try
+            wait(task)
+        catch e
+            e isa TaskFailedException || rethrow()
+            @warn "Reading ahead the forcing of timesteps $(p.cache.start) to " *
+                "$(p.cache.start + p.cache.len - 1) failed. Ignored, as they are not used." exception = e
+        end
+    end
+    readers.cache.device = nothing
+    isnothing(p) || (p.cache.device = nothing)
+    readers.backend = nothing
+    return nothing
 end
 
 """
@@ -482,8 +586,12 @@ block was prefetched, this waits for the prefetch and swaps it in. Afterwards, t
 after the cache is prefetched.
 """
 function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
+    # The model's stream may still read from the device copy of the cache, which becomes the
+    # prefetch cache and is overwritten. Synchronizing also reports errors in the kernels.
+    isnothing(readers.backend) ||
+        @timeit to "synchronize at forcing refill" KernelAbstractions.synchronize(readers.backend)
     start = chunk_start(readers, idx)
-    len = min(readers.capacity, length(readers.times) - start + 1)
+    len = min(readers.capacity, max(readers.stop, idx) - start + 1)
 
     p = readers.prefetch
     prefetched = false
@@ -499,6 +607,7 @@ function fill_forcing_cache!(readers::ForcingReaders, idx::Int)
         load_all_vars!(readers, readers.cache.data, start, len)
         readers.cache.start = start
         readers.cache.len = len
+        upload!(readers.cache)
     end
 
     start_prefetch!(readers)
@@ -513,27 +622,42 @@ function start_prefetch!(readers::ForcingReaders)
     p = readers.prefetch
     isnothing(p) && return nothing
     next = readers.cache.start + readers.cache.len
-    next > length(readers.times) && return nothing
+    next > readers.stop && return nothing
     start = chunk_start(readers, next)
-    len = min(readers.capacity, length(readers.times) - start + 1)
+    len = min(readers.capacity, readers.stop - start + 1)
     p.cache.start = start
     p.cache.len = len
-    p.task = Threads.@spawn load_all_vars!(readers, p.cache.data, start, len)
+    backend = readers.backend
+    device = isnothing(backend) ? nothing : KernelAbstractions.device(backend)
+    # Copy each variable to the device as soon as it is read, while the others are read. A
+    # new task has its own stream, so a copy only blocks the task that makes it.
+    var_done = isnothing(backend) ? nothing : function (var)
+            KernelAbstractions.device!(backend, device)
+            return upload!(p.cache, var)
+    end
+    p.task = Threads.@spawn load_all_vars!(readers, p.cache.data, start, len; var_done)
     return nothing
 end
 
-"""For NetCDF, read `len` timesteps of all forcing variables into `cache`, one by one."""
-function load_all_vars!(readers::ForcingReaders, cache, start::Int, len::Int)
+"""
+For NetCDF, read `len` timesteps of all forcing variables into `cache`, one by one. Calls
+`var_done(var)` (unless `nothing`) when variable `var` is read, as do the other methods.
+"""
+function load_all_vars!(readers::ForcingReaders, cache, start::Int, len::Int; var_done = nothing)
     for var in FORCING_VARS
         load_block!(cache[var], readers.staging[var], readers.cells, readers.sources[var], start, len)
+        isnothing(var_done) || var_done(var)
     end
     return nothing
 end
 
 """For Zarr, read all variables at the same time, one task each (needs `julia -t` threads)."""
-function load_all_vars!(readers::ForcingReaders{ZarrForcingVar}, cache, start::Int, len::Int)
+function load_all_vars!(readers::ForcingReaders{ZarrForcingVar}, cache, start::Int, len::Int; var_done = nothing)
     @sync for var in FORCING_VARS
-        Threads.@spawn load_block!(cache[var], readers.staging[var], readers.cells, readers.sources[var], start, len)
+        Threads.@spawn begin
+            load_block!(cache[var], readers.staging[var], readers.cells, readers.sources[var], start, len)
+            isnothing(var_done) || var_done(var)
+        end
     end
     return nothing
 end
@@ -542,24 +666,27 @@ end
 For land-only Zarr, read every chunk of every variable in its own task (needs `julia -t`
 threads), and unpack it straight into the cache.
 """
-function load_all_vars!(readers::ForcingReaders{LandZarrForcingVar}, cache, start::Int, len::Int)
+function load_all_vars!(readers::ForcingReaders{LandZarrForcingVar}, cache, start::Int, len::Int; var_done = nothing)
     stop = start + len - 1
     @sync for var in FORCING_VARS
         src = readers.sources[var]
-        for (array, offset) in zip(src.arrays, src.offsets)
-            nrows, nt = size(array)
-            row_chunk, time_chunk = array.metadata.chunks
-            # Timesteps of this array within start:stop, as indices into the array
-            first_t = max(start, offset) - offset + 1
-            last_t = min(stop, offset + nt - 1) - offset + 1
-            first_t > last_t && continue
-            for tc in cld(first_t, time_chunk):cld(last_t, time_chunk), rc in 1:cld(nrows, row_chunk)
-                Threads.@spawn load_land_chunk!(
-                    cache[var], src, array, readers.buffers, rc, tc,
-                    max(first_t, (tc - 1) * time_chunk + 1):min(last_t, tc * time_chunk),
-                    offset - start,
-                )
+        Threads.@spawn begin
+            @sync for (array, offset) in zip(src.arrays, src.offsets)
+                nrows, nt = size(array)
+                row_chunk, time_chunk = array.metadata.chunks
+                # Timesteps of this array within start:stop, as indices into the array
+                first_t = max(start, offset) - offset + 1
+                last_t = min(stop, offset + nt - 1) - offset + 1
+                first_t > last_t && continue
+                for tc in cld(first_t, time_chunk):cld(last_t, time_chunk), rc in 1:cld(nrows, row_chunk)
+                    Threads.@spawn load_land_chunk!(
+                        cache[var], src, array, readers.buffers, rc, tc,
+                        max(first_t, (tc - 1) * time_chunk + 1):min(last_t, tc * time_chunk),
+                        offset - start,
+                    )
+                end
             end
+            isnothing(var_done) || var_done(var)
         end
     end
     return nothing
@@ -640,7 +767,13 @@ function read_var!(dest, time::DateTime, readers::ForcingReaders, var::String)
     idx in readers.cache || fill_forcing_cache!(readers, idx)
     # Copy by position: GPU arrays (tested for CUDA, AMDGPU) can't copy a view in one go and error on the element-by-element fallback
     n = length(dest)
-    copyto!(dest, 1, readers.cache.data[var], (idx - readers.cache.start) * n + 1, n)
+    offset = (idx - readers.cache.start) * n
+    if isnothing(readers.cache.device) || dest isa Array
+        copyto!(dest, 1, readers.cache.data[var], offset + 1, n)
+    else
+        # A kernel in the model's stream: `copyto!` between device arrays can block the host
+        copy_column_kernel!(readers.backend)(dest, readers.cache.device[var], offset; ndrange = n)
+    end
     return nothing
 end
 

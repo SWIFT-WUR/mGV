@@ -12,6 +12,12 @@ The model currently only supports a single GPU at a time,
 however, the model does not need a lot of VRAM (2 - 8 GB for a
 global 5′ grid, depending on the configuration and parameter file).
 
+The forcing caches are kept on the GPU as well, which takes up to about
+2 GB of VRAM. If they would take more than half of the free memory of
+the GPU, or cannot be allocated, the model warns at startup and keeps
+them on the host instead. The run then still works, but passing the
+forcing to the GPU is slower.
+
 Do note that this leads to bottlenecks elsewhere in the code.
 Use the other performance tips from this page to make optimal use of
 the GPU resources.
@@ -40,15 +46,32 @@ More specifically:
 - The Zarr input data is prefetched, so the data loads while the
   model is running the next time steps.
 - Forcing variables are read in parallel.
-- Output writing is on its own thread, and variables are written
-  in parallel.
+- Output is written while the model runs, and its chunks are
+  compressed and written in parallel.
 - If you don't have GPU available, the model's computation is
   multithreaded on CPU.
+
+On a GPU with CUDA, Metal, oneAPI or OpenCL, also start Julia with two
+interactive threads, e.g. `julia -t auto,2`. On these backends the output
+of every time step is copied from the GPU by a separate task, which needs
+an interactive thread besides the one the model runs on: `julia -t auto`
+gives only one. With a single interactive thread the model warns at
+startup, and the copy runs on the default threads, where it competes with
+the compression of the output. On AMD GPUs (`rocm`) the copy is queued on
+the GPU instead, so this is not needed.
 
 ## Have input & output on a fast disk
 
 Depending on your setup (e.g. HPC), make sure the data is available
 on a node-local scratch or SSD instead of a shared network filesystem.
+
+## Write land-only output
+
+For global runs, writing the gridded output can take longer than the model needs to compute a time
+step on the GPU. The [land-only output format](output.md#Formats) (`format = "zarr_landonly"`)
+skips the ocean cells, and is about 1.5x faster to write than gridded Zarr. Output is written in parallel
+with the model, in blocks of time steps: if the writer is behind, the model waits for it, which shows up
+as `wait for output writer` in the timings the model prints at the end of the run.
 
 ## Write fewer variables to file
 

@@ -10,6 +10,7 @@ dir         = "../output_data/global/"
 file_prefix = "outputfile_global_"
 format      = "netcdf"
 # variables = ["discharge", "total_runoff"] # See the Model output documentation for available variables. Omit to write all, or use [] for no output.
+# packing   = true # Store most variables as scaled Int16 (lossy, see the Model output documentation); false stores Float32.
 
 [input]
 [input.paths]

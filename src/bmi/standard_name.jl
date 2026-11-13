@@ -78,6 +78,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:surface_energy_variables],
         output_name = "total_et",
+        packing = Packing(1000, 30),
     ),
     #TODO do we want to expose these variables?
     # "energy_error" => ParameterMetadata(;
@@ -111,6 +112,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables_layer],
         output_name = "soil_moisture",
+        packing = Packing(10, 3200),
     ),
     "soil__moisture~maximum" => ParameterMetadata(;
         lens = @optic(_.soil_parameters.maximum_moisture),
@@ -173,6 +175,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],
         output_name = "soil_evaporation",
+        packing = Packing(1000, 30),
     ),
     "soil__infiltration" => ParameterMetadata(;
         lens = @optic(_.soil_variables.infiltration),
@@ -192,6 +195,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],
         output_name = "surface_runoff",
+        packing = Packing(50, 640),
     ),
     "land_subsurface__runoff" => ParameterMetadata(;
         lens = @optic(_.soil_variables.subsurface_runoff),
@@ -211,6 +215,7 @@ const standard_name_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:soil_variables],
         output_name = "total_runoff",
+        packing = Packing(50, 640),
     ),
 
     #Canopy variables >2d
@@ -311,6 +316,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:forcing_variables],
         output_name = "tair",
+        packing = Packing(100, 0),
     ),
     "atmosphere_water__precipitation_leq-volume_flux" => ParameterMetadata(;
         lens = @optic(_.forcing_variables.precipitation),
@@ -321,6 +327,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:forcing_variables],
         output_name = "precipitation",
+        packing = Packing(50, 640),
     ),
 
     # Grid cell averages, computed by the postprocessing kernel
@@ -333,6 +340,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:output_variables],
         output_name = "tsurf",
+        packing = Packing(100, 0),
     ),
     "land_surface__evaporation~potential~cell-average" => ParameterMetadata(;
         lens = @optic(_.output_buffers.potential_evaporation),
@@ -343,6 +351,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:output_variables],
         output_name = "potential_evaporation",
+        packing = Packing(500, 60),
     ),
     "land_surface__radiation~net~upward_energy_flux~cell-average" => ParameterMetadata(;
         lens = @optic(_.output_buffers.net_radiation),
@@ -353,6 +362,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:output_variables],
         output_name = "net_radiation",
+        packing = Packing(10, 0),
     ),
     "land_vegetation__transpiration" => ParameterMetadata(;
         lens = @optic(_.output_buffers.transpiration),
@@ -363,6 +373,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:output_variables],
         output_name = "transpiration",
+        packing = Packing(1000, 30),
     ),
     "land_vegetation_canopy__evaporation~cell-average" => ParameterMetadata(;
         lens = @optic(_.output_buffers.canopy_evaporation),
@@ -373,6 +384,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:output_variables],
         output_name = "canopy_evaporation",
+        packing = Packing(1000, 30),
     ),
     "land_vegetation_canopy_water__depth" => ParameterMetadata(;
         lens = @optic(_.output_buffers.water_storage),
@@ -383,6 +395,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:output_variables],
         output_name = "water_storage",
+        packing = Packing(1000, 30),
     ),
 
     # Snow grid cell averages, only available when `enable_snow = true`
@@ -405,6 +418,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:snow_variables],
         output_name = "snow_albedo",
+        packing = Packing(10000, 0),
     ),
     "snowpack_surface__temperature" => ParameterMetadata(;
         lens = @optic(_.output_buffers.snow_surface_temperature),
@@ -415,6 +429,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:snow_variables],
         output_name = "snow_surf_temp",
+        packing = Packing(100, 0),
     ),
     "snowpack__area_fraction" => ParameterMetadata(;
         lens = @optic(_.output_buffers.snow_coverage),
@@ -425,6 +440,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:snow_variables],
         output_name = "snow_coverage",
+        packing = Packing(10000, 0),
     ),
     "snowpack__melt_volume_flux" => ParameterMetadata(;
         lens = @optic(_.output_buffers.snow_melt),
@@ -435,6 +451,7 @@ const standard_output_map = OrderedDict{String, ParameterMetadata}(
         output = true,
         tags = [:snow_variables],
         output_name = "snow_melt",
+        packing = Packing(100, 300),
     ),
 )
 

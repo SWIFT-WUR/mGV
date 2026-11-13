@@ -7,6 +7,8 @@ using TOML
 
 import ..output_variables
 
+const OUTPUT_FORMATS = ("zarr", "zarr_landonly", "netcdf")
+
 
 @option "paths" struct InputPaths
     input_param_file::String
@@ -86,10 +88,15 @@ end
 end
 
 @option "output" struct OutputCfg
-    format::String = "zarr"
+    format::String = "zarr"  # "zarr", "zarr_landonly" or "netcdf"
     dir::String
     file_prefix::String
     variables::Union{Nothing, Vector{String}} = nothing  # variables to write; nothing = all, [] = none
+    # Timesteps kept in memory before they are written; also the time chunk size of the output
+    write_interval::Int = 8
+    # true: store variables with a `packing` in their metadata as scaled Int16 (lossy, at the
+    # precision of the packing, and clipped to its range); false: store every variable as Float32
+    packing::Bool = true
 end
 
 @option "API" struct APISection
@@ -183,9 +190,16 @@ function load_config(config_file)
     if !isdir(cfg_dict["output"]["dir"])
         error("Output directory '$(cfg_dict["output"]["dir"])' does not exist")
     end
+    packing = get(cfg_dict["output"], "packing", true)
+    packing isa Bool || error("[output].packing must be true or false, got $(repr(packing))")
 
     cfg = from_dict(Cfg, cfg_dict)
     validate_output_variables(cfg)
+    lowercase(cfg.output.format) in OUTPUT_FORMATS || error(
+        "Unknown output format '$(cfg.output.format)' in [output]. Valid formats: $(join(OUTPUT_FORMATS, ", "))"
+    )
+    cfg.output.write_interval >= 1 ||
+        error("[output].write_interval must be at least 1, got $(cfg.output.write_interval)")
     return cfg
 end
 

@@ -85,7 +85,56 @@ function select_backend(name::AbstractString = "auto")
 end
 
 """
-Page-lock host memory to speed up device transfers. Does nothing unless a backend
-extension adds a method for its backend.
+Page-lock (pin) host memory, so that device transfers can run asynchronously. Uses
+`KernelAbstractions.pagelock!`, which the GPU packages implement for their backend (e.g.
+CUDA and AMDGPU). Returns whether `arr` was pinned: `false` for backends that do not
+implement it (`pagelock!` then returns `missing`), whose transfers still work, but can block
+the task that makes them until they are done.
 """
-pin_memory!(::Backend, arr) = nothing
+pin_memory!(backend::Backend, arr) = !ismissing(KernelAbstractions.pagelock!(backend, arr))
+
+"""
+Undo [`pin_memory!`](@ref), for backends that do not unpin memory when it is freed (e.g.
+AMDGPU). Does nothing unless a backend extension adds a method for its backend.
+"""
+unpin_memory!(::Backend, arr) = nothing
+
+"""
+    device_free_memory(backend)
+
+Free memory on the device of `backend`, in bytes, or `nothing` if the backend cannot tell.
+Backend extensions add a method for their backend.
+"""
+device_free_memory(::Backend) = nothing
+
+"""
+    host_copier(backend)
+
+An object that copies device arrays to host memory asynchronously, on a stream of its own,
+for the output writer (see [`record_output!`](@ref)). Backend extensions that provide one
+implement, for their copier `c`:
+
+- `begin_staging!(c)`: makes the model's stream wait (on the device) until the last host
+  copies are done, so that the staging buffers they read from can be written again. The
+  writer then writes the staging buffers with kernels in the model's stream.
+- `start_host_copy!(c)`: makes the following host copies wait (on the device) for the model's
+  stream, i.e. for the staging.
+- `copy_to_host!(c, dst, doffs, src, soffs, n)`: copy `n` elements from device array `src`
+  (from index `soffs`) to host array `dst` (from index `doffs`), without blocking the host.
+- `block_event(c)`: a new event, which marks the end of the copies to one output block.
+- `finish_host_copy!(c, event)`: marks the end of the host copies of a timestep, also with
+  `event` (of the block they copy to).
+- `wait_host_copy(c, event)`: blocks the calling task until the copies up to `event` are
+  done (letting other tasks run). The writer task calls it before it writes a block.
+
+Returns `nothing` (the default) if the backend has none; the writer then copies on a
+separate task instead.
+"""
+host_copier(::Backend) = nothing
+
+function begin_staging! end
+function start_host_copy! end
+function copy_to_host! end
+function finish_host_copy! end
+function wait_host_copy end
+function block_event end
