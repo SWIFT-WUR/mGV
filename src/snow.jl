@@ -310,7 +310,7 @@ end
     is_accum = (current_cc < 0.0f0) & (melt_flag == Int32(0))
     alb_a = ifelse(is_accum, ALB_ACCUM_A, ALB_THAW_A)
     alb_b = ifelse(is_accum, ALB_ACCUM_B, ALB_THAW_B)
-    alb_age = NEW_SNOW_ALB * (alb_a^(ls_f^alb_b))
+    alb_age = NEW_SNOW_ALB * fastpow(alb_a, fastpow(ls_f, alb_b))
 
     # Albedo resets to max ONLY when new snow falls on a cold pack
     pack_is_cold = current_cc < 0.0f0
