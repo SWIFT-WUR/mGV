@@ -23,12 +23,17 @@ end
     polynomial_exp2(x::Float32)
 
 `2^x`, within 1 ulp of the exact result. Vectorizes on PoCL, unlike `exp2`. Special values
-match `exp2`.
+match `exp2`: `Inf` gives `Inf`, `-Inf` gives `0`, and `NaN` gives `NaN`.
 """
 @inline function polynomial_exp2(x::Float32)
     # beyond these, the result is Inf or 0 (NaN passes through)
     xc = clamp(x, -160.0f0, 128.0f0)
-    n = round(xc)
+    # n = round(xc) (ties to even), as the float n and in the low bits of s: adding 1.5 * 2^23
+    # leaves no fractional bits. This avoids `unsafe_trunc`, which is poison in LLVM for NaN,
+    # and is faster than `round` plus an `ifelse` for NaN. For NaN, s and n are NaN and the
+    # integer is meaningless, but r and p are NaN, so the result is too.
+    s = xc + 1.2582912f7
+    n = s - 1.2582912f7
     r = xc - n  # exact, |r| <= 0.5
     # 2^r = 1 + r P(r) on [-0.5, 0.5] (Cephes exp2f)
     p = muladd(
@@ -42,7 +47,7 @@ match `exp2`.
         ),
         1.0f0,
     )
-    return _scale_pow2(p, unsafe_trunc(Int32, n))
+    return _scale_pow2(p, reinterpret(Int32, s) - reinterpret(Int32, 1.2582912f7))
 end
 
 """

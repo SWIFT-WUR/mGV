@@ -32,6 +32,11 @@ end
     end
 end
 
+@kernel function fastpow_kernel!(p, @Const(x), @Const(y))
+    i = @index(Global, Linear)
+    @inbounds p[i] = fastpow(x[i], y[i])
+end
+
 @testset "Fast math" begin
     @testset "Accuracy" begin
         @test max_ulp_error(polynomial_exp2, exp2, float32_range(0.0f0, 127.99f0, 997)) <= 1.0
@@ -92,5 +97,44 @@ end
         @test e == polynomial_exp2.(xs ./ 8.0f0)
         @test l == polynomial_log2.(xs)
         @test l10 == polynomial_log10.(xs)
+    end
+
+    @testset "NaN, Inf and out-of-range inputs" begin
+        nans = Float32[NaN32, -NaN32, reinterpret(Float32, 0x7f800001), reinterpret(Float32, 0xffc12345)]
+        # Inf, large magnitudes, and values around the clamp bounds and the over/underflow limits
+        extremes = Float32[
+            Inf32, -Inf32, floatmax(Float32), -floatmax(Float32), 1.0f30, -1.0f30,
+            1.0f9, -1.0f9, 200.0f0, -200.0f0, 160.0f0, -160.0f0, 128.0f0, -128.0f0,
+            127.99f0, -149.5f0, -150.0f0, -150.5f0, -126.0f0,
+        ]
+        @test all(isnan, polynomial_exp2.(nans))
+        @test all(isnan, polynomial_exp2.(nans ./ 8.0f0))
+        @test polynomial_exp2.(extremes) == exp2.(extremes)
+        @test all(isnan, fastpow.(nans, 0.5f0))
+        @test all(isnan, fastpow.(2.0f0, nans))
+        @test all(isnan, fastpow.(nans, nans))
+        @test fastpow(NaN32, 0.0f0) === 1.0f0
+        @test fastpow(Inf32, 2.0f0) === Inf32
+        @test fastpow(Inf32, -2.0f0) === 0.0f0
+        @test fastpow(1.0f30, 3.0f0) === Inf32
+        @test fastpow(1.0f-30, 3.0f0) === 0.0f0
+
+        backend = CPU()
+        xs = [nans; extremes]
+        e, l, l10 = similar(xs), similar(xs), similar(xs)
+        fastmath_kernel!(backend)(e, l, l10, xs; ndrange = length(xs))
+        KernelAbstractions.synchronize(backend)
+        n = length(nans)
+        @test all(isnan, e[1:n])
+        @test all(isnan, l[1:n])
+        @test e[(n + 1):end] == exp2.(extremes ./ 8.0f0)
+
+        bases = Float32[NaN32, 2.0f0, NaN32, NaN32, Inf32, Inf32, 1.0f30, 1.0f-30]
+        exponents = Float32[0.5f0, NaN32, NaN32, 0.0f0, 2.0f0, -2.0f0, 3.0f0, 3.0f0]
+        p = similar(bases)
+        fastpow_kernel!(backend)(p, bases, exponents; ndrange = length(bases))
+        KernelAbstractions.synchronize(backend)
+        @test all(isnan, p[1:3])
+        @test p[4:end] == Float32[1.0f0, Inf32, 0.0f0, Inf32, 0.0f0]
     end
 end
