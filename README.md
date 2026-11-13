@@ -31,7 +31,7 @@ julia --project=. --threads=auto run.jl configs/mekong_config.toml
 ```
 
 Starting Julia with multiple threads (`--threads=auto`, or e.g. `--threads=8`) has a large effect on performance: on CPU the model kernels run multithreaded, and Zarr forcing is read with one thread per forcing variable (so up to 7 threads help there).
-On a GPU with CUDA, Metal, oneAPI or OpenCL, use `--threads=auto,2` (two interactive threads), so that the output is copied from the GPU while the model runs; see the [performance documentation](docs/src/performance.md).
+On a GPU with Metal, oneAPI or OpenCL, use `--threads=auto,2` (two interactive threads), so that the output is copied from the GPU while the model runs; see the [performance documentation](docs/src/performance.md).
 
 This will provide output netCDF files for the Mekong region, years 1979 to 1984. Currently we only provide forcing and landsurface parameter files for the (small) Mekong region in this repo, due to file-size considerations. Data for the entire globe and the indus region will be made available at a later point in development, or can be made available upon request.
 

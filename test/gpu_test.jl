@@ -60,6 +60,8 @@ end
 # Last in this file: turning off the copier can not be undone
 if mGV.backend_name(backend) != "CPU"
     # 20 days in blocks of 8: the last block is partial
+    # CUDA and AMDGPU have a copier, so the first two runs test it
+    copier_type = typeof(mGV.host_copier(backend))
     with_copier = landonly_output(backend)
     unpacked_with_copier = landonly_output(backend; packing = false)
     @eval mGV.host_copier(::$(typeof(backend))) = nothing
@@ -67,6 +69,7 @@ if mGV.backend_name(backend) != "CPU"
     unpacked_without_copier = landonly_output(backend; packing = false)
 
     @testset "$(mGV.backend_name(backend)) output with and without the host copier" begin
+        @test copier_type !== Nothing
         @test !isempty(with_copier)
         @test keys(with_copier) == keys(without_copier)
         for (name, values) in with_copier

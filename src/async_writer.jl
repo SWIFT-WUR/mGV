@@ -132,12 +132,13 @@ end
 
 """
 The threadpool for the task that copies a timestep to the host, on backends without a
-[`host_copier`](@ref): the interactive one, so that the copy is not queued behind the many
-(compression) tasks of the writer, if it has a thread besides the one of the calling (model)
-task. Julia runs the main task on the first interactive thread, and `julia -t N` gives one
-interactive thread: a copy task there would only start when the model task waits for it,
-which serialises the copy with the model. Then the copy runs in the default threadpool, with
-a warning to start Julia with two interactive threads (`-t N,2`).
+[`host_copier`](@ref) (the GPU backends other than CUDA and AMDGPU): the interactive one, so
+that the copy is not queued behind the many (compression) tasks of the writer, if it has a
+thread besides the one of the calling (model) task. Julia runs the main task on the first
+interactive thread, and `julia -t N` gives one interactive thread: a copy task there would
+only start when the model task waits for it, which serialises the copy with the model. Then
+the copy runs in the default threadpool, with a warning to start Julia with two interactive
+threads (`-t N,2`).
 """
 function copy_threadpool()
     free = Threads.nthreads(:interactive) - (Threads.threadpool() === :interactive)
