@@ -187,6 +187,93 @@ function calculate_baseflow(W, Wres, Wmax, Dsmax, Ds, Ws, cexp)
     return clamp.(Qb, 0.0f0, avail)
 end
 
+# Fractional sub-daily state discretization of `runoff_drainage_kernel!`: hourly runoff
+# sub-steps (RUNOFF_STEPS_PER_DAY = 24) of a daily model step (MODEL_STEPS_PER_DAY = 1).
+# Each sub-step applies 1/RUNOFF_SUBSTEPS of the daily fluxes, so derive both from here.
+const RUNOFF_SUBSTEPS = 24
+const INV_RUNOFF_SUBSTEPS = 1.0f0 / RUNOFF_SUBSTEPS
+
+"""
+    runoff_substep(state, fluxes, params)
+
+One runoff sub-step of `runoff_drainage_kernel!` for one cell: drain layer 1 into 2 and 2
+into 3 (Liang 1994), take baseflow from layer 3, floor layers 2 and 3 at their residual
+moisture, and spill excess moisture upwards. Returns the new state.
+
+`state` is `(sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)`: the
+moisture of the 3 layers, and the spill out of layer 1, the drainage out of layers 1 and 2,
+and the baseflow, summed over the sub-steps so far. `fluxes` holds the `inflow`, soil `evap`
+and transpiration `t1`-`t3` of one sub-step; `params` the cell's soil and baseflow
+parameters (see `runoff_drainage_kernel!`).
+"""
+@inline function runoff_substep(state, fluxes, params)
+    sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow = state
+    (; max1, max2, max3, res1, res2, res3, k1, k2, exp1, exp2, Dsmax, Ds, Ws, c_expt) = params
+    inflow_sub, evap_sub = fluxes.inflow, fluxes.evap
+    t1_sub, t2_sub, t3_sub = fluxes.t1, fluxes.t2, fluxes.t3
+    zero = 0.0f0
+
+    # ==================== LAYER 1 ====================
+    eff_sm1 = max(sm1 + inflow_sub - evap_sub - t1_sub, zero)
+    dpot_1 = calculate_interlayer_drainage(k1 * INV_RUNOFF_SUBSTEPS, eff_sm1, max1, res1, exp1)
+    # Bound drainage dynamically across the fractional scalar
+    d_1 = min(dpot_1, max(eff_sm1 - res1, zero))
+
+    sm1 = sm1 + inflow_sub - (evap_sub + t1_sub) - d_1
+
+    # ==================== LAYER 2 ====================
+    eff_sm2 = max(sm2 + d_1 - t2_sub, zero)
+    dpot_2 = calculate_interlayer_drainage(k2 * INV_RUNOFF_SUBSTEPS, eff_sm2, max2, res2, exp2)
+    d_2 = min(dpot_2, max(eff_sm2 - res2, zero))
+
+    sm2 = sm2 + d_1 - t2_sub - d_2
+
+    # Q12[lindex] += (liq[lindex] + ice[lindex]) - resid_moist[lindex]  <- makes Q12 negative
+    # liq[lindex] = resid_moist  <- clamps to resid
+    # This negative Q12 flows into L3 as negative inflow (upward redistribution).
+    if sm2 < res2
+        deficit_2 = res2 - sm2
+        d_2 = d_2 - deficit_2      # d_2 goes negative = upward flow from L3
+        sm2 = res2
+    end
+
+    # ==================== LAYER 3 ====================
+    sm3_avail = max(sm3 + d_2 - t3_sub, zero)
+    base_pot = calculate_baseflow(sm3_avail, res3, max3, Dsmax, Ds, Ws, c_expt)
+    b = min(base_pot * INV_RUNOFF_SUBSTEPS, max(sm3_avail - res3, zero))
+
+    sm3 = sm3 + d_2 - t3_sub - b
+
+    # Residual floor for L3
+    # If baseflow caused L3 to go below resid, reduce baseflow to compensate.
+    if sm3 < res3
+        deficit_3 = res3 - sm3
+        b = b - deficit_3         # reduce baseflow (can go negative)
+        sm3 = res3
+    end
+    # VIC: negative baseflow -> reduce evap (layer[lindex].evap += baseflow[fidx])
+    # then set baseflow = 0. We clamp b to 0 here.
+    b = max(b, zero)
+
+    # Upward Spill (Cascading vertically upwards)
+    sp_3 = max(sm3 - max3, zero)
+    sm3 -= sp_3
+    sm2 += sp_3
+
+    sp_2 = max(sm2 - max2, zero)
+    sm2 -= sp_2
+    sm1 += sp_2
+
+    sp_1 = max(sm1 - max1, zero)
+    sm1 -= sp_1
+
+    tot_spill_1 += sp_1
+    tot_drain_1 += d_1
+    tot_drain_2 += d_2
+    tot_baseflow += b
+    return (sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)
+end
+
 @kernel inbounds=true function runoff_drainage_kernel!(
         soil_moisture,          # (ncells, 3)
         subsurface_runoff,      # (ncells)
@@ -236,82 +323,25 @@ end
         inflow = surface_inflow[i]
         evap = soil_evap[i]
 
-        # ==========================================================
-        # Fractional Sub-Daily State Discretization
-        # Config: RUNOFF_STEPS_PER_DAY = 24 (hourly runoff sub-steps)
-        # MODEL_STEPS_PER_DAY = 1 (daily meteo) -> runoff_steps_per_dt = 24/1 = 24
-        # ==========================================================
-        INV_STEPS = 1.0f0 / 24.0f0
+        # Fluxes per sub-step (see `RUNOFF_SUBSTEPS`)
+        fluxes = (
+            inflow = inflow * INV_RUNOFF_SUBSTEPS,
+            evap = evap * INV_RUNOFF_SUBSTEPS,
+            t1 = t1 * INV_RUNOFF_SUBSTEPS,
+            t2 = t2 * INV_RUNOFF_SUBSTEPS,
+            t3 = t3 * INV_RUNOFF_SUBSTEPS,
+        )
+        params = (;
+            max1, max2, max3, res1, res2, res3, k1, k2, exp1, exp2,
+            Dsmax = _Dsmax, Ds = _Ds, Ws = _Ws, c_expt = _c_expt,
+        )
 
-        inflow_sub = inflow * INV_STEPS
-        evap_sub = evap * INV_STEPS
-        t1_sub = t1 * INV_STEPS
-        t2_sub = t2 * INV_STEPS
-        t3_sub = t3 * INV_STEPS
-
-        # 24 sub-steps, unrolled on the CPU backend (see `foldsteps`)
+        # Sub-steps, unrolled on the CPU backend (see `foldsteps`). The closure only
+        # forwards, so that it can't box variables of the kernel by assigning them.
         init = (sm1, sm2, sm3, zero, zero, zero, zero)
-        state = foldsteps(init, Val(24)) do step, (sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)
+        state = foldsteps(init, Val(RUNOFF_SUBSTEPS)) do _, s
             @inline
-            # ==================== LAYER 1 ====================
-            eff_sm1 = max(sm1 + inflow_sub - evap_sub - t1_sub, zero)
-            dpot_1 = calculate_interlayer_drainage(k1 * INV_STEPS, eff_sm1, max1, res1, exp1)
-            # Bound drainage dynamically across the fractional scalar
-            d_1 = min(dpot_1, max(eff_sm1 - res1, zero))
-
-            sm1 = sm1 + inflow_sub - (evap_sub + t1_sub) - d_1
-
-            # ==================== LAYER 2 ====================
-            eff_sm2 = max(sm2 + d_1 - t2_sub, zero)
-            dpot_2 = calculate_interlayer_drainage(k2 * INV_STEPS, eff_sm2, max2, res2, exp2)
-            d_2 = min(dpot_2, max(eff_sm2 - res2, zero))
-
-            sm2 = sm2 + d_1 - t2_sub - d_2
-
-            # Q12[lindex] += (liq[lindex] + ice[lindex]) - resid_moist[lindex]  <- makes Q12 negative
-            # liq[lindex] = resid_moist  <- clamps to resid
-            # This negative Q12 flows into L3 as negative inflow (upward redistribution).
-            if sm2 < res2
-                deficit_2 = res2 - sm2
-                d_2 = d_2 - deficit_2      # d_2 goes negative = upward flow from L3
-                sm2 = res2
-            end
-
-            # ==================== LAYER 3 ====================
-            sm3_avail = max(sm3 + d_2 - t3_sub, zero)
-            base_pot = calculate_baseflow(sm3_avail, res3, max3, _Dsmax, _Ds, _Ws, _c_expt)
-            b = min(base_pot * INV_STEPS, max(sm3_avail - res3, zero))
-
-            sm3 = sm3 + d_2 - t3_sub - b
-
-            # Residual floor for L3
-            # If baseflow caused L3 to go below resid, reduce baseflow to compensate.
-            if sm3 < res3
-                deficit_3 = res3 - sm3
-                b = b - deficit_3         # reduce baseflow (can go negative)
-                sm3 = res3
-            end
-            # VIC: negative baseflow -> reduce evap (layer[lindex].evap += baseflow[fidx])
-            # then set baseflow = 0. We clamp b to 0 here.
-            b = max(b, zero)
-
-            # Upward Spill (Cascading vertically upwards)
-            sp_3 = max(sm3 - max3, zero)
-            sm3 -= sp_3
-            sm2 += sp_3
-
-            sp_2 = max(sm2 - max2, zero)
-            sm2 -= sp_2
-            sm1 += sp_2
-
-            sp_1 = max(sm1 - max1, zero)
-            sm1 -= sp_1
-
-            tot_spill_1 += sp_1
-            tot_drain_1 += d_1
-            tot_drain_2 += d_2
-            tot_baseflow += b
-            return (sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow)
+            runoff_substep(s, fluxes, params)
         end
         sm1, sm2, sm3, tot_spill_1, tot_drain_1, tot_drain_2, tot_baseflow = state
 
