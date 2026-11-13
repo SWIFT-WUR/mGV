@@ -68,7 +68,7 @@ on a node-local scratch or SSD instead of a shared network filesystem.
 ## Write land-only output
 
 For global runs, writing the gridded output can take longer than the model needs to compute a time
-step on the GPU. The [land-only output format](output.md#Output-formats) (`format = "zarr_landonly"`)
+step on the GPU. The [land-only output format](output.md#Formats) (`format = "zarr_landonly"`)
 skips the ocean cells, and is about 1.5x faster to write than gridded Zarr. Output is written in parallel
 with the model, in blocks of time steps: if the writer is behind, the model waits for it, which shows up
 as `wait for output writer` in the timings the model prints at the end of the run.
