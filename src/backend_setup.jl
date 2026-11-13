@@ -89,3 +89,31 @@ Page-lock host memory to speed up device transfers. Does nothing unless a backen
 extension adds a method for its backend.
 """
 pin_memory!(::Backend, arr) = nothing
+
+function load_gpu_backend!(name::AbstractString)
+    name = lowercase(name)
+    name == "cpu" && return nothing
+    "@v#.#" in LOAD_PATH || push!(LOAD_PATH, "@v#.#")   # general env, after the app env
+
+    candidates = name == "auto" ? collect(keys(KNOWN_BACKENDS)) :
+                 haskey(KNOWN_BACKENDS, name) ? [name] : String[]
+    for key in candidates
+        haskey(BACKEND_REGISTRY, key) && continue          # already loaded
+        pkg = Base.identify_package(KNOWN_BACKENDS[key])   # nothing if not installed
+        if isnothing(pkg)
+            name == "auto" && continue
+            error("Backend '$key' needs $(KNOWN_BACKENDS[key]).jl. Install it in your " *
+                  "general environment: julia -e 'using Pkg; Pkg.add(\"$(KNOWN_BACKENDS[key])\")'")
+        end
+        try
+            Base.require(pkg)                              # triggers e.g. AMDGPUExt → register_backend!
+        catch err
+            name == "auto" || rethrow()
+            @warn "Could not load $(pkg.name), skipping" exception = err
+            continue
+        end
+        # for auto: stop at the first backend that is functional on this machine
+        name == "auto" && Base.invokelatest(BACKEND_REGISTRY[key].is_functional) && break
+    end
+    return nothing
+end

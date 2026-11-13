@@ -7,6 +7,7 @@ projects = ["test"]
 [deps]
 Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 BasicModelInterface = "59605e27-edc0-445a-b93d-c09a3a50b330"
 Configurations = "5218b696-f38b-4ac9-8b61-a12ec717816d"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -46,6 +47,7 @@ oneAPIExt = "oneAPI"
 AMDGPU = "2.11"
 Accessors = "0.1.45"
 Adapt = "4.6.1"
+ArgParse = "1.2.0"
 BasicModelInterface = "0.1.1"
 CUDA = "6.5.1"
 Configurations = "0.17.6"
@@ -70,3 +72,6 @@ TOML = "1.0.3"
 TimerOutputs = "1.2.0"
 Zarr = "0.10.0"
 oneAPI = "2.10"
+
+[apps.mGV]
+julia_flags = ["--threads=auto"]

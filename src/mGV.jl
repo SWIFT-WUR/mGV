@@ -1,5 +1,6 @@
 module mGV
 
+using ArgParse
 using NetCDF
 using NCDatasets
 using Zarr
@@ -37,6 +38,39 @@ include("routing.jl")
 include("temperature.jl")
 include("postprocess.jl")
 include("io.jl")
+
+const CLI_EPILOG = """
+Usage 1:
+    mGV config.toml -b cpu
+Usage 2:
+    mGV config.toml --backend cuda
+
+Number of threads:
+  Threads are a Julia option, so pass them before `--`, and the app's arguments after it:
+
+    mGV --threads=8 -- config.toml -b cpu
+    mGV --threads=auto -- config.toml       (one thread per CPU thread, the default)
+
+GPU backends need their package installed in the general Julia environment
+"""
+
+function parse_cli(args)
+    s = ArgParseSettings(
+        prog = "mGV",
+        description = "Run the mGV hydrological model",
+        epilog = CLI_EPILOG,
+        preformatted_epilog = true,
+    )
+    @add_arg_table! s begin
+        "config"
+            help = "path to the config.toml file"
+            required = true
+        "--backend", "-b"
+            help = "backend " * join(backend_options(), ", ")
+            default = "auto"
+    end
+    return parse_args(args, s), s
+end
 
 
 const to = TimerOutputs.TimerOutput()
@@ -335,5 +369,16 @@ end
 include("bmi/standard_name_utils.jl")
 include("bmi/helpers.jl")
 include("bmi/bmi.jl")
+
+function (@main)(args)
+    opts, s = parse_cli(args)
+    if isempty(args)
+        ArgParse.show_help(s, exit_when_done = false)
+        return 1
+    end
+    load_gpu_backend!(opts["backend"])
+    Base.invokelatest(run, opts["config"]; backend = opts["backend"])
+    return 0
+end
 
 end # module end
