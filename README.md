@@ -34,6 +34,35 @@ Starting Julia with multiple threads (`--threads=auto`, or e.g. `--threads=8`) h
 
 This will provide output netCDF files for the Mekong region, years 1979 to 1984. Currently we only provide forcing and landsurface parameter files for the (small) Mekong region in this repo, due to file-size considerations. Data for the entire globe and the indus region will be made available at a later point in development, or can be made available upon request.
 
+### Run as a Julia app
+
+mGV can also be installed as a command-line app (Julia 1.12 or newer):
+
+```bash
+julia -e 'using Pkg; Pkg.Apps.add(url="https://github.com/SWIFT-WUR/mGV", subdir="app")'
+```
+
+This installs the `mGV` command in `~/.julia/bin`, which you may need to add to your `PATH`. To run:
+
+```bash
+mGV configs/mekong_config.toml
+mGV --threads=8 -- configs/mekong_config.toml -b cpu
+```
+
+Julia options such as `--threads` go before `--`, and the app's arguments after it. Without `--`, all arguments go to the app, which runs with `--threads=auto`.
+Use `mGV --help` for all options.
+
+The app runs on a GPU (`-b auto`, the default, or e.g. `-b cuda`) if the GPU package is installed in the general Julia environment, e.g. `julia -e 'using Pkg; Pkg.add("CUDA")'` (see [GPU Acceleration](#gpu-acceleration) for the packages).
+This GPU package is not resolved together with mGV, so mGV's compat bounds for it do not apply.
+
+The app (in `app/`) uses mGV from the `main` branch on GitHub; update both with `julia -e 'using Pkg; Pkg.Apps.update("mGVApp")'`.
+To run the app with a local checkout of mGV instead, use an environment that has both developed:
+
+```bash
+julia --project=@mgv-dev -e 'using Pkg; Pkg.develop([PackageSpec(path="."), PackageSpec(path="app")])'
+julia --project=@mgv-dev --threads=auto -m mGVApp configs/mekong_config.toml
+```
+
 ### GPU Acceleration
 
 GPU support is provided through package extensions, so no GPU packages are installed by default.
