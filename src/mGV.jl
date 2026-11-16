@@ -1,6 +1,7 @@
 module mGV
 
 using ArgParse
+import Pkg
 using NetCDF
 using NCDatasets
 using Zarr
@@ -49,7 +50,12 @@ Number of threads:
     mGV --threads=8 -- config.toml -b cpu
     mGV --threads=auto -- config.toml       (one thread per CPU thread, the default)
 
-GPU backends need their package installed in the general Julia environment
+GPU backends:
+  A GPU backend needs its package (e.g. AMDGPU for rocm) installed in the app's
+  environment. Do this once, and again after updating the app:
+
+    mGV --add-backend rocm
+    mGV config.toml -b rocm
 """
 
 function parse_cli(args)
@@ -62,10 +68,13 @@ function parse_cli(args)
     @add_arg_table! s begin
         "config"
             help = "path to the config.toml file"
-            required = true
         "--backend", "-b"
             help = "backend " * join(backend_options(), ", ")
             default = "auto"
+        "--add-backend"
+            help = "install the package of a GPU backend (" *
+                   join(keys(KNOWN_BACKENDS), ", ") * ") into the app's environment, and exit"
+            metavar = "BACKEND"
     end
     return parse_args(args, s), s
 end
@@ -370,7 +379,11 @@ include("bmi/bmi.jl")
 
 function (@main)(args)
     opts, s = parse_cli(args)
-    if isempty(args)
+    if !isnothing(opts["add-backend"])
+        add_backend!(opts["add-backend"])
+        return 0
+    end
+    if isnothing(opts["config"])
         ArgParse.show_help(s, exit_when_done = false)
         return 1
     end
