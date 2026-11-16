@@ -108,8 +108,10 @@ function load_gpu_backend!(name::AbstractString)
         pkg = Base.identify_package(package)               # nothing if not installed
         if isnothing(pkg)
             name == "auto" && continue
-            error("Backend '$key' needs $package.jl, which is not installed. Install it with:\n" *
-                "    mGV --add-backend $key")
+            error(
+                "Backend '$key' needs $package.jl, which is not installed. Install it with:\n" *
+                    "    mGV --add-backend $key"
+            )
         end
         try
             Base.require(pkg)                              # loads e.g. AMDGPUExt, which registers the backend

@@ -67,14 +67,14 @@ function parse_cli(args)
     )
     @add_arg_table! s begin
         "config"
-            help = "path to the config.toml file"
+        help = "path to the config.toml file"
         "--backend", "-b"
-            help = "backend " * join(backend_options(), ", ")
-            default = "auto"
+        help = "backend " * join(backend_options(), ", ")
+        default = "auto"
         "--add-backend"
-            help = "install the package of a GPU backend (" *
-                   join(keys(KNOWN_BACKENDS), ", ") * ") into the app's environment, and exit"
-            metavar = "BACKEND"
+        help = "install the package of a GPU backend (" *
+            join(keys(KNOWN_BACKENDS), ", ") * ") into the app's environment, and exit"
+        metavar = "BACKEND"
     end
     return parse_args(args, s), s
 end
