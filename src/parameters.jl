@@ -20,6 +20,7 @@ struct VegetationParameters{T <: AbstractVector, M <: AbstractMatrix}
     vegetation_fraction::T
     minimum_resistance::T
     architectural_resistance::T
+    overstory::T                 # 1 = tall vegetation above the snow, 0 = can be buried
     # Active monthly values
     displacement_height::T
     roughness_length::T
@@ -154,6 +155,13 @@ function read_parameters(config::Cfg, domain::Domain)
     # Read a gridded variable, and keep the active bands (tiles)
     readbands(ds, name, fallback) = to_bands(tiles, readcells(ds, name, fallback))
     readtiles(ds, name, fallback) = to_tiles(tiles, readcells(ds, name, fallback))
+    # Optional: without an overstory flag, all vegetation can be buried by snow
+    function read_overstory(ds, name)
+        has = ds isa NCDataset ? haskey(ds, name) : haskey(ds.arrays, name)
+        has && return readtiles(ds, name, 0.0)
+        @warn "No '$name' in the parameter file: all vegetation is treated as low (can be buried by snow)"
+        return zeros(eltype(vegetation_fraction), ntiles(tiles))
+    end
 
     elevation = readcells(ds_params, config.input.names.elevation, 0.0)
     longitude, latitude = cell_coordinates(domain)
@@ -182,6 +190,7 @@ function read_parameters(config::Cfg, domain::Domain)
         to_tiles(tiles, vegetation_fraction),
         readtiles(ds_params, config.input.names.minimum_resistance, 0.0),
         readtiles(ds_params, config.input.names.architectural_resistance, 0.0),
+        read_overstory(ds_params, config.input.names.overstory),
         current_month_buffer(monthly_veg_params.displacement_height),
         current_month_buffer(monthly_veg_params.roughness_length),
         current_month_buffer(monthly_veg_params.lai),

@@ -42,6 +42,7 @@ end
     vegetation_fraction::String = "Cv"
     minimum_resistance::String = "rmin"
     architectural_resistance::String = "rarc"
+    overstory::String = "overstory"
     #  (active monthly vals)
     displacement_height::String = "displacement"
     roughness_length::String = "veg_rough"
