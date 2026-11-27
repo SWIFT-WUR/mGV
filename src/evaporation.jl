@@ -1,3 +1,12 @@
+"""
+Share of the tile's vegetation buried under snow: the snow cover for low vegetation,
+0 for overstory (tall vegetation stays above the snow). NaN cover counts as no snow.
+"""
+@inline function buried_fraction(snow_cov, overstory)
+    sc = ifelse(isnan(snow_cov), 0.0f0, clamp(snow_cov, 0.0f0, 1.0f0))
+    return ifelse(overstory < 0.5f0, sc, 0.0f0)
+end
+
 function canopy_evap_physics(
         ws, max_ws, pot_evap, ra, rarc,
         prec, lai, tair, elev, rmin
@@ -87,6 +96,8 @@ end
         air_temperature,
         elevation,
         minimum_resistance,
+        overstory,
+        snow_coverage,
         cell,
         veg,
         nveg
@@ -111,8 +122,10 @@ end
         elevation[i],
         minimum_resistance[t]
     )
+    # Leaves buried under snow do not evaporate (as VIC); overstory leaves still do
+    s = buried_fraction(snow_coverage[t], overstory[t])
     # Bare soil (the last vegetation type) has no canopy
-    canopy_evaporation[t] = ifelse(veg[t] == nveg, 0.0f0, evap)
+    canopy_evaporation[t] = ifelse(veg[t] == nveg, 0.0f0, evap * (1.0f0 - s))
 end
 
 function update_canopy_evaporation!(model::Model)
@@ -120,7 +133,8 @@ function update_canopy_evaporation!(model::Model)
     (; elevation) = model.grid_parameters
     (; potential_evaporation, aerodynamic_resistance) = model.surface_energy_variables
     (; canopy_evaporation, wet_fraction, water_storage, maximum_water_storage) = model.canopy_variables
-    (; lai, canopy_coverage, minimum_resistance, architectural_resistance) = model.vegetation_parameters
+    (; lai, canopy_coverage, minimum_resistance, architectural_resistance, overstory) = model.vegetation_parameters
+    snow_coverage = model.snow_variables.coverage
     (; tiles) = model
 
     # Per-tile state and vegetation parameters, per-cell forcings via `tiles.cell`
@@ -139,6 +153,8 @@ function update_canopy_evaporation!(model::Model)
         air_temperature,
         elevation,
         minimum_resistance,
+        overstory,
+        snow_coverage,
         tiles.cell,
         tiles.veg,
         tiles.nveg,
@@ -164,6 +180,8 @@ end
         AreaFract,
         tair_gpu,    # per cell: air temperature [°C] (for Tfactor)
         vp_gpu,      # per cell: vapour pressure [kPa] (for VPDfactor)
+        overstory,
+        snow_coverage, # per tile: snow cover fraction [-] from the previous step
         cell,
         band,
         veg,
@@ -239,9 +257,12 @@ end
         VPDfact = raw_vpd_t < 0.7f0 ? 0.7f0 : (raw_vpd_t > ONE ? ONE : raw_vpd_t)
         rc_factor = Tfact * VPDfact
 
+        # --- low vegetation under the snowpack does not transpire (as VIC); overstory is not buried ---
+        snow_free = ONE - buried_fraction(snow_coverage[t], overstory[t])
+
         # --- Transpiration Calculation ---
         # Output aggregation in io_writer sums trans_val directly (no extra Cv weight).
-        trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg * rc_factor, ZERO, Inf32)
+        trans_val = clamp(cv * dry_time_factor * pe * g_sw_veg * rc_factor * snow_free, ZERO, Inf32)
 
         # =========================================================
         # --- Layer Apportionment (E1, E2) without branching ---
@@ -315,9 +336,10 @@ function update_transpiration!(model::Model)
         water_storage, maximum_water_storage, transpiration,
         transpiration_layers, wet_fraction,
     ) = model.canopy_variables
-    (; root_fraction, vegetation_fraction) = model.vegetation_parameters
+    (; root_fraction, vegetation_fraction, overstory) = model.vegetation_parameters
     (; snow_band_area_fraction) = model.grid_parameters
     (; critical_moisture, wilting_point) = model.soil_parameters
+    snow_coverage = model.snow_variables.coverage
     (; tiles) = model
     soil_moisture = model.soil_variables.moisture
 
@@ -340,6 +362,8 @@ function update_transpiration!(model::Model)
         snow_band_area_fraction,
         air_temperature,
         vapor_pressure,
+        overstory,
+        snow_coverage,
         tiles.cell,
         tiles.band,
         tiles.veg,
@@ -353,7 +377,8 @@ end
 @kernel inbounds = true function water_canopy_storage_kernel!(
         throughfall, water_storage,
         @Const(maximum_water_storage), @Const(canopy_evaporation),
-        @Const(band_precipitation), @Const(canopy_coverage), @Const(band)
+        @Const(band_precipitation), @Const(canopy_coverage), @Const(band),
+        @Const(overstory), @Const(snow_coverage)
     )
     t = @index(Global, Linear)
 
@@ -362,16 +387,20 @@ end
     e = canopy_evaporation[t]
     p = band_precipitation[band[t]]
     c = canopy_coverage[t]
+    s = buried_fraction(snow_coverage[t], overstory[t])  # 0 = leaves above the snow
 
-    # 1. Update Throughfall FIRST
-    # We calculate the 'excess' logic on the fly using the *current* (old) water_storage.
-    # Logic: excess = max(0, (W + P - E) - Wm)
-    # Throughfall = (excess * coverage) + (precipitation * (1 - coverage))
-    throughfall[t] = (max(0.0f0, w + p - e - mx) * c) + (p * (1.0f0 - c))
+    # Leaves above the snow: the storage catches precipitation, the overflow falls through.
+    # Throughfall = (excess * coverage) + (precipitation * (1 - coverage)), with the
+    # excess computed from the old storage: max(0, (W + P - E) - Wm)
+    throughfall_open = (max(0.0f0, w + p - e - mx) * c) + (p * (1.0f0 - c))
+    storage_open = clamp(w + p - e, 0.0f0, mx)
 
-    # 2. Update Water Storage SECOND
-    # Logic: clamped new storage
-    water_storage[t] = clamp(w + p - e, 0.0f0, mx)
+    # Leaves under the snow: nothing is caught, all precipitation and the stored
+    # water (per canopy area, hence * c) go to the snowpack
+    throughfall_buried = p + w * c
+
+    throughfall[t] = (1.0f0 - s) * throughfall_open + s * throughfall_buried
+    water_storage[t] = (1.0f0 - s) * storage_open
 end
 
 function update_water_canopy_storage!(model::Model)
@@ -381,12 +410,14 @@ function update_water_canopy_storage!(model::Model)
         water_storage, maximum_water_storage, throughfall, canopy_evaporation,
     ) = model.canopy_variables
 
-    (; canopy_coverage) = model.vegetation_parameters
+    (; canopy_coverage, overstory) = model.vegetation_parameters
+    snow_coverage = model.snow_variables.coverage
 
     water_canopy_storage_kernel!(get_backend(water_storage))(
         throughfall, water_storage,
         maximum_water_storage, canopy_evaporation,
-        band_precipitation, canopy_coverage, model.tiles.band;
+        band_precipitation, canopy_coverage, model.tiles.band,
+        overstory, snow_coverage;
         ndrange = size(water_storage)
     )
     return nothing
