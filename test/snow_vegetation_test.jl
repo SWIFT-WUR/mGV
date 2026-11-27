@@ -7,7 +7,7 @@ using KernelAbstractions
 # not transpire, its leaves do not evaporate, and the water on its leaves falls through to
 # the snowpack. Overstory (forests) stays above the snow and is not affected.
 
-const MEKONG_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
+const SNOW_VEGETATION_CFG = joinpath(@__DIR__, "../configs/mekong_config.toml")
 
 """
 Write a copy of the Mekong config next to the original (its paths are relative to it),
@@ -16,14 +16,14 @@ the parameter file `param_file` (`nothing` keeps the original). Returns its path
 """
 function mekong_test_config(; overstory = "overstory", param_file = nothing)
     toml = replace(
-        read(MEKONG_CFG, String),
+        read(SNOW_VEGETATION_CFG, String),
         "../output_data/mekong/" => escape_string(mktempdir()),
         "[input.names]" => "[input.names]\noverstory = \"$overstory\"",
     )
     if !isnothing(param_file)
         toml = replace(toml, "../input_data/mekong/vic_mekong_5min_params.nc" => escape_string(param_file))
     end
-    path, io = mktemp(dirname(MEKONG_CFG))
+    path, io = mktemp(dirname(SNOW_VEGETATION_CFG))
     write(io, toml)
     close(io)
     return path
